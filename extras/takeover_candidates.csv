@@ -1,0 +1,553 @@
+Domain,CNAME,Issue,Provider
+wsenbap.metlife.com,wsenbap.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+myjourney.metlife.com,myjourney-1482351593.us-west-1.elb.amazonaws.com,CNAME target does not resolve (NXDOMAIN),Unknown
+mig.prod.u.metlife.com,mig.prod.u.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+secprint.metlife.com,secprint.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+ldrps.metlife.com,ldrps.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+ipd.metlife.com,ipd.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+quikmet.metlife.com,quikmet.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+int.mxcfdiui.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.content.service.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-134-10.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-246-107.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-65-246-219-4.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+int.mig.metdental.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+bobr.metlife.com,bobr.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+migtermlifeenroll.metlife.com,migtermlifeenroll.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+federate.ssodev.eu.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+metsso1.metlife.com,metsso1.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+mydesktop.metlife.com,mydesktop.gtmepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+risc.demo.metlifeexpat.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-32-97-26-238.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+metsgedge1.intl.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+qa.bios.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+sisc.phoenix.ead.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+instance01.dev.sl.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qamig.tcws.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+loginagent.metlife.com,loginagent.gtmepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+www.av.metlife.com,www.av.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+www.gvuleservice.metlife.com,www.gvuleservice.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+smrs.metlife.com,smrs.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+splogin.mymetlife.com,splogin.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+m.metlifetermlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+host-204-146-159-102.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+dr.sourcing.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-32-97-25-178.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+apac-video-ecdn-05.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+prod.ris.servicecloud.salesforce.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+dev.kr.www.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-253-22.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+brokercenter.eservice.metlife.com,brokercenter.eservice.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+gswintport3393.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-247-238.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+correo.metlife.cl,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+us.mymetlife.com,us.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+simp.m.metlife.cl,simp.m.glbe01.metlife.cl,CNAME target does not resolve (NXDOMAIN),Unknown
+omp.email.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+stemp.global.metlife.com,stemp.global.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+www.metlifeltc.com,www.extgeo.metlifeltc.com,CNAME target does not resolve (NXDOMAIN),Unknown
+sisc.content.service.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+simp.www.metlife.com.mx,simp.www.glbe01.metlife.com.mx,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-135-133.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-32-96-110-33.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.services.clmobileappservice.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-32-97-26-40.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+dr.cis.hackathon.apac.metlife.com,dr.aks-ingress.cisweb.hackathonapac.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+cpinvestmet.metlife.com,cpinvestmet.metlife.com.gslbenp.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+gcpauth.mymetlife.com,gcpauth.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+myretirement.metlife.com,myretirement.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+rppcp.metlife.com,rppcp.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+saa.metlife.com,saa.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+dev.qualifiedplans.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+sisc.epooling.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+cas.metlife.com,lib.cas.gtmepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+int.content.service.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+responder.glbe01.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+onlinebenefits.metlife.com,onlinebenefits.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+www.metlifeapps.com,www.extgeo.metlifeapps.com,CNAME target does not resolve (NXDOMAIN),Unknown
+team.asia.mymetlife.com,team.asia.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+services.ebix.metlife.com,services.ebix.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+iapp.metlife.com,iapp.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+delphinbcauthoria.metlife.com,delphinbcauthoria.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+prd.cdhsoap.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-32-97-25-177.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.gbrutilities.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-128-166.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+customer.metlife.com.tw,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-255-226.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-254-175.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+ebenefits.metlifeexpat.com,ebenefits.gtmepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+preferrisc.butler5.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-247-29.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+dev.content.online.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+nsccalligotemplate.metlife.com,";; communications error to 192.168.29.1#53: timed out
+nsccalligotemplate.extgeo.metlife.com",CNAME target does not resolve (NXDOMAIN),Unknown
+qa.mavs.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+metdemo.metlife.com,metdemo.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+customportal.metlife.com.gslbepr.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+simp.prv.metlife.cl,simp.prv.glbe01.metlife.cl,CNAME target does not resolve (NXDOMAIN),Unknown
+mlselfsrv.erp.metlife.com,mlselfsrv.erp.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+extftp.metlife.com,extftp.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+metmobile-uy.metlife.com,metmobile-uy.gtmepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+metwebforms.metlife.com,metwebforms.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+legacy.imetlife.metlife.com,legacy.imetlife.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+federate.ssoqa.eu.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+spvl.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+blimp-chk.metlife.co.jp,";; communications error to 192.168.29.1#53: timed out
+www22606.mediagalaxy.ne.jp",CNAME target does not resolve (NXDOMAIN),Unknown
+global.emea.mymetlife.com,global.emea.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+content.service.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+online.brazil.identity.gtmepr.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+reports.metlife.com,reports.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+oea.metlifetermlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+api.apac.gtmepr.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+portal.metlife.com,portal.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+fedo365.gtmepr.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+services.isgerlagentinquiryext.glbe01.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+secure.metlife.com,secure.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+qa3.employeradmin.servicing.metlife.com,qa3.employeradmin.servicing.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+eservicecm.metlife.com,prod.eservicecm.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+int.prv.cwa.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+mig.qa.caseadmin.pktype.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+plancenter.eservice.metlife.com,plancenter.eservice.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+host-204-146-159-142.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-134-45.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-135-12.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-254-162.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-246-158.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+sts2.metlife.com,sts2.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+metlifetemplive.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out",CNAME target does not resolve (NXDOMAIN),Unknown
+simp.prv.provida.metlife.cl,simp.prv.provida.glbe01.metlife.cl,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.services.fws.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+origin-s.dev.api.apac.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+preprod.salesforcecloud.sso.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-253-193.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+cmdf.metlife.com,cmdf.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+epooling.metlife.com,epooling.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+stage.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-204-146-231-197.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+temp.www.provida.metlife.cl,temp.www.provida.glbe01.metlife.cl,CNAME target does not resolve (NXDOMAIN),Unknown
+r143.emails.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.oea.metlifetermlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+temp.more.metlife.com,temp.more.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+mliukra.metlife.com,mliukra.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+dr.hackathon.apac.metlife.com,dr.aks-ingress.web.hackathonapac.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+simp.prv.metlifemas.com.mx,simp.prv.glbe01.metlifemas.com.mx,CNAME target does not resolve (NXDOMAIN),Unknown
+policyextract.metlife.com,policyextract.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+erecluta.hcms.metlife.com,erecluta.hcms.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+wssg.metlife.com.gslbenp.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+m.oea.metlifetermlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+gcpauthportal.mymetlife.com,gcpauthportal.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+investments.metlife.com.gslbepr.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+intmig.choices.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+www.global.metlife.com,www.global.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+mmail.metlife.com.gslbepr.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+care.metlife.com,care.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+blimp.metlife.co.jp,www12606.mediagalaxy.ne.jp,CNAME target does not resolve (NXDOMAIN),Unknown
+www.gls.metlife.com,www.gls.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+access.ssoqa.eu.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+ce.prod.mahiw.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-135-138.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.ema.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+erecruit.hrms.metlife.com,erecruit.hrms.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+cpicontact.metlife.com,cpicontact.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+uscku1basd0001u.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+extservices.esb.gc.metlife.com,extservices.esb.gc.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+isgerlagentinquiry.service.mw.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+simp.www.metlifemas.com.mx,simp.www.glbe01.metlifemas.com.mx,CNAME target does not resolve (NXDOMAIN),Unknown
+mobile.sng.sl.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+gcpauthsearch.mymetlife.com,gcpauthsearch.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+origin-qa.metlife.com,metlife-qa1-2019.adobecqms.net,CNAME target does not resolve (NXDOMAIN),Unknown
+b2b.salesforce.metlife.com,gvws.salesforce.glbi01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+omptrans.email.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+metlifedental.com.br,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+metdisability.metlife.com,metdisability.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+team.amer.mymetlife.com,team.amer.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+usb2c.crm1.metlife.com,usb2c.crm1.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+risc.content.service.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+dev6.benefitadminfactory.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+int.services.clcustomersite.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+global.asia.mymetlife.com,global.asia.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+dev.aemcs.mx.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-65-246-219-199.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+mobile.mfp.qa.sl.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out",CNAME target does not resolve (NXDOMAIN),Unknown
+team.emea.mymetlife.com,team.emea.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+host-65-246-219-252.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out",CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-130-57.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+mig.mb.tamwa.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+services.glu.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+uat2-gen2.majesco.pas.metlife.com,";; communications error to 192.168.29.1#53: timed out
+uat2.mgi-pas.ibminsuranceplatform.com",CNAME target does not resolve (NXDOMAIN),Unknown
+m.metlifefinalexpense.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+services.metlife.com,services.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+api.expat.metlife.com,api.expat.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+dev.services.email.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+int.services.email.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+teleapp.metlife.com,teleapp.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.service.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+www.metlife.co.in,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+www.eservice.metlife.com,www.eservice.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+coms.metlife.com,coms.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+ahknowledge.metlife.com,ahknowledge.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+riscmydesktop.metlife.com,riscmydesktop.gtmepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+int.teleapp.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa4.employeradmin.servicing.metlife.com,qa4.employeradmin.servicing.metlife.com.gslbenp.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+partners.metlifeapps.com,partners.metlifeapps.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+appd-nonprod.saas.metlife.com,appd-nonprod.saas.gtmenp.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+www.metlifemas.com,www.global.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+econsent.metlife.com,econsent.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+idg.partyadmin.metlife.com,idg.partyadmin.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+more.metlife.com,more.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+walterext.metlife.com,walterext.metlife.com.gslbenp.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+hub.metlifetermlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+cl.prv.metlife.com,";; communications error to 192.168.29.1#53: timed out
+dlipgfas8g0th.cloudfront.net",CNAME target does not resolve (NXDOMAIN),Unknown
+qa.services.gbrcore.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-65-246-219-223.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-134-214.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-134-64.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-131-18.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+apis.azlatmes01kub11998dv0116.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-247-108.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+int.services.drmemail.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-255-189.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+dr.aks-ingress.api.epay.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+claims.online.metlife.com,claims.online.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.uspcsl2.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qamig.bdwise.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-32-96-110-228.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-130-91.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-204-146-159-69.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+www.mymetlifeplan.com,www.extgeo.mymetlifeplan.com,CNAME target does not resolve (NXDOMAIN),Unknown
+mlimxra.metlife.com,mlimxra.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+mig.prod.edpm.usb.metlife.com,mig.prod.edpm.usb.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+simp.prv.federaldental.metlife.com,simp.prv.federaldental.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+itracker.metlife.com,itracker.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+mlusra.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+apply.metlife.com,apply.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+ahwebsvc.metlife.com,ahwebsvc.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+m.esig.metlifetermlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+dev1.pmacs.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+devsimp.www.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.inst.eservicesadmin.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+dev.services.epolicy.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.pmtoolsservices.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+investmentsem.metlife.com,";; communications error to 192.168.29.1#53: timed out
+mkto-sj380156.com",CNAME target does not resolve (NXDOMAIN),Unknown
+mig.vtrdpw.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+ibppcm.metlife.com,ibppcm.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-255-153.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+wscas.metlife.com,wscas.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+host-204-146-159-242.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+riscintaccessqa.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+ebenefits.gtmepr.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+breeze.metlife.com,breeze.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+idienrollemo.metlife.com,idienrollemo.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+wsenb.metlife.com,wsenb.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+phoenix.ead.metlife.com,phoenix.ead.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+rept.erp.americas.metlife.com,rept.erp.americas.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-130-207.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.services.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.tcws.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+idienroll.metlife.com,idienroll.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+emea.authhub.metlife.com,emea.authhub.gtmepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+privacyportal.metlife.com,privacyportal.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+ric.online.glbe01.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out",CNAME target does not resolve (NXDOMAIN),Unknown
+soa.hrhelpdesk.metlife.com,soa.hrhelpdesk.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+global.amer.mymetlife.com,global.amer.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+services.ahpolicy.metlife.com,services.ahpolicy.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+eservice.extgeo.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+mast.metlife.com,mast.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+sl.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+cssg.salesforce.metlife.com,cssg.salesforce.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+esb.app.metlife.com,esb.app.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+orientauruguay.metlife.com,orientauruguay.metlife.com.edgekey.net,CNAME target does not resolve (NXDOMAIN),Unknown
+www.metlifefinalexpense.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+metintgw.metlife.com,metintgw.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+bots.metlife.com,bots.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+autodiscover.metlife.it,";; communications error to 192.168.29.1#53: timed out
+fedo365.metlife.com",CNAME target does not resolve (NXDOMAIN),Unknown
+enbd.sng.sl.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+federate.sso.eu.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+mbsoh.metlife.com,mbsoh.metlife.com.gslbepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+prv.yourmetlifeplan.com,prv.glbe01.yourmetlifeplan.com,CNAME target does not resolve (NXDOMAIN),Unknown
+sm.qa.walter.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-253-178.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-204-146-159-189.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+aarpltc.metlife.com,aarpltc.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+services.email.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+www.metlifedental.com.br,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+qa.services.mah.res1.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+www.ltcfrommetlife.com,www.extgeo.ltcfrommetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+services.isgerlagentinquiryext.metlife.com,services.isgerlagentinquiryext.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+temp.m.provida.metlife.cl,temp.m.provida.glbe01.metlife.cl,CNAME target does not resolve (NXDOMAIN),Unknown
+macvpn.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+salestrac.metlife.com,salestrac.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+emea.investments.metlife.com,emea.investments.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.global.mymetlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+tricare.metlife.com,tricare.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+access.ssodev.eu.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+qa.mig.services.email.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+www.mymetlifeltc.com,www.extgeo.mymetlifeltc.com,CNAME target does not resolve (NXDOMAIN),Unknown
+int.services.gbrintsvcs.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-246-220.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.opasutil3.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+dev.services.soh.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa2.salesplatform.metlife.com,";; communications error to 192.168.29.1#53: timed out
+pingaccess.test-met.us1.ping.cloud",CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-253-244.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa3.servicing.online.metlife.com,";; communications error to 192.168.29.1#53: timed out
+qa3.servicing.online.metlife.com.gslbenp.metlife.com",CNAME target does not resolve (NXDOMAIN),Unknown
+riscmig.nsccalligotemplate.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-216-163-246-11.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+r188.asiadigital.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.claims.online.metlife.com,qa.claims.online.metlife.com.gslbenp.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+global.mymetlife.com,global.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+claimstatus.online.metlife.com,claimstatus.online.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+intl.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+eura.gtmepr.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+simp.m.provida.metlife.cl,simp.m.provida.glbe01.metlife.cl,CNAME target does not resolve (NXDOMAIN),Unknown
+gcpcookie.metlife.com,gcpcookie.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-128-25.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+int.services.customtoken.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+metsgedge2.intl.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+legacy.msi.metlife.com,legacy.msi.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+qa.services.email.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+extmobile.metlife.com,extmobile.gtmepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+cop.metlifetermlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+qa5.employeradmin.servicing.metlife.com,qa5.employeradmin.servicing.metlife.com.gslbenp.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+ka.metlife.com,ka.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+rapid.metlife.com,rapid.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+access.sso.eu.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+simp.w3.metlife.com.mx,simp.w3.glbe01.metlife.com.mx,CNAME target does not resolve (NXDOMAIN),Unknown
+bcm.metlife.com,bcm.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+simp.www.provida.metlife.cl,simp.www.provida.glbe01.metlife.cl,CNAME target does not resolve (NXDOMAIN),Unknown
+esig.metlifetermlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+www.ru.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-32-97-25-155.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-134-231.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-32-96-110-59.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+legalplan.metlife.com,";; communications error to 192.168.29.1#53: timed out
+c8tejdj.ng.impervadns.net",CNAME target does not resolve (NXDOMAIN),Unknown
+qamig.calligoservices.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+host-209-154-130-85.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+simp.prv.metlife.com.mx,simp.prv.glbe01.metlife.com.mx,CNAME target does not resolve (NXDOMAIN),Unknown
+gvws.salesforce.metlife.com,gvws.salesforce.glbi01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+sourcing.metlife.com,sourcing.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+dev01.sng.sl.metlife.com,;; communications error to 192.168.29.1#53: timed out,CNAME target does not resolve (NXDOMAIN),Unknown
+mobile.dev.sl.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out",CNAME target does not resolve (NXDOMAIN),Unknown
+ace.metlife.com,mig.ace.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+simp.m.metlife.com.mx,simp.m.glbe01.metlife.com.mx,CNAME target does not resolve (NXDOMAIN),Unknown
+www.metlifecaplan.com,www.extgeo.metlifecaplan.com,CNAME target does not resolve (NXDOMAIN),Unknown
+my.mymetlife.com,my.glbe01.mymetlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+sts.metlife.com,sts.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+stcm.metlife.com,stcm.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+mobile.qa.sl.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out",CNAME target does not resolve (NXDOMAIN),Unknown
+appd-eum.metlife.com,appd-eum.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+gps.metlife.com,gps.glbe01.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+msd.metlife.com,msd.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+www.metlifetermlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+dev.content.service.metlife.com,";; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 192.168.29.1#53: timed out
+;; communications error to 2405:201:4014:13f::c0a8:1d01#53: timed out
+;; no servers could be reached",CNAME target does not resolve (NXDOMAIN),Unknown
+siscmydesktop.metlife.com,siscmydesktop.gtmepr.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+prodmig.midas.metlife.com,prodmig.midas.extgeo.metlife.com,CNAME target does not resolve (NXDOMAIN),Unknown
+simp.w3.metlife.cl,simp.w3.glbe01.metlife.cl,CNAME target does not resolve (NXDOMAIN),Unknown

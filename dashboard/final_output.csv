@@ -1,0 +1,141 @@
+Domain,Source,Seed,IP,Reverse_DNS,HTTP_Status,HTTP_Reason,Redirect_Location,Final_URL,Final_Status,Title,Domain_Status
+*.legalplans.com,assetfinder,legalplans.com,,N/A,,,,,,,New
+*.panel.legalplans.com,assetfinder,legalplans.com,,N/A,,,,,,,New
+*.sponsor.legalplans.com,assetfinder,legalplans.com,,N/A,,,,,,,New
+apple.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,3.86.34.14,ec2-3-86-34-14.compute-1.amazonaws.com,200,OK,,https://members.legalplans.com/?source=apple,200,&quot;MetLife Legal Plans&quot;,New
+attorneys.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,34.205.229.97,ec2-34-205-229-97.compute-1.amazonaws.com,200,OK,,https://attorneys.legalplans.com/,200,MetLife Legal Plans,New
+awesome-feature.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+awesome.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+canary.attorneys.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+canary.external-redirects.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+canary.login.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+canary.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+canary.redirects.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,34.236.234.234,ec2-34-236-234-234.compute-1.amazonaws.com,,,,,,,New
+canary.sponsors.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+cucm.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+dev.external-redirects.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+dev.redirects.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,34.236.234.234,ec2-34-236-234-234.compute-1.amazonaws.com,,,,,,,New
+dev.sponsors.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+digex.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+docgen.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,172.28.193.145,N/A,,,,,,,New
+dr-072022.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+dr-2022.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+dr.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+dr2022.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+dr2023.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+dr22.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+dr3.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+employerportal.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+feature.awesome.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+feature.cash-receipts-ind.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+feature.cash-receipts.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+feature.login-ind.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,18.206.206.51,ec2-18-206-206-51.compute-1.amazonaws.com,200,OK,,https://feature.login-ind.legalplans.com/,200,MetLife Legal Plans,New
+feature.login.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+feature.members-ind.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+feature.oregon.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+feature.sponsors-ind.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+feature.sponsors-indpublic.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+feature.sponsors.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+get-legalplans.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+getlegalplans.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+globalprotect.legalplans.com,"assetfinder,subfinder",legalplans.com,4.53.197.212,N/A,,,,,,,New
+hlpdom01.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,4.53.197.242,N/A,,,,,,,New
+hlphvlp-expwc01.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+hlplin14.legalplans.com,"assetfinder,subfinder",legalplans.com,,N/A,,,,,,,New
+hyatt.legalplans.com,subfinder,legalplans.com,,N/A,,,,,,,New
+info.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,4.53.197.201,N/A,200,OK,,https://www.legalplans.com/why-enroll,200,MetLife Legal Plans,New
+join-legalplans.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+joinlegalplans.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+legacy.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,3.209.98.31,ec2-3-209-98-31.compute-1.amazonaws.com,200,OK,,https://legacy.members.legalplans.com/,200,&quot;MetLife Legal Plans&quot;,New
+legacy.qa.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+legalplans-cloud.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+legalplans-corp.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+legalplans-global.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+legalplans-group.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+legalplans-services.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+legalplans-tech.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+legalplans.ai,brand_tld,legalplans.com,,N/A,,,,,,,New
+legalplans.app,brand_tld,legalplans.com,,N/A,,,,,,,New
+legalplans.cloud,brand_tld,legalplans.com,,N/A,,,,,,,New
+legalplans.co,brand_tld,legalplans.com,103.224.212.202,lb-212-202.above.com,200,OK,,https://legalplans.co/,200,legalplans.co,New
+legalplans.com,"assetfinder,brand_tld,findomain",legalplans.com,52.84.206.113,server-52-84-206-113.del54.r.cloudfront.net,200,OK,,https://legalplans.com/,200,MetLife Legal Plans,New
+legalplans.in,brand_tld,legalplans.com,,N/A,,,,,,,New
+legalplans.io,brand_tld,legalplans.com,,N/A,,,,,,,New
+legalplans.net,brand_tld,legalplans.com,184.95.44.59,N/A,200,OK,,https://prepaidplans.com/,200,"Prepaid Legal Services | Personal, Business &amp; Group Legal Plans",New
+legalplans.org,brand_tld,legalplans.com,184.95.44.59,N/A,200,OK,,https://prepaidplans.com/,200,"Prepaid Legal Services | Personal, Business &amp; Group Legal Plans",New
+legalplans.tech,brand_tld,legalplans.com,,N/A,,,,,,,New
+legalplanscloud.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+legalplanscorp.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+legalplansglobal.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+legalplansgroup.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+legalplansservices.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+legalplanstech.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+login.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,54.235.133.209,ec2-54-235-133-209.compute-1.amazonaws.com,200,OK,,https://login.legalplans.com/,200,MetLife Legal Plans,New
+mail.legalplans.com,subfinder,legalplans.com,,N/A,,,,,,,New
+maintenance.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,3.86.34.14,ec2-3-86-34-14.compute-1.amazonaws.com,,,,,,,New
+members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,100.49.84.186,ec2-100-49-84-186.compute-1.amazonaws.com,200,OK,,https://members.legalplans.com/,200,&quot;MetLife Legal Plans&quot;,New
+mlp-assets.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,13.226.244.79,server-13-226-244-79.fra56.r.cloudfront.net,403,Forbidden,,https://mlp-assets.legalplans.com/,403,,New
+mlp-bot.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,52.73.117.8,ec2-52-73-117-8.compute-1.amazonaws.com,200,OK,,https://mlp-bot.legalplans.com/,200,,New
+mlpdr-west.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+mlpdr.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+my-legalplans.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+mylegalplans.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+newstaging.attorneys.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+newstaging.login.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+newstaging.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+newstaging.sponsors.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+panel.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,4.53.197.203,N/A,200,OK,,https://attorneys.legalplans.com/,200,MetLife Legal Plans,New
+perf.attorneys.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+perf.attorneysp.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,52.86.189.243,ec2-52-86-189-243.compute-1.amazonaws.com,503,Service Temporarily Unavailable,,https://perf.attorneysp.legalplans.com/,503,503 Service Temporarily Unavailable,New
+perf.login.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+perf.loginp.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,54.197.204.150,ec2-54-197-204-150.compute-1.amazonaws.com,503,Service Temporarily Unavailable,,https://perf.loginp.legalplans.com/,503,503 Service Temporarily Unavailable,New
+perf.membersp.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,52.4.150.103,ec2-52-4-150-103.compute-1.amazonaws.com,503,Service Temporarily Unavailable,,https://perf.membersp.legalplans.com/,503,503 Service Temporarily Unavailable,New
+perf.sponsors.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+perf.sponsorsp.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,34.198.249.172,ec2-34-198-249-172.compute-1.amazonaws.com,503,Service Temporarily Unavailable,,https://perf.sponsorsp.legalplans.com/,503,503 Service Temporarily Unavailable,New
+prod.external-redirects.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+production.attorneys.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+pub.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+publicperks.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,3.86.34.14,ec2-3-86-34-14.compute-1.amazonaws.com,200,OK,,https://members.legalplans.com/?source=publicperks,200,&quot;MetLife Legal Plans&quot;,New
+qa.employerportal.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+qa.external-redirects.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+qa.info.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+qa.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+qa.panel.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+qa.redirects.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,34.236.234.234,ec2-34-236-234-234.compute-1.amazonaws.com,,,,,,,New
+qa.retirees.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+qa.sponsor.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+qa.webservices.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+qa.webupload.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+qa.www.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+retirees.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,4.53.197.210,N/A,200,OK,,https://info.legalplans.com/retirees/,200,MetLife Legal Plans - Legal Plan Resource Center,New
+secure-legalplans.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+securelegalplans.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+servicedesk.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,3.86.34.14,ec2-3-86-34-14.compute-1.amazonaws.com,200,OK,,https://www.legalplans.com/,200,MetLife Legal Plans,New
+share.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,100.27.77.180,ec2-100-27-77-180.compute-1.amazonaws.com,404,Not Found,,https://share.legalplans.com/,404,,New
+sksdr.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+sm.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,4.53.197.234,N/A,,,,,,,New
+sponsor.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,4.53.197.205,N/A,200,OK,,https://sponsors.legalplans.com/?fromLegacySponsorApp=1,200,,New
+sponsors.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,44.215.229.120,ec2-44-215-229-120.compute-1.amazonaws.com,200,OK,,https://sponsors.legalplans.com/,200,,New
+staging.attorneys.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,18.210.128.209,ec2-18-210-128-209.compute-1.amazonaws.com,403,Forbidden,,https://staging.attorneys.legalplans.com/,403,403 Forbidden,New
+staging.external-redirects.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+staging.login.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,54.158.152.251,ec2-54-158-152-251.compute-1.amazonaws.com,403,Forbidden,,https://staging.login.legalplans.com/,403,403 Forbidden,New
+staging.members.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,98.83.103.205,ec2-98-83-103-205.compute-1.amazonaws.com,403,Forbidden,,https://staging.members.legalplans.com/,403,403 Forbidden,New
+staging.sponsors.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,3.215.102.47,ec2-3-215-102-47.compute-1.amazonaws.com,403,Forbidden,,https://staging.sponsors.legalplans.com/,403,403 Forbidden,New
+traveler.legalplans.com,"assetfinder,subfinder",legalplans.com,,N/A,,,,,,,New
+try-legalplans.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+trylegalplans.com,brand_pattern,legalplans.com,,N/A,,,,,,,New
+uccx.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+unity.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+upload.legalplans.com,subfinder,legalplans.com,4.53.197.240,N/A,,,,,,,New
+video.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+vpn16.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,4.53.197.252,N/A,,,,,,,New
+webmail.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+webservices.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
+webupload.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,3.86.34.14,ec2-3-86-34-14.compute-1.amazonaws.com,200,OK,,https://webupload.legalplans.com/,200,MetLife Legal Plans - Webupload,New
+wills.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,99.86.30.49,server-99-86-30-49.del51.r.cloudfront.net,200,OK,,https://wills.legalplans.com/,200,Online Wills &amp; Estate Planning,New
+www.info.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,4.53.197.201,N/A,200,OK,,https://www.legalplans.com/why-enroll,200,MetLife Legal Plans,New
+www.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,52.84.206.113,server-52-84-206-113.del54.r.cloudfront.net,200,OK,,https://www.legalplans.com/,200,MetLife Legal Plans,New
+www.members.legalplans.com,"assetfinder,subfinder",legalplans.com,100.29.234.179,ec2-100-29-234-179.compute-1.amazonaws.com,200,OK,,https://www.members.legalplans.com/,200,&quot;MetLife Legal Plans&quot;,New
+www.webupload.legalplans.com,"assetfinder,subfinder",legalplans.com,3.86.34.14,ec2-3-86-34-14.compute-1.amazonaws.com,,,,,,,New
+www2.legalplans.com,"assetfinder,subfinder",legalplans.com,4.53.197.200,N/A,200,OK,,https://www.legalplans.com/,200,MetLife Legal Plans,New
+zg.loady.legalplans.com,"assetfinder,findomain,subfinder",legalplans.com,,N/A,,,,,,,New
