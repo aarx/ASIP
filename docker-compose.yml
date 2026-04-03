@@ -4,13 +4,12 @@ services:
 
   db:
     image: postgres:15
+    restart: unless-stopped
     container_name: asm_db
     environment:
       POSTGRES_USER: asm
       POSTGRES_PASSWORD: asm123
       POSTGRES_DB: asm_db
-    ports:
-      - "5432:5432"
     volumes:
       - asm_pgdata:/var/lib/postgresql/data
 
@@ -20,15 +19,19 @@ services:
     depends_on:
       - db
     ports:
-      - "8000:8000"
+      - "8555:8000"
+    restart: unless-stopped
     volumes:
       - ./backend/data:/app/data
+    environment:
+      - DATABASE_URL=postgresql://asm:asm123@db:5432/asm_db
 
   frontend:
     build: ./frontend
     container_name: asm_frontend
     ports:
-      - "3000:3000"
+      - "3555:3000"
+    restart: unless-stopped
 volumes:
   asm_pgdata:
 

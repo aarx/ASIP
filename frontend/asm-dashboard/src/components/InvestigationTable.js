@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { getInvestigationAssets } from "../services/api";
 
-export default function InvestigationTable({ filter, providerFilter, setProviderFilter }) {
+export default function InvestigationTable({ filter, setFilter }) {
 
   const [data, setData] = useState([]);
   const [search, setSearch] = useState("");
@@ -10,7 +10,7 @@ export default function InvestigationTable({ filter, providerFilter, setProvider
 
   useEffect(() => {
     async function load() {
-      const res = await getInvestigationAssets(page, 20);
+      const res = await getInvestigationAssets(page, 20, filter?.provider);
   
       console.log("API RESPONSE:", res);
   
@@ -31,24 +31,56 @@ export default function InvestigationTable({ filter, providerFilter, setProvider
   }, [filter]);
  
 
-  const filtered = data;
+  const filtered = data.filter(d => {
+  
+    const domain = (d.domain || "").toLowerCase();
+    const provider = (d.provider || "").toLowerCase();
+    const tech = (d.tech || "").toLowerCase();
+  
+    // Search
+    if (search && !domain.includes(search.toLowerCase())) {
+      return false;
+    }
+  
+    // Provider
+    if (filter?.provider) {
+      if (provider !== filter.provider.toLowerCase()) {
+        return false;
+      }
+    }
+  
+    // Tech
+    if (filter?.tech && tech !== filter.tech.toLowerCase()) {
+      return false;
+    }
+  
+    // Risk
+    if (filter?.risk && Number(d.risk) < Number(filter.risk)) {
+      return false;
+    }
+  
+    // Risk dropdown
+    if (riskFilter !== "all" && Number(d.risk) < Number(riskFilter)) {
+      return false;
+    }
+  
+    return true;
+  });        
 
-  const providers = [...new Set(
+    const providers = [...new Set(
     data
       .map(d => d.provider)
       .filter(p => p && p !== "Unknown")
   )];
   
-    console.log("FILTER:", filter, "PROVIDER FILTER:", providerFilter, "DATA:", data.length);
     if (!filter) {
-          return (
-            <div style={{ padding: "40px", textAlign: "center", opacity: 0.6 }}>
-              <h3>🔍 Investigation Console</h3>
-              <p>Click on charts (Provider / Risk / Tech) to explore assets</p>
-            </div>
-          );
-        }  
-        
+      return (
+        <div style={{ padding: "40px", textAlign: "center", opacity: 0.6 }}>
+          <h3>🔍 Investigation Console</h3>
+          <p>Click on charts (Provider / Risk / Tech) to explore assets</p>
+        </div>
+      );
+    }  
 
   return (
     <div style={{marginTop:"60px"}}>
@@ -63,17 +95,32 @@ export default function InvestigationTable({ filter, providerFilter, setProvider
           onChange={e => setSearch(e.target.value)}
         />
 
-        <select onChange={e => setRiskFilter(e.target.value)}>
+        <select
+          value={riskFilter}
+          onChange={e => setRiskFilter(e.target.value)}
+        >
           <option value="all">All Risk</option>
           <option value="1">Risk ≥ 1</option>
           <option value="2">Risk ≥ 2</option>
           <option value="3">Risk ≥ 3</option>
         </select>
 
-        <select onChange={e => console.log("Provider filter change:", e.target.value)}>
+        <select
+          value={filter?.provider || "all"}
+          onChange={(e) => {
+            const value = e.target.value;
+          
+            if (value === "all") {
+              setFilter(prev => ({ ...prev, provider: null }));
+            } else {
+              setFilter(prev => ({ ...prev, provider: value }));
+            }
+          }}
+
+        >
           <option value="all">All Providers</option>
-          {providers.map(p => (
-            <option key={p} value = {p}>{p}</option>
+          {(providers || []).map(p => (
+            <option key={p} value={p}>{p}</option>
           ))}
         </select>
 

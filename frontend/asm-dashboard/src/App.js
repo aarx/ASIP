@@ -20,7 +20,6 @@ function App() {
   const [tech, setTech] = useState(null);
   const [drift, setDrift] = useState(null);
   const [investigationFilter, setInvestigationFilter] = useState(null);
-  const [providerFilter, setProviderFilter] = useState("all");
 
   useEffect(() => {
 
@@ -106,7 +105,6 @@ function App() {
             data={providers}
             onProviderClick={(p) => {
               setInvestigationFilter({ provider: p });
-              setProviderFilter(p);
             }}
           />
         )}
@@ -156,9 +154,8 @@ function App() {
         )}
         <InvestigationTable
           filter={investigationFilter}
-          providerFilter={providerFilter}
-          setProviderFilter = {setProviderFilter}
-        />      
+          setFilter={setInvestigationFilter}
+        />
       </div>
 
     </div>

@@ -1,6 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
+import logging
+import os
+
+os.makedirs("logs", exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("logs/app.log"),
+        logging.StreamHandler()
+    ]
+)
 
 def get_conn():
     return psycopg2.connect(
@@ -779,15 +792,13 @@ def risk_leaderboard():
     scan_id = cur.fetchone()[0]
 
     query = """
-    SELECT 
-        d.domain,
-        dr.risk_score,
-        dr.reasons
+    SELECT d.domain, dr.risk_score, dr.reasons
     FROM domain_risk dr
     JOIN domains d ON dr.domain_id = d.id
-    WHERE dr.scan_id = %s
+    JOIN domain_states ds ON d.id = ds.domain_id
+    WHERE ds.has_ip = TRUE
     ORDER BY dr.risk_score DESC
-    LIMIT 300
+    LIMIT 50;
     """
 
     cur.execute(query, (scan_id,))
@@ -916,9 +927,12 @@ def providers():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT provider, COUNT(*)
-        FROM domain_provider
-        GROUP BY provider
+        SELECT dp.provider, COUNT(*)
+        FROM domain_provider dp
+        JOIN domain_states ds 
+          ON dp.domain_id = ds.domain_id
+        WHERE ds.has_ip = TRUE
+        GROUP BY dp.provider
         ORDER BY COUNT(*) DESC
     """)
 
@@ -938,10 +952,13 @@ def tech():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT tech, COUNT(*)
-        FROM domain_tech
-        GROUP BY tech
-        ORDER BY COUNT(*) DESC
+        SELECT dt.tech, COUNT(*)
+        FROM domain_tech dt
+        JOIN domain_states ds 
+          ON dt.domain_id = ds.domain_id
+        WHERE ds.has_ip = TRUE
+        GROUP BY dt.tech
+        ORDER BY COUNT(*) DESC;
     """)
 
     rows = cur.fetchall()
@@ -1160,7 +1177,7 @@ def export_enriched_csv():
 
 
 @app.get("/investigation-assets")
-def investigation_assets(page: int = 1, limit: int = 20):
+def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
 
     offset = (page - 1) * limit
 
@@ -1211,6 +1228,11 @@ def investigation_assets(page: int = 1, limit: int = 20):
         ON d.id = dr.domain_id
         AND dr.scan_id = %s
     
+    WHERE ds.has_ip = TRUE
+    AND dp.provider IS NOT NULL
+    AND dp.provider != 'Unknown'
+    AND (%s IS NULL OR %s = '' OR LOWER(dp.provider) = LOWER(%s))
+    
     GROUP BY 
         d.domain, d.is_known,
         ds.ip, ds.has_ip, ds.http_status,
@@ -1220,7 +1242,11 @@ def investigation_assets(page: int = 1, limit: int = 20):
 
     cur.execute(
         query + " LIMIT %s OFFSET %s",
-        (scan_id, scan_id, scan_id, scan_id, scan_id, scan_id, limit, offset)
+        (
+            scan_id, scan_id, scan_id, scan_id, scan_id, scan_id,
+            provider, provider, provider,
+            limit, offset
+        )
     )
 
     rows = cur.fetchall()
