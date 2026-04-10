@@ -1,71 +1,165 @@
 import subprocess
-import time
+import psycopg2
 from datetime import datetime
+import time
+import logging
+import os
+import sys
 
-LOG_FILE = "pipeline.log"
+# -------------------------
+# LOGGING SETUP
+# -------------------------
+os.makedirs("logs", exist_ok=True)
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("logs/orchestrator.log"),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 
-def log(message):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{timestamp}] {message}"
-    print(line)
-    with open(LOG_FILE, "a") as f:
-        f.write(line + "\n")
+# -------------------------
+# DB CONNECTION
+# -------------------------
+def get_conn():
+    return psycopg2.connect(
+        host="db",
+        dbname="asm_db",
+        user="asm",
+        password="asm123"
+    )
 
+# -------------------------
+# CREATE SCAN
+# -------------------------
+def create_scan():
+    conn = get_conn()
+    cur = conn.cursor()
 
-def run_step(name, command):
-    log(f"START: {name}")
+    cur.execute("""
+    INSERT INTO scans(started_at)
+    VALUES (NOW())
+    RETURNING id
+    """)
+
+    scan_id = cur.fetchone()[0]
+    conn.commit()
+    conn.close()
+
+    logging.info(f"🚀 Scan Created: {scan_id}")
+    return scan_id
+
+# -------------------------
+# RUN STEP
+# -------------------------
+def run_step(name, cmd):
+
+    logging.info("=" * 60)
+    logging.info(f"STARTING: {name}")
+    logging.info(f"Command: {cmd}")
+
     start = time.time()
 
     try:
-        result = subprocess.run(command, shell=True, check=True)
-    except subprocess.CalledProcessError:
-        log(f"FAILED: {name}")
-        exit(1)
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True
+        )
 
-    duration = round(time.time() - start, 2)
-    log(f"END: {name} (took {duration}s)\n")
+        duration = round(time.time() - start, 2)
 
-
-# 🔁 For batch workers
-def run_batch_step(name, command, max_runs=10, sleep_sec=2):
-    log(f"START BATCH: {name}")
-
-    for i in range(max_runs):
-        log(f"{name} - batch run {i+1}")
-
-        result = subprocess.run(command, shell=True)
-
-        # 👇 You can improve this condition later
         if result.returncode != 0:
-            log(f"{name} - stopping (no more data or error)")
-            break
+            logging.error(f"FAILED: {name} ({duration}s)")
+            logging.error(f"STDERR:\n{result.stderr}")
+            raise Exception(f"{name} failed")
 
-        time.sleep(sleep_sec)
+        logging.info(f"COMPLETED: {name} ({duration}s)")
 
-    log(f"END BATCH: {name}\n")
+    except Exception as e:
+        logging.exception(f"ERROR in step: {name}")
+        raise e
 
 
+# -------------------------
+# MAIN PIPELINE
+# -------------------------
+def main():
+
+    logging.info("CRON TRIGGERED ORCHESTRATION")
+
+    scan_id = create_scan()
+
+    pipeline = [
+        # ENTRY
+        ("Recon", "python recon.py --expand seeds.txt"),
+        ("Ingest", f"python ingest.py {scan_id}"),
+
+        # EXPANSION
+        ("SAN Expansion", f"python san_worker.py {scan_id}"),
+        ("SAN State Sync", f"python san_state_sync.py {scan_id}"),
+
+        # DNS
+        ("DNS Resolution", f"python dns_worker.py {scan_id}"),
+
+        # ENRICHMENT
+        ("Cert Worker", f"python cert_worker.py {scan_id}"),
+        ("Port Scan", f"python port_scan_worker.py {scan_id}"),
+        ("Tech Detection", f"python tech_worker.py {scan_id}"),
+        ("ASN Lookup", f"python asn_worker.py {scan_id}"),
+        ("Provider Mapping", f"python provider_worker.py {scan_id}"),
+
+        # TAKEOVER
+        ("Takeover Detection", f"python takeover_worker.py {scan_id}"),
+
+        # FINAL
+        ("Risk Scoring", f"python risk_worker.py {scan_id}")
+    ]
+
+    try:
+        for name, cmd in pipeline:
+            run_step(name, cmd)
+
+        # mark complete
+        conn = get_conn()
+        cur = conn.cursor()
+
+        cur.execute("""
+        UPDATE scans
+        SET completed_at = NOW()
+        WHERE id = %s
+        """, (scan_id,))
+
+        conn.commit()
+        conn.close()
+
+        logging.info(f"SCAN COMPLETE: {scan_id}")
+
+    except Exception as e:
+        logging.error(f"PIPELINE FAILED for scan_id={scan_id}")
+
+        # optional: mark failed
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+
+            cur.execute("""
+            UPDATE scans
+            SET completed_at = NOW()
+            WHERE id = %s
+            """, (scan_id,))
+
+            conn.commit()
+            conn.close()
+        except:
+            logging.error("Failed to update scan status in DB")
+
+        sys.exit(1)
+
+
+# -------------------------
 if __name__ == "__main__":
-
-    log("===== PIPELINE START =====\n")
-
-    run_step("Recon", "python recon.py")
-
-    run_step("Ingest", "python ingest.py")
-
-    run_step("Cert Worker", "python cert_worker.py")
-
-    run_step("SAN Worker", "python san_worker.py")
-
-    run_batch_step("Port Scan Worker", "python port_scan_worker.py")
-
-    run_batch_step("Tech Worker", "python tech_worker.py")
-
-    run_step("Provider Worker", "python provider_worker.py")
-
-    run_step("ASN Worker", "python asn_worker.py")
-
-    run_step("Risk Worker", "python risk_worker.py")
-
-    log("===== PIPELINE COMPLETE =====")
+    main()

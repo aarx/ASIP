@@ -4,6 +4,10 @@ import ssl
 from datetime import datetime
 import logging
 import os
+import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+scan_id = int(sys.argv[1])
 
 os.makedirs("logs", exist_ok=True)
 
@@ -30,21 +34,25 @@ def get_domains():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    scan_id = cur.fetchone()[0]
-
     cur.execute("""
         SELECT d.id, d.domain, ds.ip
         FROM domain_states ds
-        JOIN domains d ON d.id = ds.domain_id
-        WHERE ds.scan_id=%s
-        AND ds.has_ip = TRUE
-    """, (scan_id,))
+        JOIN domains d 
+          ON d.id = ds.domain_id
+          AND ds.scan_id = %s
+        
+        LEFT JOIN domain_cert dc
+          ON d.id = dc.domain_id
+          AND dc.scan_id = %s
+        
+        WHERE ds.has_ip = TRUE
+        AND dc.domain_id IS NULL
+    """, (scan_id, scan_id))
 
     rows = cur.fetchall()
     conn.close()
 
-    return scan_id, rows
+    return rows
 
 
 def fetch_cert_expiry(domain):
@@ -79,14 +87,14 @@ def fetch_cert_expiry(domain):
 
 def main():
 
-    scan_id, domains = get_domains()
+    domains = get_domains()
 
-    print("Cert scan for", len(domains), "domains")
+    print("Scan ID:", scan_id)
+    print("Rows to process:", len(domains))
 
     conn = get_conn()
     cur = conn.cursor()
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     
     MAX_WORKERS = 40
     
@@ -126,6 +134,7 @@ def main():
                     cert_status
                 )
                 VALUES (%s,%s,%s,%s,%s)
+                ON CONFLICT (domain_id, scan_id) DO NOTHING
             """, (domain_id, scan_id, expiry, days, status))
     
     

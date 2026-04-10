@@ -2,6 +2,9 @@ import psycopg2
 import requests
 import logging
 import os
+import sys
+
+scan_id = int(sys.argv[1])
 
 os.makedirs("logs", exist_ok=True)
 
@@ -59,21 +62,24 @@ def main():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    scan_id = cur.fetchone()[0]
-
     cur.execute("""
     SELECT DISTINCT ON (d.id) d.id, d.domain
     FROM domains d
     JOIN domain_states s
-    ON d.id = s.domain_id
+      ON d.id = s.domain_id
+    LEFT JOIN domain_tech dt
+      ON d.id = dt.domain_id
+      AND dt.scan_id = %s
+    
     WHERE s.scan_id = %s
-    AND d.tech_done = FALSE
+    AND dt.domain_id IS NULL
     AND s.http_status > 0
     ORDER BY d.id, s.scan_id DESC
-    LIMIT 1000
-    """, (scan_id,))
+    """, (scan_id, scan_id))
+    
     rows = cur.fetchall()
+    
+    print("Rows to process:", len(rows))
 
     for domain_id, domain in rows:
 
@@ -89,18 +95,12 @@ def main():
         
         for tech in techs:
         
-
+            print("DEBUG → inserting into domain_tech")
             cur.execute("""
             INSERT INTO domain_tech(domain_id, scan_id, tech)
             VALUES (%s, %s, %s)
-            ON CONFLICT (domain_id, tech) DO NOTHING
+            ON CONFLICT (domain_id, scan_id) DO NOTHING
             """, (domain_id, scan_id, tech))
-        
-        cur.execute("""
-            UPDATE domains
-            SET tech_done = TRUE
-            WHERE id = %s
-        """, (domain_id,))
 
     conn.commit()
     conn.close()

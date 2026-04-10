@@ -3,6 +3,9 @@ import subprocess
 import re
 import logging
 import os
+import sys
+
+scan_id = int(sys.argv[1])
 
 os.makedirs("logs", exist_ok=True)
 
@@ -29,25 +32,27 @@ def get_resolving_domains():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    scan_id = cur.fetchone()[0]
-
     cur.execute("""
     SELECT DISTINCT ON (d.id) d.id, d.domain
     FROM domains d
     JOIN domain_states s
-    ON d.id = s.domain_id
+      ON d.id = s.domain_id
+      AND s.scan_id = %s
+    
+    LEFT JOIN domain_ports dp
+      ON d.id = dp.domain_id
+      AND dp.scan_id = %s
+    
     WHERE s.has_ip = TRUE
-    AND d.port_done = FALSE
+    AND dp.domain_id IS NULL
     ORDER BY d.id, s.scan_id DESC
-    LIMIT 1000
-    """)
+    """, (scan_id, scan_id))
 
     rows = cur.fetchall()
 
     conn.close()
 
-    return scan_id, rows
+    return rows
 
 
 def scan_ports(domain):
@@ -102,9 +107,10 @@ def scan_ports(domain):
 
 def main():
 
-    scan_id, domains = get_resolving_domains()
-
-    print(f"Scanning {len(domains)} domains")
+    domains = get_resolving_domains()
+    
+    print("Scan ID:", scan_id)              
+    print("Rows to scan:", len(domains))  
 
     conn = get_conn()
     cur = conn.cursor()
@@ -123,14 +129,11 @@ def main():
             cur.execute("""
             INSERT INTO domain_ports(domain_id, scan_id, port, service)
             VALUES (%s, %s, %s, %s)
-            ON CONFLICT (domain_id, port) DO NOTHING
+            ON CONFLICT (domain_id, port, scan_id) DO NOTHING
             """, (domain_id, scan_id, port, service))
-    
-        
-        cur.execute("""
-            UPDATE domains SET port_done = TRUE
-            WHERE id = %s
-        """, (domain_id,))
+         
+        if not domains:
+            print("No domains to scan for this run")
 
     conn.commit()
     conn.close()

@@ -2,6 +2,9 @@ import psycopg2
 from datetime import datetime
 import logging
 import os
+import sys
+
+scan_id = int(sys.argv[1])
 
 os.makedirs("logs", exist_ok=True)
 
@@ -75,9 +78,6 @@ def main():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    scan_id = cur.fetchone()[0]
-
     print("Computing risk for scan:", scan_id)
 
     cur.execute("""
@@ -89,30 +89,40 @@ def main():
         COALESCE(dp.provider,'Unknown'),
         COALESCE(dt.tech,'unknown'),
         ce.days_to_expiry,
-
+    
         EXISTS(
             SELECT 1 FROM domain_ports p
             JOIN sensitive_ports sp
-            ON p.port = sp.port
+              ON p.port = sp.port
             WHERE p.domain_id = d.id
+            AND p.scan_id = %s  
         ) as sensitive_port
-
+    
     FROM domains d
-
+    
     LEFT JOIN domain_states ds
         ON d.id = ds.domain_id
-
+        AND ds.scan_id = %s  
+    
     LEFT JOIN domain_provider dp
         ON d.id = dp.domain_id
-
+        AND dp.scan_id = %s  
+    
     LEFT JOIN domain_tech dt
         ON d.id = dt.domain_id
-
+        AND dt.scan_id = %s   
+    
     LEFT JOIN cert_expiry ce
         ON d.id = ce.domain_id
-    """)
+        AND ce.scan_id = %s
+        
+    WHERE ds.has_ip = TRUE
+    
+    """, (scan_id, scan_id, scan_id, scan_id, scan_id))   
     
     rows = cur.fetchall()
+    
+    print("Rows fetched for risk:", len(rows))
     
     risk_inputs = {}
     

@@ -2,6 +2,9 @@ import psycopg2
 import socket
 import logging
 import os
+import sys
+
+scan_id = int(sys.argv[1])
 
 os.makedirs("logs", exist_ok=True)
 
@@ -74,39 +77,34 @@ def main():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    scan_id = cur.fetchone()[0]
-
     cur.execute("""
     SELECT DISTINCT ON (d.id) d.id, d.domain, a.org
     FROM domains d
     JOIN domain_asn a
-    ON d.id = a.domain_id
-    WHERE d.provider_done = FALSE
-    ORDER BY d.id
-    LIMIT 1000
-    """)
+      ON d.id = a.domain_id
+      AND a.scan_id = %s
+    
+    LEFT JOIN domain_provider dp
+      ON d.id = dp.domain_id
+      AND dp.scan_id = %s
+    
+    WHERE dp.domain_id IS NULL
+    ORDER BY d.id, a.scan_id DESC
+    """, (scan_id, scan_id))
 
     rows = cur.fetchall()
 
     for domain_id, domain, org in rows:
 
-        provider = map_provider(org or "")
+        provider = map_provider(org or "") or "Other"
     
         print(f"{domain} → {org} → {provider}")
 
         cur.execute("""
         INSERT INTO domain_provider(domain_id, scan_id, provider)
         VALUES (%s, %s, %s)
-        ON CONFLICT (domain_id) DO NOTHING
-        """, (domain_id, scan_id, provider))
-
-        cur.execute("""
-        UPDATE domains
-        SET provider_done = TRUE
-        WHERE id = %s
-        """, (domain_id,))        
-               
+        ON CONFLICT (domain_id, scan_id) DO NOTHING
+        """, (domain_id, scan_id, provider)) 
 
     conn.commit()
     conn.close()

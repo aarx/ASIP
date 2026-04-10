@@ -3,6 +3,9 @@ import ssl
 import socket
 import logging
 import os
+import sys
+
+scan_id = int(sys.argv[1])
 
 os.makedirs("logs", exist_ok=True)
 
@@ -42,20 +45,28 @@ def main():
     conn = get_conn()
     cur = conn.cursor()
 
+    print("SAN scan for scan_id:", scan_id)
+
     cur.execute("""
     SELECT DISTINCT ON (d.id) d.id, d.domain
     FROM domains d
     JOIN domain_states ds
-    ON d.id = ds.domain_id
+      ON d.id = ds.domain_id
+      AND ds.scan_id = %s
+    
+    LEFT JOIN domain_san dsan
+      ON d.id = dsan.domain_id
+      AND dsan.scan_id = %s
+    
     WHERE ds.has_ip = TRUE
-    AND d.san_processed = FALSE
+    AND dsan.domain_id IS NULL
     ORDER BY d.id, ds.scan_id DESC
-    LIMIT 2000
-    """)
+    """, (scan_id, scan_id))
     
     rows = cur.fetchall()
 
-    print("Processing domains:", len(rows))
+    print("Scan ID:", scan_id)
+    print("Rows to process:", len(rows))
 
     new_count = 0
 
@@ -65,30 +76,51 @@ def main():
             print(f"[{i}/{len(rows)}] Processing: {domain}")
     
         san_domains = fetch_san_domains(domain)
-    
+
+        cur.execute("""
+        INSERT INTO domain_san(domain_id, scan_id)
+        VALUES (%s, %s)
+        ON CONFLICT (domain_id, scan_id) DO NOTHING
+        """, (domain_id, scan_id))
+            
         for san in san_domains:
             san = san.lower().strip()
-    
+                     
             if "*" in san:
                 continue
-    
-            cur.execute("SELECT 1 FROM domains WHERE domain=%s", (san,))
-            exists = cur.fetchone()
-    
-            if not exists:
-                cur.execute("""
-                    INSERT INTO domains(domain, source, enrichment_status)
-                    VALUES (%s, 'san', 'pending')
-                """, (san,))
-                new_count += 1
-    
-        # ⭐ ADD THIS BLOCK HERE
-        cur.execute("""
-            UPDATE domains 
-            SET san_processed = TRUE 
-            WHERE id = %s
-        """, (domain_id,))
-        
+                
+            if san == domain:
+                continue
+
+            if "." not in san:
+                continue                
+     
+            # insert or get domain_id
+            cur.execute("""
+            INSERT INTO domains(domain, first_seen_scan, last_seen_scan)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (domain)
+            DO UPDATE SET last_seen_scan = EXCLUDED.last_seen_scan
+            RETURNING (xmax = 0) AS inserted
+            """, (san, scan_id, scan_id))
+            
+            res = cur.fetchone()
+            
+            if res:
+                inserted = res[0]
+            else:
+                inserted = False
+                cur.execute("SELECT id FROM domains WHERE domain=%s", (san,))
+                new_domain_id = cur.fetchone()[0]
+            
+            if res:
+                cur.execute("SELECT id FROM domains WHERE domain=%s", (san,))
+                new_domain_id = cur.fetchone()[0]
+            
+            # count only if newly inserted
+            if inserted:
+                new_count += 1        
+
         if i % 100 == 0:
             conn.commit()
             print("Checkpoint commit at:", i)

@@ -3,6 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import logging
 import os
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+import csv
+import io
+from datetime import datetime
 
 os.makedirs("logs", exist_ok=True)
 
@@ -61,14 +66,60 @@ def summary():
     """, (latest_scan,))
     http_live = cur.fetchone()[0]
 
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM domain_findings 
+        WHERE scan_id = %s
+    """, (latest_scan,))
+    
+    findings_count = cur.fetchone()[0]
+ 
+    # SHADOW ASSETS COUNT
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM domain_states ds
+        JOIN domains d ON d.id = ds.domain_id
+        WHERE ds.scan_id = %s
+        AND ds.has_ip = TRUE
+        AND ds.http_live = FALSE
+    """, (latest_scan,))
+    
+    shadow_assets = cur.fetchone()[0]
+    
+    # Potential Shadow Assets
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM domain_states ds
+        JOIN domains d ON d.id = ds.domain_id
+        WHERE ds.scan_id = %s
+        AND ds.has_ip = TRUE
+        AND d.is_known = FALSE
+    """, (latest_scan,))
+    shadow_assets = cur.fetchone()[0]
+    
+    
+    # Non-Web Assets
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM domain_states
+        WHERE scan_id = %s
+        AND has_ip = TRUE
+        AND http_live = FALSE
+    """, (latest_scan,))
+    non_web_assets = cur.fetchone()[0]
+ 
     conn.close()
-
+    
     return {
         "total_domains": total_domains,
         "live_domains": live_domains,
         "known_domains": 0,
-        "new_domains": http_live
+        "new_domains": http_live,
+        "findings": findings_count,
+        "shadow_assets": shadow_assets,
+        "non_web_assets": non_web_assets
     }
+    
 
 @app.get("/http-status")
 def http_status():
@@ -566,15 +617,16 @@ def sensitive_exposure():
         SELECT 
             d.domain,
             dp.port,
-            sp.risk_score,
-            sp.description
+            sp.risk,
+            COALESCE(sp.description, 'unknown') as description
         FROM domain_ports dp
         JOIN sensitive_ports sp
             ON dp.port = sp.port
         JOIN domains d
             ON dp.domain_id = d.id
         WHERE dp.scan_id = %s
-        ORDER BY sp.risk_score DESC
+        ORDER BY sp.risk DESC
+        LIMIT 20
     """, (scan_id,))
 
     rows = cur.fetchall()
@@ -679,7 +731,7 @@ def provider_clusters():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(scan_id) FROM domain_networks")
+    cur.execute("SELECT MAX(scan_id) FROM domain_provider")
     scan_id = cur.fetchone()[0]
 
     cur.execute("""
@@ -690,7 +742,7 @@ def provider_clusters():
                 ELSE provider
             END AS provider,
             COUNT(*)
-        FROM domain_networks
+        FROM domain_provider
         WHERE scan_id = %s
         GROUP BY provider
         ORDER BY COUNT(*) DESC
@@ -717,67 +769,74 @@ def shadow_assets():
     cur.execute("SELECT MAX(scan_id) FROM domain_states")
     state_scan = cur.fetchone()[0]
 
-    cur.execute("SELECT MAX(scan_id) FROM domain_networks")
-    net_scan = cur.fetchone()[0]
-
     cur.execute("""
         SELECT
             d.domain,
             ds.has_ip,
             ds.http_live,
-            COUNT(dp.port) as ports,
+            COUNT(dp2.port) as ports,
             COUNT(sp.port) as sensitive,
-            dn.provider
+            dp.provider
         FROM domains d
+    
         JOIN domain_states ds
             ON d.id = ds.domain_id
-        LEFT JOIN domain_ports dp
+    
+        LEFT JOIN domain_ports dp2
+            ON d.id = dp2.domain_id
+            AND dp2.scan_id = ds.scan_id
+    
+        LEFT JOIN sensitive_ports sp
+            ON dp2.port = sp.port
+    
+        LEFT JOIN domain_provider dp
             ON d.id = dp.domain_id
             AND dp.scan_id = ds.scan_id
-        LEFT JOIN sensitive_ports sp
-            ON dp.port = sp.port
-        LEFT JOIN domain_networks dn
-            ON d.id = dn.domain_id
-            AND dn.scan_id = %s
+    
         WHERE ds.scan_id = %s
-        GROUP BY d.domain, ds.has_ip, ds.http_live, dn.provider
-    """, (net_scan, state_scan))
+    
+        GROUP BY d.domain, ds.has_ip, ds.http_live, dp.provider
+    """, (state_scan,))
 
     rows = cur.fetchall()
 
     conn.close()
 
     results = []
-
+    
     for r in rows:
-
+    
         domain, has_ip, http_live, ports, sensitive, provider = r
-
+    
         score = 0
         reasons = []
-
+    
         if has_ip and not http_live:
             score += 2
             reasons.append("resolves_no_http")
-
+    
         if sensitive > 0:
             score += 3
-            reasons.append("sensitive_port")
-
+            reasons.append("sensitive_ports")
+    
         if ports > 3:
             score += 1
             reasons.append("many_ports")
-
-        if provider and "amazon" in provider.lower():
+    
+        if provider and any(x in provider.lower() for x in ["amazon", "aws", "azure", "gcp"]):
             score += 1
-            reasons.append("cloud_hosted")
-
+            reasons.append("cloud")
+    
+        # 🎯 Only keep meaningful ones
         if score >= 3:
             results.append({
                 "domain": domain,
                 "score": score,
                 "reasons": reasons
             })
+    
+    # sort + limit
+    return sorted(results, key=lambda x: x["score"], reverse=True)[:50]
 
     return sorted(results, key=lambda x: x["score"], reverse=True)
 
@@ -1072,11 +1131,12 @@ import io
 import pandas as pd
 
 
-@app.get("/export/enriched-csv")
+@app.get("/export")
 def export_enriched_csv():
 
     import pandas as pd
     import io
+    from datetime import datetime
     from fastapi.responses import StreamingResponse
 
     conn = get_conn()
@@ -1094,34 +1154,46 @@ def export_enriched_csv():
         d.last_seen_scan,
 
         ds.ip,
-        ds.has_ip,
-        ds.http_live,
         ds.http_status,
+        ds.reverse_dns,
+        ds.final_url,
+        ds.title,
 
         COALESCE(dp.provider, 'Unknown') as provider,
         COALESCE(da.asn, 'Unknown') as asn,
-        COALESCE(dt.tech, 'Unknown') as tech
+        COALESCE(dt.tech, 'Unknown') as tech,
+
+        COALESCE(dr.risk_score, 0) as risk_score,
+        COALESCE(dr.reasons, '') as reasons,
+
+        COALESCE(dc.cert_status, 'unknown') as cert_status,
+        COALESCE(dc.days_to_expiry, -1) as days_to_expiry,
+
+        ds.has_ip,
+        ds.http_live
 
     FROM domains d
 
     LEFT JOIN domain_states ds
-        ON d.id = ds.domain_id
-        AND ds.scan_id = %s
+        ON d.id = ds.domain_id AND ds.scan_id = %s
 
     LEFT JOIN domain_provider dp
-        ON d.id = dp.domain_id
-        AND dp.scan_id = %s
+        ON d.id = dp.domain_id AND dp.scan_id = %s
 
     LEFT JOIN domain_asn da
-        ON d.id = da.domain_id
-        AND da.scan_id = %s
+        ON d.id = da.domain_id AND da.scan_id = %s
 
     LEFT JOIN domain_tech dt
-        ON d.id = dt.domain_id
-        AND dt.scan_id = %s
+        ON d.id = dt.domain_id AND dt.scan_id = %s
+
+    LEFT JOIN domain_risk dr
+        ON d.id = dr.domain_id AND dr.scan_id = %s
+
+    LEFT JOIN domain_cert dc
+        ON d.id = dc.domain_id AND dc.scan_id = %s
     """
 
-    cur.execute(query, (scan_id, scan_id, scan_id, scan_id))
+    cur.execute(query, (scan_id, scan_id, scan_id, scan_id, scan_id, scan_id))
     rows = cur.fetchall()
 
     columns = [
@@ -1130,17 +1202,24 @@ def export_enriched_csv():
         "first_seen_scan",
         "last_seen_scan",
         "ip",
-        "has_ip",
-        "http_live",
         "http_status",
+        "reverse_dns",
+        "final_url",
+        "title",
         "provider",
         "asn",
-        "tech"
+        "tech",
+        "risk_score",
+        "reasons",
+        "cert_status",
+        "days_to_expiry",
+        "has_ip",
+        "http_live"
     ]
 
     df = pd.DataFrame(rows, columns=columns)
 
-    # ⭐ PORT aggregation (LATEST SCAN ONLY)
+    # ⭐ PORT aggregation
     cur.execute("""
         SELECT d.domain, dp.port
         FROM domain_ports dp
@@ -1151,7 +1230,6 @@ def export_enriched_csv():
     port_rows = cur.fetchall()
 
     port_map = {}
-
     for domain, port in port_rows:
         port_map.setdefault(domain, []).append(str(port))
 
@@ -1159,7 +1237,74 @@ def export_enriched_csv():
         lambda d: ",".join(port_map.get(d, []))
     )
 
+    # ⭐ SENSITIVE PORTS
+    cur.execute("""
+        SELECT d.domain, COUNT(*) 
+        FROM domain_ports dp
+        JOIN sensitive_ports sp ON dp.port = sp.port
+        JOIN domains d ON dp.domain_id = d.id
+        WHERE dp.scan_id = %s
+        GROUP BY d.domain
+    """, (scan_id,))
+
+    sens_rows = cur.fetchall()
+    sens_map = {d: c for d, c in sens_rows}
+
+    df["sensitive_ports"] = df["domain"].map(
+        lambda d: sens_map.get(d, 0)
+    )
+
     conn.close()
+
+    # ⭐ SHADOW TYPE
+    def get_shadow(row):
+        if not row["is_known"] and row["has_ip"]:
+            return "unknown"
+        elif row["has_ip"] and not row["http_live"]:
+            return "non_web"
+        elif not row["is_known"] and not row["http_live"]:
+            return "both"
+        return "none"
+
+    df["shadow_type"] = df.apply(get_shadow, axis=1)
+
+    # ⭐ EXPOSURE
+    def get_exposure(row):
+        ports = row.get("ports", "")
+        if row["http_live"] and ports:
+            return "mixed"
+        elif row["http_live"]:
+            return "web"
+        return "non-web"
+
+    df["exposure"] = df.apply(get_exposure, axis=1)
+
+    # ❌ REMOVE NOISE
+    df.drop(columns=["has_ip", "http_live"], inplace=True)
+
+    # ⭐ RENAME COLUMNS
+    df.rename(columns={
+        "domain": "Domain",
+        "is_known": "Is Known",
+        "first_seen_scan": "First Seen",
+        "last_seen_scan": "Last Seen",
+        "ip": "IP",
+        "http_status": "HTTP Status",
+        "reverse_dns": "Reverse DNS",
+        "final_url": "Final URL",
+        "title": "Title",
+        "provider": "Provider",
+        "asn": "ASN",
+        "tech": "Tech",
+        "risk_score": "Risk Score",
+        "reasons": "Reasons",
+        "ports": "Open Ports",
+        "sensitive_ports": "Sensitive Ports",
+        "shadow_type": "Shadow Type",
+        "exposure": "Exposure",
+        "cert_status": "Cert Status",
+        "days_to_expiry": "Days to Expiry"
+    }, inplace=True)
 
     # ⭐ CSV STREAM
     stream = io.StringIO()
@@ -1170,11 +1315,12 @@ def export_enriched_csv():
         media_type="text/csv"
     )
 
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     response.headers["Content-Disposition"] = \
-        f"attachment; filename=external_attack_surface_scan_{scan_id}.csv"
+        f"attachment; filename=asm_scan_{scan_id}_{timestamp}.csv"
 
     return response
-
 
 @app.get("/investigation-assets")
 def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
@@ -1275,3 +1421,176 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
         "count": len(assets),
         "assets": assets
     }
+
+@app.get("/findings")
+def findings():
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    # latest scan
+    cur.execute("SELECT MAX(id) FROM scans")
+    scan_id = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT 
+            d.domain,
+            df.finding,
+            df.severity,
+            df.evidence
+        FROM domain_findings df
+        JOIN domains d 
+            ON d.id = df.domain_id
+        WHERE df.scan_id = %s
+        ORDER BY 
+            CASE 
+                WHEN df.severity = 'HIGH' THEN 1
+                WHEN df.severity = 'MEDIUM' THEN 2
+                ELSE 3
+            END
+    """, (scan_id,))
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return [
+        {
+            "domain": r[0],
+            "finding": r[1],
+            "severity": r[2],
+            "evidence": r[3]
+        }
+        for r in rows
+    ]
+    
+@app.get("/cert-expiry")
+def cert_expiry():
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT 
+            d.domain,
+            dc.expiry_date,
+            dc.days_to_expiry,
+            dc.cert_status
+        FROM domain_cert dc
+        JOIN domains d ON d.id = dc.domain_id
+        WHERE dc.scan_id = (SELECT MAX(id) FROM scans)
+        ORDER BY dc.days_to_expiry ASC NULLS LAST
+        LIMIT 50
+    """)
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return [
+        {
+            "domain": r[0],
+            "expiry": str(r[1]) if r[1] else None,
+            "days": r[2],
+            "status": r[3]
+        }
+        for r in rows
+    ]
+    
+@app.get("/shadow-summary")
+def shadow_summary():
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    # latest scan
+    cur.execute("SELECT MAX(scan_id) FROM domain_states")
+    scan_id = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT 
+            CASE
+                WHEN COUNT(sp.port) >= 3 THEN 'High'
+                WHEN COUNT(sp.port) >= 1 THEN 'Medium'
+                ELSE 'Low'
+            END as risk,
+            COUNT(*) as count
+        FROM domains d
+        JOIN domain_states ds ON d.id = ds.domain_id
+        LEFT JOIN domain_ports dp 
+            ON d.id = dp.domain_id AND dp.scan_id = ds.scan_id
+        LEFT JOIN sensitive_ports sp 
+            ON dp.port = sp.port
+        WHERE ds.scan_id = %s
+        AND ds.has_ip = TRUE
+        AND ds.http_live = FALSE
+        GROUP BY risk
+    """, (scan_id,))
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return [{"risk": r[0], "count": r[1]} for r in rows]
+    
+@app.get("/shadow-by-provider")
+def shadow_by_provider():
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    # latest scan
+    cur.execute("SELECT MAX(scan_id) FROM domain_states")
+    scan_id = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT 
+            COALESCE(dp.provider, 'Unknown') as provider,
+            COUNT(*)
+        FROM domain_provider dp
+        JOIN domains d ON d.id = dp.domain_id
+        WHERE dp.scan_id = %s
+        AND d.is_known = FALSE
+        GROUP BY provider
+        ORDER BY COUNT(*) DESC
+    """, (scan_id,))
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return [{"provider": r[0], "count": r[1]} for r in rows]
+    
+@app.get("/non-web-summary")
+def non_web_summary():
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT MAX(scan_id) FROM domain_states")
+    scan_id = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT 
+            CASE
+                WHEN COUNT(sp.port) >= 3 THEN 'High'
+                WHEN COUNT(sp.port) >= 1 THEN 'Medium'
+                ELSE 'Low'
+            END as risk,
+            COUNT(*) as count
+        FROM domain_states ds
+
+        LEFT JOIN domain_ports dp
+            ON ds.domain_id = dp.domain_id
+            AND ds.scan_id = dp.scan_id
+
+        LEFT JOIN sensitive_ports sp
+            ON dp.port = sp.port
+
+        WHERE ds.scan_id = %s
+        AND ds.has_ip = TRUE
+        AND ds.http_live = FALSE
+
+        GROUP BY risk
+    """, (scan_id,))
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return [{"risk": r[0], "count": r[1]} for r in rows]    
