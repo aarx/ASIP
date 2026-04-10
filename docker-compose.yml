@@ -23,6 +23,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./backend/data:/app/data
+      - ./backend/logs:/app/logs
     environment:
       - DATABASE_URL=postgresql://asm:asm123@db:5432/asm_db
 

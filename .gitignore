@@ -1,8 +1,18 @@
-node_modules/
-__psycache__/
-*.pyc
+# 🔒 Sensitive / heavy
+*.sql
+*.dump
+backend/logs/
+
+# env
 .env
-.env.*
-*.log
-dist/
+
+# python
+__pycache__/
+*.pyc
+
+# node
+node_modules/
 build/
+
+# docker
+*.pid
