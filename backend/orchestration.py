@@ -48,7 +48,7 @@ def create_scan():
     conn.commit()
     conn.close()
 
-    logging.info(f"🚀 Scan Created: {scan_id}")
+    logging.info(f"Scan Created: {scan_id}")
     return scan_id
 
 # -------------------------
@@ -63,18 +63,25 @@ def run_step(name, cmd):
     start = time.time()
 
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             cmd,
             shell=True,
-            capture_output=True,
-            text=True
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
         )
+
+        # STREAM OUTPUT LIVE
+        for line in process.stdout:
+            logging.info(f"[{name}] {line.strip()}")
+
+        process.wait()
 
         duration = round(time.time() - start, 2)
 
-        if result.returncode != 0:
+        if process.returncode != 0:
             logging.error(f"FAILED: {name} ({duration}s)")
-            logging.error(f"STDERR:\n{result.stderr}")
             raise Exception(f"{name} failed")
 
         logging.info(f"COMPLETED: {name} ({duration}s)")
@@ -95,28 +102,28 @@ def main():
 
     pipeline = [
         # ENTRY
-        ("Recon", "python recon.py --expand seeds.txt"),
-        ("Ingest", f"python ingest.py {scan_id}"),
+        ("Recon", "python -u recon.py --expand seeds.txt"),
+        ("Ingest", f"python -u ingest.py {scan_id}"),
 
         # EXPANSION
-        ("SAN Expansion", f"python san_worker.py {scan_id}"),
-        ("SAN State Sync", f"python san_state_sync.py {scan_id}"),
+        ("SAN Expansion", f"python -u san_worker.py {scan_id}"),
+        ("SAN State Sync", f"python -u san_state_sync.py {scan_id}"),
 
         # DNS
-        ("DNS Resolution", f"python dns_worker.py {scan_id}"),
+        ("DNS Resolution", f"python -u dns_worker.py {scan_id}"),
 
         # ENRICHMENT
-        ("Cert Worker", f"python cert_worker.py {scan_id}"),
-        ("Port Scan", f"python port_scan_worker.py {scan_id}"),
-        ("Tech Detection", f"python tech_worker.py {scan_id}"),
-        ("ASN Lookup", f"python asn_worker.py {scan_id}"),
-        ("Provider Mapping", f"python provider_worker.py {scan_id}"),
+        ("Cert Worker", f"python -u cert_worker.py {scan_id}"),
+        ("Port Scan", f"python -u port_scan_worker.py {scan_id}"),
+        ("Tech Detection", f"python -u tech_worker.py {scan_id}"),
+        ("ASN Lookup", f"python -u asn_worker.py {scan_id}"),
+        ("Provider Mapping", f"python -u provider_worker.py {scan_id}"),
 
         # TAKEOVER
-        ("Takeover Detection", f"python takeover_worker.py {scan_id}"),
+        ("Takeover Detection", f"python -u takeover_worker.py {scan_id}"),
 
         # FINAL
-        ("Risk Scoring", f"python risk_worker.py {scan_id}")
+        ("Risk Scoring", f"python -u risk_worker.py {scan_id}")
     ]
 
     try:
