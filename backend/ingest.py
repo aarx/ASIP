@@ -77,13 +77,24 @@ for _, row in df.iterrows():
     # ----------------------------
     cur.execute("""
     INSERT INTO domains(domain, first_seen_scan, last_seen_scan, is_known)
-    VALUES (%s, %s, %s, %s)
+    VALUES (
+        %s,
+        %s,
+        %s,
+        EXISTS (
+            SELECT 1 FROM known_domains WHERE domain = %s
+        )
+    )
     ON CONFLICT (domain)
     DO UPDATE SET
         last_seen_scan = EXCLUDED.last_seen_scan,
-        is_known = domains.is_known OR EXCLUDED.is_known
+        is_known = (
+            SELECT EXISTS (
+                SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
+            )
+        )
     RETURNING id
-    """, (domain, scan_id, scan_id, known))
+    """, (domain, scan_id, scan_id, domain))
     
     res = cur.fetchone()
     

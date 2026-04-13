@@ -107,13 +107,25 @@ def summary():
         AND http_live = FALSE
     """, (latest_scan,))
     non_web_assets = cur.fetchone()[0]
+    
+    # KNOWN DOMAINS COUNT (LATEST SCAN)
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM domain_states ds
+        JOIN domains d ON d.id = ds.domain_id
+        WHERE ds.scan_id = %s
+        AND d.is_known = TRUE
+    """, (latest_scan,))
+    
+    known_domains = cur.fetchone()[0]
+    
  
     conn.close()
     
     return {
         "total_domains": total_domains,
         "live_domains": live_domains,
-        "known_domains": 0,
+        "known_domains": known_domains,
         "new_domains": http_live,
         "findings": findings_count,
         "shadow_assets": shadow_assets,

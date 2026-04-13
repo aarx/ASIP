@@ -97,12 +97,25 @@ def main():
      
             # insert or get domain_id
             cur.execute("""
-            INSERT INTO domains(domain, first_seen_scan, last_seen_scan)
-            VALUES (%s, %s, %s)
+            INSERT INTO domains(domain, first_seen_scan, last_seen_scan, is_known)
+            VALUES (
+                %s,
+                %s,
+                %s,
+                EXISTS (
+                    SELECT 1 FROM known_domains WHERE domain = %s
+                )
+            )
             ON CONFLICT (domain)
-            DO UPDATE SET last_seen_scan = EXCLUDED.last_seen_scan
+            DO UPDATE SET 
+                last_seen_scan = EXCLUDED.last_seen_scan,
+                is_known = (
+                    SELECT EXISTS (
+                        SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
+                    )
+                )
             RETURNING (xmax = 0) AS inserted
-            """, (san, scan_id, scan_id))
+            """, (san, scan_id, scan_id, san))
             
             res = cur.fetchone()
             
