@@ -1606,3 +1606,58 @@ def non_web_summary():
     conn.close()
 
     return [{"risk": r[0], "count": r[1]} for r in rows]    
+    
+@app.get("/unknown-high-risk")
+def unknown_high_risk():
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    # latest scan
+    cur.execute("SELECT MAX(scan_id) FROM domain_states")
+    scan_id = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT d.domain, dr.risk_score
+        FROM domain_risk dr
+        JOIN domains d ON d.id = dr.domain_id
+        JOIN domain_states ds ON ds.domain_id = d.id
+
+        WHERE dr.scan_id = %s
+        AND ds.scan_id = %s
+        AND d.is_known = FALSE
+        AND dr.risk_score >= 3
+
+        ORDER BY dr.risk_score DESC
+        LIMIT 20
+    """, (scan_id, scan_id))
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return [
+        {"domain": r[0], "risk": r[1]}
+        for r in rows
+    ]
+
+@app.get("/chat")
+def chat(q: str):
+
+    q_lower = q.lower()
+
+    if "unknown" in q_lower and "risk" in q_lower:
+        return unknown_high_risk()
+
+    elif "risk" in q_lower:
+        return risky_domains()  
+
+    elif "shadow" in q_lower:
+        return shadow_assets()
+
+    elif "finding" in q_lower:
+        return findings()
+
+    elif "summary" in q_lower:
+        return summary()
+
+    return {"message": "Didn't understand"}

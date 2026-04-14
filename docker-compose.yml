@@ -13,6 +13,15 @@ services:
     volumes:
       - asm_pgdata:/var/lib/postgresql/data
 
+  mcp:
+    build: ./backend
+    container_name: asm_mcp
+    depends_on:
+      - db
+    ports:
+      - "8666:8000"
+    command: uvicorn mcp_server:app --host 0.0.0.0 --port 8000
+
   backend:
     build: ./backend
     container_name: asm_backend
@@ -35,4 +44,7 @@ services:
     restart: unless-stopped
 volumes:
   asm_pgdata:
+  
+
+
 

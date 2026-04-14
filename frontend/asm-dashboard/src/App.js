@@ -1,6 +1,7 @@
+import ChatAssistant from "./components/ChatAssistant";
 import React, { useEffect, useState } from "react";
 import { getSummary, getSources, getHttpStatus, getRiskLeaderboard } from "./services/api";
-import { Grid, Card, CardContent, Typography } from "@mui/material";
+import { Grid, Card, CardContent, Typography, TextField } from "@mui/material";
 import SourceChart from "./components/SourceChart";
 import HttpStatusChart from "./components/HttpStatusChart";
 import { getProviders, getTech } from "./services/api";
@@ -26,9 +27,59 @@ function App() {
   const [certs, setCerts] = useState([]);
   const [shadowProvider, setShadowProvider] = useState(null);
   const [nonWebSummary, setNonWebSummary] = useState(null);	
+  const [chatInput, setChatInput] = useState("");
+  const [chatHistory, setChatHistory] = useState([]);
+  const [loading, setLoading] = useState(false);
   const downloadCSV = async () => {
     window.open("http://localhost:8555/export", "_blank");
     };    
+  const formatResponse = (data) => {
+    if (Array.isArray(data)) {
+      return data.map((d) => d.domain || JSON.stringify(d)).join("\n");
+    }
+  
+    if (data.domain) {
+      return `
+  Domain: ${data.domain}
+  IP: ${data.ip}
+  Risk: ${data.risk_score}
+  Reason: ${data.reasons}
+  `;
+    }
+  
+    return JSON.stringify(data, null, 2);
+  };              
+  
+  const sendChat = async () => {
+    if (!chatInput) return;
+  
+    const userMsg = { type: "user", text: chatInput };
+  
+    // 👇 show user message immediately
+    setChatHistory((prev) => [...prev, userMsg]);
+    setChatInput("");
+    setLoading(true); // 🔥 START loading
+  
+    try {
+      const res = await fetch(
+        `http://localhost:8555/chat?q=${encodeURIComponent(chatInput)}`
+      );
+  
+      const data = await res.json();
+  
+      const botMsg = {
+        type: "bot",
+        text: formatResponse(data),
+      };
+  
+      setChatHistory((prev) => [...prev, botMsg]);
+  
+    } catch (err) {
+      console.error(err);
+    }
+  
+    setLoading(false); // STOP loading
+  };    
 
   useEffect(() => {
 
@@ -45,8 +96,8 @@ function App() {
       const sensitiveData = await fetch("http://localhost:8555/sensitive-exposure")
   .then(res => res.json());
       const certData = await fetch("http://localhost:8555/cert-expiry").then(r => r.json());
-      const shadowProvider = await fetch("http://localhost:8555/shadow-by-provider").then(r => r.json());    
-      const nonWebSummary = await fetch("http://localhost:8555/non-web-summary").then(r => r.json());
+      const shadowProviderData = await fetch("http://localhost:8555/shadow-by-provider").then(r => r.json());    
+      const nonWebSummaryData = await fetch("http://localhost:8555/non-web-summary").then(r => r.json());
       
       setFindings(findingsData);
       setSummary(summaryData);
@@ -58,8 +109,8 @@ function App() {
       setDrift(driftData);
       setSensitive(sensitiveData);
       setCerts(certData);
-      setShadowProvider(shadowProvider);
-      setNonWebSummary(nonWebSummary);
+      setShadowProvider(shadowProviderData);
+      setNonWebSummary(nonWebSummaryData);
     }
 
     fetchData();
@@ -148,6 +199,11 @@ function App() {
       
         </Grid>
       )}
+
+      <Grid item xs={12}>
+        <ChatAssistant />
+      </Grid> 	      
+     
       <div style={{marginTop:"40px"}}>
         <Typography variant="h5">Discovery Sources</Typography>
         {sources && <SourceChart data={sources} />}
