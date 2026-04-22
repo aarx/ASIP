@@ -1,11 +1,14 @@
 import psycopg2
 import socket
+import OpenSSL
 import ssl
 from datetime import datetime
 import logging
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
+
 
 scan_id = int(sys.argv[1])
 
@@ -35,7 +38,7 @@ def get_domains():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT d.id, d.domain, ds.ip
+        SELECT d.id, d.domain, ds.ip, ds.final_url
         FROM domain_states ds
         JOIN domains d 
           ON d.id = ds.domain_id
@@ -46,6 +49,7 @@ def get_domains():
           AND dc.scan_id = %s
         
         WHERE ds.has_ip = TRUE
+        AND ds.http_status > 0
         AND dc.domain_id IS NULL
     """, (scan_id, scan_id))
 
@@ -58,31 +62,49 @@ def get_domains():
 def fetch_cert_expiry(domain):
 
     socket.setdefaulttimeout(3)
-    try:
-        ctx = ssl.create_default_context()
-        with socket.create_connection((domain, 443), timeout=5) as sock:
-            with ctx.wrap_socket(sock, server_hostname=domain) as ssock:
 
-                cert = ssock.getpeercert()
+    hosts = [domain]
 
-                expiry = cert["notAfter"]
-                expiry_dt = datetime.strptime(expiry, "%b %d %H:%M:%S %Y %Z")
+    # optional safe fallback
+    if domain.count('.') == 1:
+        hosts.append(f"www.{domain}")
 
-                days = (expiry_dt - datetime.utcnow()).days
+    for host in hosts:
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
 
-                if days < 0:
-                    status = "expired"
-                elif days < 15:
-                    status = "critical"
-                elif days < 45:
-                    status = "warning"
-                else:
-                    status = "healthy"
+            with socket.create_connection((host, 443), timeout=5) as sock:
+                with ctx.wrap_socket(sock, server_hostname=host) as ssock:
 
-                return expiry_dt.date(), days, status
+                    cert_bin = ssock.getpeercert(binary_form=True)
+                    
+                    x509 = ssl.DER_cert_to_PEM_cert(cert_bin)
+                    
+                    x509_obj = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, x509)
+                    
+                    expiry = x509_obj.get_notAfter().decode("utf-8")
+                    expiry_dt = datetime.strptime(expiry, "%Y%m%d%H%M%SZ")
 
-    except:
-        return None, None, "no_cert"
+                    days = (expiry_dt - datetime.utcnow()).days
+
+                    if days < 0:
+                        status = "expired"
+                    elif days < 15:
+                        status = "critical"
+                    elif days < 45:
+                        status = "warning"
+                    else:
+                        status = "healthy"
+
+                    return expiry_dt.date(), days, status
+
+        except Exception as e:
+            print(f"[CERT ERROR] {host} → {e}")
+            continue
+
+    return None, None, "no_cert"
 
 
 def main():
@@ -100,9 +122,19 @@ def main():
     
     def scan_cert(domain_tuple):
     
-        domain_id, domain, ip = domain_tuple
+        domain_id, domain, ip, final_url = domain_tuple
     
-        expiry, days, status = fetch_cert_expiry(domain)
+        host = domain
+    
+        if final_url:
+            try:
+                parsed = urlparse(final_url)
+                if parsed.hostname:
+                    host = parsed.hostname
+            except:
+                pass
+    
+        expiry, days, status = fetch_cert_expiry(host)
     
         return (domain_id, expiry, days, status)
     

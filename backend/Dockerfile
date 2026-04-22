@@ -34,6 +34,7 @@ ENV PATH=$PATH:/root/go/bin
 # -----------------------------
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install pyopenssl
 
 # -----------------------------
 # 4. Copy app (changes frequently)

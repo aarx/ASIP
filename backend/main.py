@@ -110,10 +110,11 @@ def summary():
     
     # KNOWN DOMAINS COUNT (LATEST SCAN)
     cur.execute("""
-        SELECT COUNT(*)
+        SELECT COUNT(DISTINCT d.id)
         FROM domain_states ds
         JOIN domains d ON d.id = ds.domain_id
         WHERE ds.scan_id = %s
+        AND ds.has_ip = TRUE
         AND d.is_known = TRUE
     """, (latest_scan,))
     
@@ -139,25 +140,41 @@ def http_status():
     conn = get_conn()
     cur = conn.cursor()
 
+    # get latest scan
     cur.execute("SELECT MAX(id) FROM scans")
     latest = cur.fetchone()[0]
 
     cur.execute("""
-        SELECT
-            SUM(CASE WHEN http_live = TRUE THEN 1 ELSE 0 END),
-            SUM(CASE WHEN http_live = FALSE THEN 1 ELSE 0 END)
-        FROM domain_states
-        WHERE scan_id = %s
-    """, (latest,))
+    SELECT
+        CASE
+            WHEN ds.http_status BETWEEN 200 AND 299 THEN '2xx'
+            WHEN ds.http_status BETWEEN 300 AND 399 THEN '3xx'
+            WHEN ds.http_status BETWEEN 400 AND 499 THEN '4xx'
+            WHEN ds.http_status BETWEEN 500 AND 599 THEN '5xx'
+            ELSE 'no_response'
+        END AS status_group,
+        COUNT(DISTINCT ds.domain_id)
+    FROM domain_states ds
+    WHERE ds.scan_id = %s
+    GROUP BY status_group
+    """, (latest,))   # ✅ FIXED
 
-    live, dead = cur.fetchone()
+    rows = cur.fetchall()   # ✅ FIXED
+
+    result = {
+        "2xx": 0,
+        "3xx": 0,
+        "4xx": 0,
+        "5xx": 0,
+        "no_response": 0
+    }
+
+    for status, count in rows:
+        result[status] = count
 
     conn.close()
 
-    return {
-        "http_responding": live,
-        "not_responding": dead
-    }
+    return result
 
 @app.get("/sources")
 def sources():
@@ -1173,7 +1190,6 @@ def export_enriched_csv():
 
         COALESCE(dp.provider, 'Unknown') as provider,
         COALESCE(da.asn, 'Unknown') as asn,
-        COALESCE(dt.tech, 'Unknown') as tech,
 
         COALESCE(dr.risk_score, 0) as risk_score,
         COALESCE(dr.reasons, '') as reasons,
@@ -1195,9 +1211,6 @@ def export_enriched_csv():
     LEFT JOIN domain_asn da
         ON d.id = da.domain_id AND da.scan_id = %s
 
-    LEFT JOIN domain_tech dt
-        ON d.id = dt.domain_id AND dt.scan_id = %s
-
     LEFT JOIN domain_risk dr
         ON d.id = dr.domain_id AND dr.scan_id = %s
 
@@ -1205,7 +1218,7 @@ def export_enriched_csv():
         ON d.id = dc.domain_id AND dc.scan_id = %s
     """
 
-    cur.execute(query, (scan_id, scan_id, scan_id, scan_id, scan_id, scan_id))
+    cur.execute(query, (scan_id, scan_id, scan_id, scan_id, scan_id))
     rows = cur.fetchall()
 
     columns = [
@@ -1220,7 +1233,6 @@ def export_enriched_csv():
         "title",
         "provider",
         "asn",
-        "tech",
         "risk_score",
         "reasons",
         "cert_status",
@@ -1246,8 +1258,32 @@ def export_enriched_csv():
         port_map.setdefault(domain, []).append(str(port))
 
     df["ports"] = df["domain"].map(
-        lambda d: ",".join(port_map.get(d, []))
+        lambda d: ",".join(port_map.get(d, [])) or "none"
     )
+
+    # TECH aggregation
+    cur.execute("""
+        SELECT d.domain, dt.tech
+        FROM domain_tech dt
+        JOIN domains d ON dt.domain_id = d.id
+        WHERE dt.scan_id = %s
+    """, (scan_id,))
+    
+    tech_rows = cur.fetchall()
+    
+    tech_map = {}
+    for domain, tech in tech_rows:
+        tech_map.setdefault(domain, []).append(tech)
+    
+    df["tech"] = df["domain"].map(
+        lambda d: ",".join(sorted(set(tech_map.get(d, [])))) or "unknown"
+    )
+
+    # remove duplicate domains 
+    df = df.drop_duplicates(subset=["domain"])
+    
+    # sort by risk 
+    df = df.sort_values(by="risk_score", ascending=False)
 
     # ⭐ SENSITIVE PORTS
     cur.execute("""

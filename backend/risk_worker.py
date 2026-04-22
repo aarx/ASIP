@@ -37,40 +37,55 @@ def compute_risk(row):
     if not row["has_ip"]:
         return None, None
 
-    # 🌐 HTTP exposure check
+    # 🌐 HTTP signal (minor)
     if row["http_status"] == 0:
         risk += 1
         reasons.append("no_http")
 
-    # Sensitive port logic (context-aware)
-    if row["sensitive_port"]:
-        if row["http_status"] == 0:
-            # Infra exposure (e.g., SSH, RDP)
-            risk += 3
-            reasons.append("infra_exposed_port")
-        else:
-            # Web + service exposed
-            risk += 2
-            reasons.append("web_with_sensitive_port")
+    # 🔥 Sensitive port = PRIMARY signal
+    port_score = row.get("sensitive_port_score", 0)
 
-    # Tech visibility (weak signal)
+    if port_score > 0:
+
+        # base severity (independent of HTTP)
+        base = min(port_score / 2, 4)   # normalize
+        risk += base
+        reasons.append("sensitive_port_exposed")
+
+        # critical ports (DB, RDP, FTP etc.)
+        if port_score >= 9:
+            risk += 1.5
+            reasons.append("critical_port_exposed")
+
+        # small context boost (not dominant)
+        if row["http_status"] > 0:
+            risk += 0.5
+            reasons.append("web_entrypoint_present")
+        else:
+            risk += 0.5
+            reasons.append("infra_only_exposure")
+
+    # Tech visibility (weak)
     if not row["techs"]:
         if risk == 0:
             risk += 1
             reasons.append("unknown_stack")
 
-    # Provider visibility (very weak signal)
+    # Provider visibility (very weak)
     if not row["providers"]:
         if risk == 0:
             risk += 0.5
             reasons.append("unknown_hosting")
 
-    #  SSL expiry (strong signal)
+    # SSL expiry
     if row["cert_days"] is not None and row["cert_days"] < 15:
         risk += 2
         reasons.append("cert_expiring")
-
-    # Final cap
+    # Sensitive port exposed + Unknown tech    
+    if port_score >= 9 and not row["techs"]:
+        risk += 1
+        reasons.append("high_risk_unknown_service")											   
+												   
     return min(int(risk), 5), ",".join(reasons)
 
 def main():
@@ -90,13 +105,14 @@ def main():
         COALESCE(dt.tech,'unknown'),
         ce.days_to_expiry,
     
-        EXISTS(
-            SELECT 1 FROM domain_ports p
+        COALESCE((
+            SELECT MAX(sp.risk)
+            FROM domain_ports p
             JOIN sensitive_ports sp
               ON p.port = sp.port
             WHERE p.domain_id = d.id
-            AND p.scan_id = %s  
-        ) as sensitive_port
+            AND p.scan_id = %s
+        ), 0) as sensitive_port_score
     
     FROM domains d
     
@@ -137,7 +153,7 @@ def main():
                 "providers": set(),
                 "techs": set(),
                 "cert_days": r[6],
-                "sensitive_port": False
+                "sensitive_port_score": 0
             }
     
         entry = risk_inputs[domain_id]
@@ -150,7 +166,7 @@ def main():
             entry["techs"].add(r[5])
     
         if r[7]:
-            entry["sensitive_port"] = True
+            entry["sensitive_port_score"] = max(entry["sensitive_port_score"], r[7])
     		
     count = 0
     

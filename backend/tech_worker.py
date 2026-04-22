@@ -44,18 +44,74 @@ def detect_tech(domain):
             verify=False
         )
 
+        techs = set()
+
         server = r.headers.get("Server","").lower()
         powered = r.headers.get("X-Powered-By","").lower()
+        headers = str(r.headers).lower()
+        body = r.text.lower()
+        cookies = str(r.cookies).lower()
 
+        # ----------------------------
+        # Header-based detection
+        # ----------------------------
         for k in TECH_HEADERS:
             if k in server or k in powered:
-                return TECH_HEADERS[k]
+                techs.add(TECH_HEADERS[k])
 
-        return "unknown"
+        # Cloud providers / CDN (🔥 add these)
+        if "cf-ray" in headers:
+            techs.add("cloudflare")
+
+        if "akamai" in headers:
+            techs.add("akamai")
+
+        if "azure" in headers or "x-azure" in headers:
+            techs.add("azure")
+
+        if "x-amz" in headers or "amazon" in headers:
+            techs.add("aws")
+
+        if "fastly" in headers:
+            techs.add("fastly")
+
+        # ----------------------------
+        # HTML fingerprinting
+        # ----------------------------
+        if "wp-content" in body or "wordpress" in cookies:
+            techs.add("wordpress")
+
+        if "react" in body or "_next" in body:
+            techs.add("react/nextjs")
+
+        if "vue" in body:
+            techs.add("vue")
+
+        if "angular" in body:
+            techs.add("angular")
+
+        if "jquery" in body:
+            techs.add("jquery")
+
+        if "bootstrap" in body:
+            techs.add("bootstrap")
+
+        if "shopify" in body:
+            techs.add("shopify")
+
+        if "cdn.jsdelivr" in body:
+            techs.add("cdn")
+
+        # ----------------------------
+        # fallback
+        # ----------------------------
+        if not techs:
+            techs.add("unknown")
+
+        return list(techs)
 
     except:
-        return "unknown"
-
+        return ["unknown"]
 
 def main():
 
@@ -97,10 +153,15 @@ def main():
         
             print("DEBUG → inserting into domain_tech")
             cur.execute("""
-            INSERT INTO domain_tech(domain_id, scan_id, tech)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (domain_id, scan_id) DO NOTHING
+            SELECT 1 FROM domain_tech
+            WHERE domain_id=%s AND scan_id=%s AND tech=%s
             """, (domain_id, scan_id, tech))
+            
+            if not cur.fetchone():
+                cur.execute("""
+                INSERT INTO domain_tech(domain_id, scan_id, tech)
+                VALUES (%s, %s, %s)
+                """, (domain_id, scan_id, tech))
 
     conn.commit()
     conn.close()
