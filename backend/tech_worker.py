@@ -130,6 +130,8 @@ def main():
     WHERE s.scan_id = %s
     AND dt.domain_id IS NULL
     AND s.http_status > 0
+    AND d.scannable = TRUE   -- ✅ ADD THIS LINE
+    
     ORDER BY d.id, s.scan_id DESC
     """, (scan_id, scan_id))
     

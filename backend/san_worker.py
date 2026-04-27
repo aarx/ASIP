@@ -37,15 +37,27 @@ def fetch_san_domains(domain):
         san = cert.get("subjectAltName", [])
         return [entry[1] for entry in san if entry[0] == "DNS"]
 
-    except Exception:
+    except Exception as e:
+        print(f"[SAN ERROR] {domain} -> {e}")
         return []
 
+def is_scannable(domain, seeds):
+    for seed in seeds:
+        if domain == seed or domain.endswith("." + seed):
+            return True
+    return False
 
 def main():
+     
     conn = get_conn()
     cur = conn.cursor()
 
     print("SAN scan for scan_id:", scan_id)
+
+    cur.execute("SELECT domain FROM seed_domains")
+    seeds = [r[0].strip().lower() for r in cur.fetchall()]  
+    print("Loaded seeds:", seeds)
+
 
     cur.execute("""
     SELECT DISTINCT ON (d.id) d.id, d.domain
@@ -58,7 +70,6 @@ def main():
       ON d.id = dsan.domain_id
       AND dsan.scan_id = %s
     
-    WHERE ds.has_ip = TRUE
     AND dsan.domain_id IS NULL
     ORDER BY d.id, ds.scan_id DESC
     """, (scan_id, scan_id))
@@ -72,10 +83,20 @@ def main():
 
     for i, (domain_id, domain) in enumerate(rows, start=1):
     
+        # classify original domain too
+        scannable = is_scannable(domain, seeds)
+        
+        cur.execute("""
+        UPDATE domains
+        SET scannable = %s
+        WHERE id = %s
+        AND (validation_source IS NULL OR validation_source != 'manual')
+        """, (scannable, domain_id))
+    
         if i % 50 == 0:
             print(f"[{i}/{len(rows)}] Processing: {domain}")
     
-        san_domains = fetch_san_domains(domain)
+        san_domains = list(set(fetch_san_domains(domain)))
 
         cur.execute("""
         INSERT INTO domain_san(domain_id, scan_id)
@@ -86,8 +107,7 @@ def main():
         for san in san_domains:
             san = san.lower().strip()
                      
-            if "*" in san:
-                continue
+            san = san.replace("*.", "")
                 
             if san == domain:
                 continue
@@ -96,40 +116,48 @@ def main():
                 continue                
      
             # insert or get domain_id
+            san = san.lower().strip()
+            
+            scannable = is_scannable(san, seeds)
+            
             cur.execute("""
-            INSERT INTO domains(domain, first_seen_scan, last_seen_scan, is_known)
+            INSERT INTO domains(
+                domain,
+                first_seen_scan,
+                last_seen_scan,
+                first_seen_at,
+                last_seen_at,
+                is_known,
+                scannable
+            )
             VALUES (
                 %s,
                 %s,
                 %s,
-                EXISTS (
-                    SELECT 1 FROM known_domains WHERE domain = %s
-                )
+                NOW(),
+                NOW(),
+                EXISTS (SELECT 1 FROM known_domains WHERE domain = %s),
+                %s
             )
             ON CONFLICT (domain)
             DO UPDATE SET 
                 last_seen_scan = EXCLUDED.last_seen_scan,
+                last_seen_at = NOW(),
                 is_known = (
                     SELECT EXISTS (
                         SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
                     )
-                )
-            RETURNING (xmax = 0) AS inserted
-            """, (san, scan_id, scan_id, san))
+                ),
+                scannable = CASE
+                    WHEN domains.validation_source = 'manual' THEN domains.scannable
+                    ELSE EXCLUDED.scannable
+                END
+                
+            RETURNING id, (xmax = 0) AS inserted
+            """, (san, scan_id, scan_id, san, scannable))
             
-            res = cur.fetchone()
-            
-            if res:
-                inserted = res[0]
-            else:
-                inserted = False
-                cur.execute("SELECT id FROM domains WHERE domain=%s", (san,))
-                new_domain_id = cur.fetchone()[0]
-            
-            if res:
-                cur.execute("SELECT id FROM domains WHERE domain=%s", (san,))
-                new_domain_id = cur.fetchone()[0]
-            
+            new_domain_id, inserted = cur.fetchone()
+                        
             # count only if newly inserted
             if inserted:
                 new_count += 1        

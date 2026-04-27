@@ -134,6 +134,7 @@ Reason: ${data.reasons}
               ["Known Domains", summary.known_domains],
               ["New Domains", summary.new_domains],
               ["Shadow Assets", summary.shadow_assets || 0],
+              ["Unverified Domains", summary.unverified_domains || 0],
               ["DNS Issues", summary.findings || 0],
               ["Non-Web Assets", summary.non_web_assets || 0],
             ].map(([label, value], i) => (

@@ -123,6 +123,7 @@ def main():
     JOIN domains d ON d.id = dd.domain_id
     WHERE dd.scan_id = %s
     AND dd.record_type = 'CNAME'
+    AND d.scannable = TRUE   
     """, (scan_id,))
 
     rows = cur.fetchall()

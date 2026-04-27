@@ -45,6 +45,7 @@ def get_resolving_domains():
     
     WHERE s.has_ip = TRUE
     AND dp.domain_id IS NULL
+    AND d.scannable = TRUE   -- ✅ ADD THIS LINE
     ORDER BY d.id, s.scan_id DESC
     """, (scan_id, scan_id))
 

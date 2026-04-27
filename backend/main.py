@@ -73,18 +73,7 @@ def summary():
     """, (latest_scan,))
     
     findings_count = cur.fetchone()[0]
- 
-    # SHADOW ASSETS COUNT
-    cur.execute("""
-        SELECT COUNT(*)
-        FROM domain_states ds
-        JOIN domains d ON d.id = ds.domain_id
-        WHERE ds.scan_id = %s
-        AND ds.has_ip = TRUE
-        AND ds.http_live = FALSE
-    """, (latest_scan,))
-    
-    shadow_assets = cur.fetchone()[0]
+
     
     # Potential Shadow Assets
     cur.execute("""
@@ -96,7 +85,6 @@ def summary():
         AND d.is_known = FALSE
     """, (latest_scan,))
     shadow_assets = cur.fetchone()[0]
-    
     
     # Non-Web Assets
     cur.execute("""
@@ -120,6 +108,14 @@ def summary():
     
     known_domains = cur.fetchone()[0]
     
+    # Needs Validation Domains
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM domains
+        WHERE scannable = False
+    """)
+    needs_validation = cur.fetchone()[0]
+    
  
     conn.close()
     
@@ -130,7 +126,8 @@ def summary():
         "new_domains": http_live,
         "findings": findings_count,
         "shadow_assets": shadow_assets,
-        "non_web_assets": non_web_assets
+        "non_web_assets": non_web_assets,
+        "unverified_domains": needs_validation
     }
     
 
@@ -1181,39 +1178,45 @@ def export_enriched_csv():
         d.is_known,
         d.first_seen_scan,
         d.last_seen_scan,
-
+        d.first_seen_at,
+        d.last_seen_at,
         ds.ip,
         ds.http_status,
         ds.reverse_dns,
         ds.final_url,
         ds.title,
-
+    
         COALESCE(dp.provider, 'Unknown') as provider,
         COALESCE(da.asn, 'Unknown') as asn,
-
+    
         COALESCE(dr.risk_score, 0) as risk_score,
         COALESCE(dr.reasons, '') as reasons,
-
+    
         COALESCE(dc.cert_status, 'unknown') as cert_status,
         COALESCE(dc.days_to_expiry, -1) as days_to_expiry,
-
+    
         ds.has_ip,
-        ds.http_live
-
+        ds.http_live,
+    
+        d.scannable,
+        d.confidence_score,
+        d.confidence_label,
+        d.confidence_reasons
+    
     FROM domains d
-
+    
     LEFT JOIN domain_states ds
         ON d.id = ds.domain_id AND ds.scan_id = %s
-
+    
     LEFT JOIN domain_provider dp
         ON d.id = dp.domain_id AND dp.scan_id = %s
-
+    
     LEFT JOIN domain_asn da
         ON d.id = da.domain_id AND da.scan_id = %s
-
+    
     LEFT JOIN domain_risk dr
         ON d.id = dr.domain_id AND dr.scan_id = %s
-
+    
     LEFT JOIN domain_cert dc
         ON d.id = dc.domain_id AND dc.scan_id = %s
     """
@@ -1226,6 +1229,8 @@ def export_enriched_csv():
         "is_known",
         "first_seen_scan",
         "last_seen_scan",
+        "first_seen_at",
+        "last_seen_at",
         "ip",
         "http_status",
         "reverse_dns",
@@ -1238,10 +1243,27 @@ def export_enriched_csv():
         "cert_status",
         "days_to_expiry",
         "has_ip",
-        "http_live"
+        "http_live",
+        "scannable",
+        "confidence_score",
+        "confidence_label",
+        "confidence_reasons",
     ]
 
     df = pd.DataFrame(rows, columns=columns)
+    
+    # fix reasons
+    df["confidence_reasons"] = df["confidence_reasons"].apply(
+        lambda x: ", ".join(x) if isinstance(x, list) else (x or "")
+    )
+    
+    print("COLUMNS:", df.columns.tolist())
+    print("SAMPLE:\n", df.head(2))
+    
+    
+    # safer boolean conversion
+    df["scannable"] = df["scannable"].apply(lambda x: "yes" if x else "no")
+
 
     # ⭐ PORT aggregation
     cur.execute("""

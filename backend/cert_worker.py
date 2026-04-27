@@ -51,13 +51,13 @@ def get_domains():
         WHERE ds.has_ip = TRUE
         AND ds.http_status > 0
         AND dc.domain_id IS NULL
+        AND d.scannable = TRUE   -- ✅ ADD THIS
     """, (scan_id, scan_id))
 
     rows = cur.fetchall()
     conn.close()
 
-    return rows
-
+    return rows    
 
 def fetch_cert_expiry(domain):
 

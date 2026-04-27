@@ -121,6 +121,9 @@ def main():
 
         # TAKEOVER
         ("Takeover Detection", f"python -u takeover_worker.py {scan_id}"),
+        
+        # Validate Discovered Domains
+        ("Discovery Validator", f"python -u discovery_validator.py {scan_id}"),
 
         # FINAL
         ("Risk Scoring", f"python -u risk_worker.py {scan_id}")
