@@ -7,6 +7,8 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 import csv
 import io
+import requests
+import re
 from datetime import datetime
 
 os.makedirs("logs", exist_ok=True)
@@ -1703,6 +1705,37 @@ def chat(q: str):
 
     q_lower = q.lower()
 
+    # -------------------------
+    # 🧠 INVESTIGATION (NEW)
+    # -------------------------
+    if "investigate" in q_lower or "how" in q_lower:
+
+        match = re.search(
+            r"(dangling_dns|suspicious_dns|open_port|sensitive_port|http_exposed|ssl|takeover)",
+            q_lower
+        )
+
+        if match:
+            finding = match.group(0)
+
+            if finding == "takeover":
+                finding = "dangling_dns"
+
+            try:
+                res = requests.get(
+                    "http://asm_mcp:8000/tools/investigation-guide",
+                    params={"finding": finding},
+                    timeout=5
+                )
+                return res.json()
+            except Exception as e:
+                return {"error": f"MCP request failed: {str(e)}"}
+
+        return {"message": "Please specify a finding (e.g., dangling_dns)"}
+
+    # -------------------------
+    # EXISTING LOGIC (UNCHANGED)
+    # -------------------------
     if "unknown" in q_lower and "risk" in q_lower:
         return unknown_high_risk()
 

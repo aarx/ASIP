@@ -133,7 +133,9 @@ def get_findings():
         SELECT d.domain, f.issue
         FROM domain_findings f
         JOIN domains d ON d.id = f.domain_id
-        ORDER BY f.scan_id DESC
+        WHERE f.scan_id = (
+            SELECT MAX(scan_id) FROM domain_findings
+        )
         LIMIT 50
     """)
 
@@ -167,3 +169,154 @@ def high_risk():
         {"domain": r[0], "risk": r[1]}
         for r in rows
     ]
+   
+   
+# -------------------------
+# TOOL 5: Priority Targets
+# -------------------------    
+
+@app.get("/tools/priority-targets")
+def priority_targets():
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT 
+            d.domain,
+            d.scannable,
+            d.confidence_score,
+            d.confidence_label,
+            COALESCE(dr.risk_score, 0) as risk_score
+        FROM domains d
+
+        LEFT JOIN domain_risk dr
+            ON d.id = dr.domain_id
+
+        WHERE d.scannable = FALSE
+        AND d.confidence_label IN ('medium', 'high')
+        
+        AND EXISTS (
+            SELECT 1 
+            FROM domain_states ds
+            WHERE ds.domain_id = d.id
+            AND ds.has_ip = TRUE
+        )
+
+        ORDER BY 
+            COALESCE(dr.risk_score, 0) DESC,
+            d.confidence_score DESC
+
+        LIMIT 20
+    """)
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return [
+        {
+            "domain": r[0],
+            "scannable": r[1],
+            "confidence_score": r[2],
+            "confidence_label": r[3],
+            "risk_score": r[4]
+        }
+        for r in rows
+    ]
+    
+# -------------------------
+# TOOL 6: INVESTIGATION GUIDE
+# -------------------------
+@app.get("/tools/investigation-guide")
+def investigation_guide(finding: str):
+
+    finding = finding.lower().strip()
+
+    guides = {
+
+        # -------------------------
+        # TAKEOVER / DNS
+        # -------------------------
+        "dangling_dns": [
+            "Check CNAME record using: dig <domain> CNAME",
+            "Verify if target service exists (S3, GitHub, etc.)",
+            "Open domain in browser and inspect response",
+            "Look for provider-specific error messages",
+            "Attempt to claim the resource if unclaimed"
+        ],
+
+        "suspicious_dns": [
+            "Check DNS records (A, CNAME, TXT)",
+            "Verify if domain resolves consistently",
+            "Check if service behind domain exists",
+            "Inspect HTTP response manually"
+        ],
+
+        # -------------------------
+        # PORT / EXPOSURE
+        # -------------------------
+        "open_port": [
+            "Run: nmap -p <port> <domain>",
+            "Identify service running on port",
+            "Check for default credentials",
+            "Test for known vulnerabilities (search CVEs)"
+        ],
+
+        "sensitive_port": [
+            "Confirm service using nmap/service detection",
+            "Try accessing service via browser or client",
+            "Check authentication requirements",
+            "Look for exposed admin panels"
+        ],
+
+        # -------------------------
+        # HTTP / WEB
+        # -------------------------
+        "http_exposed": [
+            "Open domain in browser",
+            "Check headers (curl -I)",
+            "Inspect technologies used",
+            "Run directory brute force (ffuf/dirsearch)"
+        ],
+
+        "tech_detected": [
+            "Identify framework/version",
+            "Search for known vulnerabilities",
+            "Check outdated components"
+        ],
+
+        # -------------------------
+        # CERT / SSL
+        # -------------------------
+        "ssl_issue": [
+            "Check certificate via browser or openssl",
+            "Verify expiry date",
+            "Check issuer and trust chain",
+            "Look for weak configurations"
+        ],
+
+        # -------------------------
+        # FALLBACK
+        # -------------------------
+        "default": [
+            "Manually inspect the domain",
+            "Check DNS and HTTP response",
+            "Look for unusual behavior",
+            "Correlate with other assets"
+        ]
+    }
+
+    # match logic
+    for key in guides:
+        if key in finding:
+            return {
+                "finding": finding,
+                "steps": guides[key]
+            }
+
+    return {
+        "finding": finding,
+        "steps": guides["default"]
+    }
+    
+    
