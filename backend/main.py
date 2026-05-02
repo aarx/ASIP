@@ -1731,6 +1731,57 @@ def unvalidated_brand_footprint():
         "total": total,
         "percentage": round(percentage, 2)
     }
+    
+@app.get("/metrics/unvalidated-breakdown")
+def unvalidated_breakdown():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    SELECT 
+        confidence_label,
+        COUNT(*)
+    FROM domains
+    WHERE scannable = FALSE
+    GROUP BY confidence_label
+    """)
+
+    rows = cur.fetchall()
+    conn.close()
+
+    result = {"high": 0, "medium": 0, "low": 0}
+
+    for label, count in rows:
+        result[label] = count
+
+    return result
+
+@app.get("/metrics/discovery-sources")
+def discovery_sources():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    SELECT 
+        CASE
+            WHEN source = 'san' THEN 'SAN Expansion'
+            WHEN source LIKE '%brand%' THEN 'Brand Expansion'
+            ELSE 'Pentest Tool'
+        END as src,
+        COUNT(*)
+    FROM domains
+    GROUP BY src
+    """)
+
+    rows = cur.fetchall()
+    conn.close()
+
+    result = {}
+
+    for src, count in rows:
+        result[src] = count
+
+    return result
 
 
 @app.get("/chat")

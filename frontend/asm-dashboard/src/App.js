@@ -12,6 +12,38 @@ import HygieneChart from "./components/HygieneChart";
 import InvestigationTable from "./components/InvestigationTable";
 import ShadowChart from "./components/ShadowChart";
 
+
+const UnvalidatedBreakdownCard = () => {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    fetch("http://localhost:8555/metrics/unvalidated-breakdown")
+      .then(res => res.json())
+      .then(setData);
+  }, []);
+
+  if (!data) return null;
+
+  return (
+    <Card style={{ borderLeft: "6px solid #faad14" }}>
+      <CardContent>
+        <Typography variant="h6">
+          🎯 Unvalidated Assets Breakdown
+        </Typography>
+        <Typography variant="h3" style={{ marginTop: 8 }}>
+          {data.high + data.medium + data.low}
+        </Typography>
+        <Typography variant="body2" style={{ marginTop: 8 }}>
+          High: {data.high} · Medium: {data.medium} · Low: {data.low}
+        </Typography>
+        <Typography variant="caption">
+          unvalidated assets across all confidence levels
+        </Typography>
+      </CardContent>
+    </Card>
+  );
+};
+
 const UnvalidatedBrandCard = () => {
   const [data, setData] = useState(null);
 
@@ -29,15 +61,12 @@ const UnvalidatedBrandCard = () => {
         <Typography variant="h6">
           🚨 Unvalidated Brand Footprint
         </Typography>
-    
         <Typography variant="h3" style={{ marginTop: 8 }}>
           {data.count}
         </Typography>
-    
         <Typography variant="body2" style={{ marginTop: 8 }}>
           {data.count} domains match brand patterns but remain unvalidated
         </Typography>
-    
         <Typography variant="caption">
           {data.percentage}% of total discovered assets
         </Typography>
@@ -46,6 +75,38 @@ const UnvalidatedBrandCard = () => {
   );
 };
 
+const DiscoverySourceCard = () => {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    fetch("http://localhost:8555/metrics/discovery-sources")
+      .then(res => res.json())
+      .then(setData);
+  }, []);
+
+  if (!data) return null;
+
+  const total = Object.values(data).reduce((a, b) => a + b, 0);
+
+  return (
+    <Card style={{ borderLeft: "6px solid #1890ff" }}>
+      <CardContent>
+        <Typography variant="h6">
+          📡 Discovery Sources
+        </Typography>
+        <Typography variant="h3" style={{ marginTop: 8 }}>
+          {total}
+        </Typography>
+        <Typography variant="body2" style={{ marginTop: 8 }}>
+          {Object.entries(data).map(([k, v]) => `${k}: ${v}`).join(" · ")}
+        </Typography>
+        <Typography variant="caption">
+          total assets discovered across all sources
+        </Typography>
+      </CardContent>
+    </Card>
+  );
+};
 
 function App() {
 
@@ -68,7 +129,6 @@ function App() {
   const [showSensitive, setShowSensitive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showChat, setShowChat] = useState(false);
-  
 
   const downloadCSV = async () => {
     window.open("http://localhost:8555/export", "_blank");
@@ -166,12 +226,10 @@ Reason: ${data.reasons}
           <Grid container spacing={3}>
             {[
               ["Total Domains", summary.total_domains],
+              ["New Domains", summary.new_domains],
               ["Live Domains", summary.live_domains],
               ["Known Domains", summary.known_domains],
-              ["New Domains", summary.new_domains],
               ["Shadow Assets", summary.shadow_assets || 0],
-              ["Unverified Domains", summary.unverified_domains || 0],
-              ["DNS Issues", summary.findings || 0],
               ["Non-Web Assets", summary.non_web_assets || 0],
             ].map(([label, value], i) => (
               <Grid item xs={12} sm={6} md={3} key={i}>
@@ -185,10 +243,16 @@ Reason: ${data.reasons}
             ))}
           </Grid>
 
-          {/* 🚨 BRAND FOOTPRINT ROW */}
+          {/* 🎯 SIGNAL CARDS ROW */}
           <Grid container spacing={3} style={{ marginTop: "10px" }}>
-            <Grid item xs={12}>
+            <Grid item xs={12} md={4}>
+              <UnvalidatedBreakdownCard />
+            </Grid>
+            <Grid item xs={12} md={4}>
               <UnvalidatedBrandCard />
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <DiscoverySourceCard />
             </Grid>
           </Grid>
 
@@ -240,7 +304,6 @@ Reason: ${data.reasons}
 
         </Grid>
       )}
-            
 
       {/* 🔥 Risk Leaderboard */}
       <div style={{ marginTop: "50px" }}>

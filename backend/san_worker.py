@@ -75,8 +75,6 @@ def main():
       AND dsan.scan_id = %s
       
     WHERE dsan.domain_id IS NULL
-    
-    AND dsan.domain_id IS NULL
     ORDER BY d.id, ds.scan_id DESC
     """, (scan_id, scan_id))
     
@@ -137,7 +135,8 @@ def main():
                 first_seen_at,
                 last_seen_at,
                 is_known,
-                scannable
+                scannable,
+                source
             )
             VALUES (
                 %s,
@@ -160,12 +159,23 @@ def main():
                 scannable = CASE
                     WHEN domains.validation_source = 'manual' THEN domains.scannable
                     ELSE EXCLUDED.scannable
+                source = CASE
+                    WHEN domains.source = 'seed' THEN 'san'
+                    ELSE domains.source
                 END
                 
             RETURNING id, (xmax = 0) AS inserted
-            """, (san, scan_id, scan_id, san, scannable))
+            """, (san, scan_id, scan_id, san, scannable, "san"))
             
             new_domain_id, inserted = cur.fetchone()
+            
+            # add SAN as a source (for attribution)
+            cur.execute("""
+            INSERT INTO domain_sources(domain_id, scan_id, source, seed)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """, (new_domain_id, scan_id, "san", domain))                        
+                        
                         
             # count only if newly inserted
             if inserted:

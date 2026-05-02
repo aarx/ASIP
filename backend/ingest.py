@@ -32,6 +32,11 @@ for _, row in df.iterrows():
 
     domain = str(row.get("Domain", "")).strip().lower()
     seed = str(row.get("Seed", "")).strip()
+    sources_raw = str(row.get("Source", "")).strip().lower()
+    sources = [s.strip() for s in sources_raw.split(",") if s.strip()]
+    
+    # pick primary source (first one)
+    primary_source = sources[0] if sources else "unknown"
 
     if not domain:
         continue
@@ -76,7 +81,7 @@ for _, row in df.iterrows():
     # Insert domain
     # ----------------------------
     cur.execute("""
-    INSERT INTO domains(domain, first_seen_scan, last_seen_scan, is_known)
+    INSERT INTO domains(domain, first_seen_scan, last_seen_scan, is_known, source)
     VALUES (
         %s,
         %s,
@@ -94,7 +99,7 @@ for _, row in df.iterrows():
             )
         )
     RETURNING id
-    """, (domain, scan_id, scan_id, domain))
+    """, (domain, scan_id, scan_id, domain, primary_source))
     
     res = cur.fetchone()
     
