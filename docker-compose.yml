@@ -16,6 +16,7 @@ services:
   mcp:
     build: ./backend
     container_name: asm_mcp
+    restart: unless-stopped
     depends_on:
       - db
     ports:

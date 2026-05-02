@@ -1700,6 +1700,39 @@ def unknown_high_risk():
         for r in rows
     ]
 
+@app.get("/metrics/unvalidated-brand-footprint")
+def unvalidated_brand_footprint():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    SELECT 
+        COUNT(*) FILTER (
+            WHERE d.scannable = FALSE
+            AND EXISTS (
+                SELECT 1 FROM seed_domains s
+                WHERE d.domain = s.domain
+                   OR d.domain LIKE '%.' || s.domain
+                   OR d.domain LIKE '%' || split_part(s.domain, '.', 1) || '%'
+            )
+        ) AS count,
+        COUNT(*) AS total
+    FROM domains d
+    """)
+
+    count, total = cur.fetchone()
+
+    percentage = (count / total * 100) if total else 0
+
+    conn.close()
+
+    return {
+        "count": count,
+        "total": total,
+        "percentage": round(percentage, 2)
+    }
+
+
 @app.get("/chat")
 def chat(q: str):
 

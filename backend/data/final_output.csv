@@ -11,83 +11,86 @@ Domain,Source,Seed,IP,Reverse_DNS,HTTP_Status,HTTP_Reason,Redirect_Location,Fina
 20squid1.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 20www.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 220-mail.abc.com,subfinder,abc.com,,N/A,,,,,,,New
+606166e16abc.com,assetfinder,abc.com,194.53.53.254,N/A,200,OK,,https://e2ozfn9uqsv1f.com/,200,React App,New
 68-11832.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-a.abc.com,"findomain,subfinder,assetfinder",abc.com,49.44.95.153,N/A,,,,,,,New
-a.oscar.abc.com,subfinder,abc.com,49.44.175.32,N/A,200,OK,,https://abc.com/show/0a6328a2-6451-46e7-a55a-fa84ddbb9541,200,The Oscars 2026 | 98th Academy Awards,New
+a.abc.com,"subfinder,findomain,assetfinder",abc.com,49.44.119.25,N/A,,,,,,,New
+a.oscar.abc.com,subfinder,abc.com,49.44.50.82,N/A,200,OK,,https://abc.com/show/0a6328a2-6451-46e7-a55a-fa84ddbb9541,200,The Oscars 2026 | 98th Academy Awards,New
 a.static.abc.com,subfinder,abc.com,49.44.50.82,N/A,,,,,,,New
 aaaakkd2dd.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-abc-cloud.com,brand_pattern,abc.com,98.82.42.139,ec2-98-82-42-139.compute-1.amazonaws.com,200,OK,,https://www.hugedomains.com/domain_profile.cfm?d=abc-cloud.com,200,abc-cloud.com is for sale | HugeDomains,New
+abc--abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+abc-cloud.com,brand_pattern,abc.com,52.201.53.166,ec2-52-201-53-166.compute-1.amazonaws.com,200,OK,,https://www.hugedomains.com/domain_profile.cfm?d=abc-cloud.com,200,abc-cloud.com is for sale | HugeDomains,New
 abc-corp.com,brand_pattern,abc.com,,N/A,,,,,,,New
 abc-global.com,brand_pattern,abc.com,146.59.149.209,ont101.onnet.tech,200,OK,,https://www.abc-global.com/,200,ABC GROUP OF COMPANIES,New
 abc-group.com,brand_pattern,abc.com,88.198.55.147,server6.greavesdesign.co.uk,200,OK,,https://www.abc-group.com/,200,"ABC Group - Maintenance, Construction and Civil Engineering",New
-abc-services.com,brand_pattern,abc.com,52.40.42.113,ec2-52-40-42-113.us-west-2.compute.amazonaws.com,200,OK,,https://abc-services.com/,200,abc-services.com for sale | Spaceship.com,New
+abc-services.com,brand_pattern,abc.com,44.232.173.249,ec2-44-232-173-249.us-west-2.compute.amazonaws.com,200,OK,,https://abc-services.com/,200,abc-services.com for sale | Spaceship.com,New
 abc-tech.com,brand_pattern,abc.com,18.224.83.222,ec2-18-224-83-222.us-east-2.compute.amazonaws.com,200,OK,,https://abc-tech.com/,200,Home - ABC Technologies,New
 abc.abc.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 abc.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-abc.ai,brand_tld,abc.com,76.223.54.146,a904c694c05102f30.awsglobalaccelerator.com,200,OK,,https://abc.ai/,200,,New
+abc.ai,brand_tld,abc.com,13.248.169.48,a904c694c05102f30.awsglobalaccelerator.com,200,OK,,https://abc.ai/,200,,New
 abc.app,brand_tld,abc.com,,N/A,,,,,,,New
 abc.cloud,brand_tld,abc.com,,N/A,,,,,,,New
 abc.co,brand_tld,abc.com,88.208.252.9,server88-208-252-9.fasthosts.net.uk,200,OK,,https://www.abc.org.uk/,200,ABC - Delivering a valued stamp of trust - ABC UK,New
-abc.com,"findomain,brand_tld,assetfinder",abc.com,13.225.103.113,server-13-225-103-113.del51.r.cloudfront.net,200,OK,,https://abc.com/,200,ABC Network - ABC.com,New
+abc.com,"assetfinder,findomain,brand_tld",abc.com,108.158.245.95,server-108-158-245-95.del51.r.cloudfront.net,200,OK,,https://abc.com/,200,ABC Network - ABC.com,New
 abc.in,brand_tld,abc.com,47.242.94.198,N/A,,,,,,,New
 abc.io,brand_tld,abc.com,54.215.31.113,ec2-54-215-31-113.us-west-1.compute.amazonaws.com,200,OK,,https://forsale.ddot.in/abc.io?drefid=2071,200,For Sale Domain: abc.io,New
 abc.net,brand_tld,abc.com,162.243.117.188,vip.nomoz.com,200,OK,,http://abc.net/,200,ABC.NET,New
-abc.org,brand_tld,abc.com,172.67.72.194,N/A,403,Forbidden,,https://abc.org/,403,Attention Required! | Cloudflare,New
+abc.org,brand_tld,abc.com,104.26.6.66,N/A,403,Forbidden,,https://abc.org/,403,Attention Required! | Cloudflare,New
 abc.tech,brand_tld,abc.com,,N/A,,,,,,,New
 abc212abc.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 abccloud.com,brand_pattern,abc.com,66.147.242.96,box496.bluehost.com,406,Not Acceptable,,https://abccloud.com/,406,Not Acceptable!,New
 abccorp.com,brand_pattern,abc.com,3.33.130.190,a2aa9ff50de748dbe.awsglobalaccelerator.com,200,OK,,https://abccorp.com/,200,,New
 abcglobal.com,brand_pattern,abc.com,216.92.209.88,bradley-consulting.com,200,OK,,http://abcglobal.com/,200,index.gif,New
 abcgroup.com,brand_pattern,abc.com,18.224.83.222,ec2-18-224-83-222.us-east-2.compute.amazonaws.com,200,OK,,https://abcgroup.com/,200,Home - ABC Technologies,New
-abcnyprod01.abc.com,"findomain,subfinder",abc.com,139.104.232.65,N/A,,,,,,,New
-abcnyprod02.abc.com,"findomain,subfinder",abc.com,139.104.232.66,N/A,,,,,,,New
+abcnyprod01.abc.com,"subfinder,assetfinder",abc.com,139.104.232.65,N/A,,,,,,,New
+abcnyprod02.abc.com,"subfinder,assetfinder",abc.com,139.104.232.66,N/A,,,,,,,New
 abcservices.com,brand_pattern,abc.com,173.236.214.24,vps27316.dreamhostps.com,500,Internal Server Error,,https://abcservices.com/,500,WordPress &rsaquo; Error,New
 abctech.com,brand_pattern,abc.com,18.224.83.222,ec2-18-224-83-222.us-east-2.compute.amazonaws.com,200,OK,,https://abctech.com/,200,Home - ABC Technologies,New
 abdi.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 ac.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 admin.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-afv.abc.com,"subfinder,assetfinder",abc.com,13.217.182.13,ec2-13-217-182-13.compute-1.amazonaws.com,200,OK,,https://abc.com/browse,200,"ABC TV Shows, Specials &amp; Movies",New
-akarmi.abc.com.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-altavault01.mit.abc.com,findomain,abc.com,,N/A,,,,,,,New
-ama.abc.com,"subfinder,assetfinder",abc.com,100.49.209.37,ec2-100-49-209-37.compute-1.amazonaws.com,200,OK,,https://abc.com/show/21b50293-3493-44f9-ae80-bdb0564b39cf,200,Watch American Music Awards TV Show - ABC.com,New
-api.abc.com,"findomain,subfinder,assetfinder",abc.com,18.66.102.117,server-18-66-102-117.fra56.r.cloudfront.net,403,Forbidden,,https://api.abc.com/,403,ERROR: The request could not be satisfied,New
-api.partners.abc.com,"findomain,subfinder",abc.com,18.66.102.117,server-18-66-102-117.fra56.r.cloudfront.net,403,Forbidden,,https://api.partners.abc.com/,403,ERROR: The request could not be satisfied,New
-api2.abc.com,subfinder,abc.com,18.66.102.117,server-18-66-102-117.fra56.r.cloudfront.net,403,Forbidden,,http://api2.abc.com/,403,ERROR: The request could not be satisfied,New
+afv.abc.com,"subfinder,assetfinder",abc.com,54.70.112.205,ec2-54-70-112-205.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/browse,200,"ABC TV Shows, Specials &amp; Movies",New
+akarmi.abc.com.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+altavault01.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+ama.abc.com,"subfinder,assetfinder",abc.com,54.190.118.130,ec2-54-190-118-130.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/show/21b50293-3493-44f9-ae80-bdb0564b39cf,200,Watch American Music Awards TV Show - ABC.com,New
+api.abc.com,"subfinder,findomain,assetfinder",abc.com,18.66.102.117,server-18-66-102-117.fra56.r.cloudfront.net,403,Forbidden,,https://api.abc.com/,403,ERROR: The request could not be satisfied,New
+api.partners.abc.com,"subfinder,findomain,assetfinder",abc.com,18.66.102.99,server-18-66-102-99.fra56.r.cloudfront.net,403,Forbidden,,https://api.partners.abc.com/,403,ERROR: The request could not be satisfied,New
+api2.abc.com,"subfinder,assetfinder",abc.com,18.66.102.117,server-18-66-102-117.fra56.r.cloudfront.net,403,Forbidden,,http://api2.abc.com/,403,ERROR: The request could not be satisfied,New
 app1.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 appstore17.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 appstore3.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 appstore7.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 as1115.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-asperaconsole.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
+asperaconsole.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
 assets.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 at0325.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 at0330.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 at0331.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 at1115.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 at1117.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-autodiscover.abc.com,"subfinder,assetfinder",abc.com,139.104.64.14,autodiscover.fxnetworkspressroom.com,,,,,,,New
+autodiscover.abc.com,"subfinder,assetfinder",abc.com,139.104.36.49,autodiscover.fxnetworkspressroom.com,,,,,,,New
 autodiscover.temp.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-autolink.abc.com,"findomain,subfinder,assetfinder",abc.com,192.195.67.80,N/A,,,,,,,New
-autolink.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-bachelor.abc.com,"subfinder,assetfinder",abc.com,54.70.112.205,ec2-54-70-112-205.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/browse,200,"ABC TV Shows, Specials &amp; Movies",New
-baton.mit.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
+autolink.abc.com,"subfinder,assetfinder",abc.com,192.195.67.80,N/A,,,,,,,New
+autolink.net.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+bachelor.abc.com,"subfinder,assetfinder",abc.com,54.190.118.130,ec2-54-190-118-130.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/browse,200,"ABC TV Shows, Specials &amp; Movies",New
+baton.mit.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
 bbir.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-beta.abc.com,"subfinder,assetfinder",abc.com,54.70.112.205,ec2-54-70-112-205.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/,200,ABC Network - ABC.com,New
+beta.abc.com,"subfinder,assetfinder",abc.com,54.197.191.132,ec2-54-197-191-132.compute-1.amazonaws.com,200,OK,,https://abc.com/,200,ABC Network - ABC.com,New
 bfhc-cs-1.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 bid48da.865291336m.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 blackberry.abc.com,"subfinder,assetfinder",abc.com,192.195.67.80,N/A,,,,,,,New
-blogs.abc.com,"findomain,subfinder,assetfinder",abc.com,104.18.117.121,N/A,403,Forbidden,,https://blogs.abc.com/,403,403 Forbidden,New
-boesfx.net.abc.com,"findomain,subfinder",abc.com,192.195.67.10,N/A,,,,,,,New
-bpl-emg-rcheng1.net.abc.com,findomain,abc.com,,N/A,,,,,,,New
-bvl-mit-graf01.mit.abc.com,findomain,abc.com,,N/A,,,,,,,New
+blogs.abc.com,"subfinder,assetfinder",abc.com,104.18.115.121,N/A,403,Forbidden,,https://blogs.abc.com/,403,403 Forbidden,New
+boesfx.net.abc.com,"subfinder,assetfinder",abc.com,192.195.67.10,N/A,,,,,,,New
+bpl-emg-rcheng1.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+bvl-mit-graf01.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+car-car-car-----abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 castle.abc.com,"subfinder,assetfinder",abc.com,52.43.57.102,ec2-52-43-57-102.us-west-2.compute.amazonaws.com,404,Not Found,,https://abc.com/shows/castle,404,Page not found - ABC.com,New
 cc.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-cd.abc.com,subfinder,abc.com,,N/A,,,,,,,New
+cd.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
 cdn.beta.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-cdn.media.abc.com,"subfinder,assetfinder",abc.com,49.44.175.8,N/A,200,OK,,https://cdn.media.abc.com/,200,,New
+cdn.media.abc.com,"subfinder,assetfinder",abc.com,49.44.175.16,N/A,200,OK,,https://cdn.media.abc.com/,200,,New
 cdn.media.oscar.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-cdn.mktg.abc.com,"findomain,subfinder,assetfinder",abc.com,184.85.220.73,a184-85-220-73.deploy.static.akamaitechnologies.com,404,Not Found,,https://cdn.mktg.abc.com/,404,,New
-cdn.video.abc.com,"findomain,subfinder",abc.com,49.44.175.9,N/A,200,OK,,https://cdn.video.abc.com/,200,,New
+cdn.mktg.abc.com,"subfinder,findomain,assetfinder",abc.com,184.85.220.73,a184-85-220-73.deploy.static.akamaitechnologies.com,404,Not Found,,https://cdn.mktg.abc.com/,404,,New
+cdn.video.abc.com,"subfinder,findomain,assetfinder",abc.com,49.44.50.74,N/A,200,OK,,https://cdn.video.abc.com/,200,,New
 ch0325.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 ch0328.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 ch03281.abc.com,subfinder,abc.com,,N/A,,,,,,,New
@@ -96,7 +99,7 @@ ch0330.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 ch0331.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 ch1117.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 chat.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-connect.abc.com,"subfinder,assetfinder",abc.com,18.210.153.8,lb-d.us1.gigya.com,404,Not Found,,https://connect.abc.com/,404,,New
+connect.abc.com,"subfinder,assetfinder",abc.com,18.206.141.83,lb-d.us1.gigya.com,404,Not Found,,https://connect.abc.com/,404,,New
 cpanel.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 cpanel.temp.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 cpanel.test.abc.com,subfinder,abc.com,,N/A,,,,,,,New
@@ -107,82 +110,86 @@ cpcontacts.temp.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 dashboard.abc.com,"subfinder,assetfinder",abc.com,172.24.74.81,N/A,,,,,,,New
 de.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 de0331.abc.com,subfinder,abc.com,,N/A,,,,,,,New
+deploy.splunk.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 design.abc.com,"subfinder,assetfinder",abc.com,10.102.125.155,N/A,,,,,,,New
 dev.abc.com,"subfinder,assetfinder",abc.com,192.195.67.81,N/A,,,,,,,New
-dev.cd.abc.com,"findomain,subfinder",abc.com,18.164.237.97,server-18-164-237-97.del54.r.cloudfront.net,403,Forbidden,,https://dev.cd.abc.com/,403,,New
+dev.cd.abc.com,"subfinder,findomain,assetfinder",abc.com,18.164.237.7,server-18-164-237-7.del54.r.cloudfront.net,403,Forbidden,,https://dev.cd.abc.com/,403,,New
 dev.ext.integration.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-dev.galaxy.abc.com,"findomain,subfinder,assetfinder",abc.com,54.243.116.183,ec2-54-243-116-183.compute-1.amazonaws.com,503,Service Temporarily Unavailable,,https://dev.galaxy.abc.com/,503,503 Service Temporarily Unavailable,New
+dev.galaxy.abc.com,"subfinder,findomain,assetfinder",abc.com,54.243.116.183,ec2-54-243-116-183.compute-1.amazonaws.com,503,Service Temporarily Unavailable,,https://dev.galaxy.abc.com/,503,503 Service Temporarily Unavailable,New
 dev.int.integration.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-dev.netbox.abc.com,findomain,abc.com,44.196.164.156,ec2-44-196-164-156.compute-1.amazonaws.com,200,OK,,https://dev.netbox.abc.com/login/?next=/,200,Home | NetBox,New
-dev.stratodesk.abc.com,findomain,abc.com,,N/A,,,,,,,New
-dev.sweepstakes.abc.com,findomain,abc.com,,N/A,,,,,,,New
-developer.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-devemx.abc.com,findomain,abc.com,,N/A,,,,,,,New
-devemx.net.abc.com,findomain,abc.com,,N/A,,,,,,,New
+dev.netbox.abc.com,assetfinder,abc.com,44.196.164.156,ec2-44-196-164-156.compute-1.amazonaws.com,200,OK,,https://dev.netbox.abc.com/login/?next=/,200,Home | NetBox,New
+dev.stratodesk.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+dev.sweepstakes.6abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+dev.sweepstakes.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+developer.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+devemx.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+devemx.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 discourse.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 dmedia.abc.com,"subfinder,assetfinder",abc.com,75.101.163.207,ec2-75-101-163-207.compute-1.amazonaws.com,,,,,,,New
-doctorodysseysweepstakes.abc.com,"findomain,subfinder,assetfinder",abc.com,24.144.66.46,N/A,503,Service Unavailable,,https://doctorodysseysweepstakes.abc.com/,503,503 Service Unavailable,New
+doctorodysseysweepstakes.abc.com,"subfinder,findomain,assetfinder",abc.com,24.144.66.46,N/A,503,Service Unavailable,,https://doctorodysseysweepstakes.abc.com/,503,503 Service Unavailable,New
 download.abc.com,"subfinder,assetfinder",abc.com,192.195.67.81,N/A,,,,,,,New
 downloads.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-duelthegame.abc.com,"subfinder,assetfinder",abc.com,100.49.209.37,ec2-100-49-209-37.compute-1.amazonaws.com,200,OK,,http://www.disneyinternational.com/,200,Disney - Disney Online International,New
-dwtsvote-live-test.abc.com,"findomain,subfinder",abc.com,151.101.106.137,N/A,200,OK,,https://abc.com/show/f66d60e7-29f2-49cf-85dd-44a11bce42e4,200,Watch Dancing with the Stars Streaming on ABC platforms and Disney+ - ABC.com,New
-dwtsvote-live.abc.com,"findomain,subfinder,assetfinder",abc.com,151.101.106.217,N/A,200,OK,,https://abc.com/show/f66d60e7-29f2-49cf-85dd-44a11bce42e4,200,Watch Dancing with the Stars Streaming on ABC platforms and Disney+ - ABC.com,New
-dwtsvote-test.abc.com,"findomain,subfinder,assetfinder",abc.com,151.101.106.137,N/A,200,OK,,https://dwtsvote-test.abc.com/,200,Dancing with the Stars Voting | ABC & Disney+,New
-dwtsvote.abc.com,"findomain,subfinder,assetfinder",abc.com,151.101.106.217,N/A,200,OK,,https://dwtsvote.abc.com/,200,Dancing with the Stars Voting | ABC & Disney+,New
+dtcipr-qapw01.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+duelthegame.abc.com,"subfinder,assetfinder",abc.com,54.197.191.132,ec2-54-197-191-132.compute-1.amazonaws.com,200,OK,,http://www.disneyinternational.com/,200,Disney - Disney Online International,New
+dwtsvote-live-test.abc.com,"subfinder,assetfinder",abc.com,151.101.106.137,N/A,200,OK,,https://abc.com/show/f66d60e7-29f2-49cf-85dd-44a11bce42e4,200,Watch Dancing with the Stars Streaming on ABC platforms and Disney+ - ABC.com,New
+dwtsvote-live.abc.com,"subfinder,findomain,assetfinder",abc.com,151.101.106.217,N/A,200,OK,,https://abc.com/show/f66d60e7-29f2-49cf-85dd-44a11bce42e4,200,Watch Dancing with the Stars Streaming on ABC platforms and Disney+ - ABC.com,New
+dwtsvote-test.abc.com,"subfinder,findomain,assetfinder",abc.com,151.101.106.137,N/A,200,OK,,https://dwtsvote-test.abc.com/,200,Dancing with the Stars Voting | ABC & Disney+,New
+dwtsvote.abc.com,"subfinder,findomain,assetfinder",abc.com,151.101.106.217,N/A,200,OK,,https://dwtsvote.abc.com/,200,Dancing with the Stars Voting | ABC & Disney+,New
 eitsrv04.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-emdesign-stage.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-emdesign.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-emindex.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-emindexdb.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-emmedia.net.abc.com,"findomain,subfinder",abc.com,192.195.63.65,N/A,,,,,,,New
+emdesign-stage.net.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
+emdesign.net.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
+emindex.net.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
+emindexdb.net.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
+emmedia.net.abc.com,"subfinder,assetfinder",abc.com,192.195.63.65,N/A,,,,,,,New
 emmys.abc.com,"subfinder,assetfinder",abc.com,54.190.118.130,ec2-54-190-118-130.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/browse,200,"ABC TV Shows, Specials &amp; Movies",New
-emreach-staging.net.abc.com,findomain,abc.com,,N/A,,,,,,,New
-emreach.net.abc.com,findomain,abc.com,,N/A,,,,,,,New
-emsetup.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-emsoundminerdev.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-emvault.net.abc.com,findomain,abc.com,,N/A,,,,,,,New
-emwebapps.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-emx.abc.com,"findomain,subfinder",abc.com,192.195.67.22,N/A,,,,,,,New
-emx.net.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-ets.abc.com,"findomain,subfinder,assetfinder",abc.com,40.71.70.250,N/A,200,OK,,http://ets.abc.com:80/Login,200,Welcome to MediaPulse Sky,New
-etsdev.abc.com,"findomain,subfinder",abc.com,40.71.70.250,N/A,200,OK,,http://etsdev.abc.com:80/Login,200,Welcome to MediaPulse Sky,New
+emreach-staging.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+emreach.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+emsetup.net.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
+emsoundminerdev.net.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+emvault.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+emwebapps.net.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
+emx.abc.com,"subfinder,assetfinder",abc.com,192.195.67.22,N/A,,,,,,,New
+emx.net.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+ets.abc.com,"subfinder,assetfinder",abc.com,40.71.70.250,N/A,200,OK,,http://ets.abc.com:80/Login,200,Welcome to MediaPulse Sky,New
+etsdev.abc.com,"subfinder,assetfinder",abc.com,40.71.70.250,N/A,200,OK,,http://etsdev.abc.com:80/Login,200,Welcome to MediaPulse Sky,New
 eve-ng.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 facebook.abc.com,"subfinder,assetfinder",abc.com,72.44.37.156,ec2-72-44-37-156.compute-1.amazonaws.com,401,Unauthorized,,https://facebook.abc.com/,401,,New
 farzin.abc.com,subfinder,abc.com,,N/A,,,,,,,New
+faspex.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 fb10.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 fb11.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 fb3.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-fcast.cdn.abc.com,"findomain,subfinder,assetfinder",abc.com,184.85.220.71,a184-85-220-71.deploy.static.akamaitechnologies.com,404,Not Found,,https://fcast.cdn.abc.com/,404,,New
-fcast.qa.cdn.abc.com,"findomain,subfinder,assetfinder",abc.com,184.85.220.86,a184-85-220-86.deploy.static.akamaitechnologies.com,404,Not Found,,https://fcast.qa.cdn.abc.com/,404,,New
-filemaker01.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-filemaker03.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
+fcast.cdn.abc.com,"subfinder,findomain,assetfinder",abc.com,184.85.220.71,a184-85-220-71.deploy.static.akamaitechnologies.com,404,Not Found,,https://fcast.cdn.abc.com/,404,,New
+fcast.qa.cdn.abc.com,"subfinder,findomain,assetfinder",abc.com,184.85.220.86,a184-85-220-86.deploy.static.akamaitechnologies.com,404,Not Found,,https://fcast.qa.cdn.abc.com/,404,,New
+filemaker01.net.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
+filemaker03.net.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
 firepower-bcul.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-fonts.abc.com,subfinder,abc.com,,N/A,,,,,,,New
+fonts.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
 fr0330.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 fr0331.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 ftp1.abc.com,subfinder,abc.com,204.87.172.6,N/A,,,,,,,New
 ftp3.abc.com,"subfinder,assetfinder",abc.com,204.87.172.6,N/A,,,,,,,New
-galaxy.abc.com,"findomain,subfinder,assetfinder",abc.com,,N/A,,,,,,,New
-gambit.abc.com,"findomain,subfinder,assetfinder",abc.com,52.84.150.57,N/A,403,Forbidden,,https://gambit.abc.com/,403,403 Forbidden,New
+galaxy.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
+gambit.abc.com,"subfinder,findomain,assetfinder",abc.com,52.84.150.53,N/A,403,Forbidden,,https://gambit.abc.com/,403,403 Forbidden,New
 garage.abc.com,"subfinder,assetfinder",abc.com,72.2.116.92,N/A,,,,,,,New
 get-abc.com,brand_pattern,abc.com,,N/A,,,,,,,New
 getabc.com,brand_pattern,abc.com,76.223.54.146,a904c694c05102f30.awsglobalaccelerator.com,200,OK,,https://getabc.com/,200,,New
 gis.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 gismap.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-gist.abc.com,findomain,abc.com,,N/A,,,,,,,New
-gitlab.mit.abc.com,findomain,abc.com,,N/A,,,,,,,New
-gksrv.abc.com,"findomain,subfinder",abc.com,52.44.244.98,ec2-52-44-244-98.compute-1.amazonaws.com,200,OK,,http://gksrv.abc.com/,200,NameBright - Coming Soon,New
+gist.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+gitlab.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+gksrv.abc.com,"subfinder,assetfinder",abc.com,52.44.244.98,ec2-52-44-244-98.compute-1.amazonaws.com,200,OK,,http://gksrv.abc.com/,200,NameBright - Coming Soon,New
 gps.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-haivision.abc.com,"findomain,subfinder,assetfinder",abc.com,139.104.232.35,N/A,,,,,,,New
+haivision.abc.com,"subfinder,assetfinder",abc.com,139.104.232.35,N/A,,,,,,,New
 hcp.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 hfsf-ajkrdl3he1.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 hmgw1.haivision.abc.com,"subfinder,assetfinder",abc.com,139.104.232.30,N/A,,,,,,,New
-hmgw2.haivision.abc.com,subfinder,abc.com,139.104.232.31,N/A,,,,,,,New
-hmgw3.haivision.abc.com,subfinder,abc.com,139.104.232.32,N/A,,,,,,,New
+hmgw2.haivision.abc.com,"subfinder,assetfinder",abc.com,139.104.232.31,N/A,,,,,,,New
+hmgw3.haivision.abc.com,"subfinder,assetfinder",abc.com,139.104.232.32,N/A,,,,,,,New
 host.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-icom.abc.com,"findomain,subfinder",abc.com,139.104.232.13,N/A,,,,,,,New
-idolvote-test.abc.com,"findomain,subfinder,assetfinder",abc.com,151.101.106.217,N/A,200,OK,,https://idolvote-test.abc.com/,200,Client Challenge,New
-idolvote.abc.com,"findomain,subfinder,assetfinder",abc.com,151.101.106.217,N/A,200,OK,,https://idolvote.abc.com/,200,Client Challenge,New
+icom.abc.com,"subfinder,assetfinder",abc.com,139.104.232.13,N/A,,,,,,,New
+idolvote-test.abc.com,"subfinder,findomain,assetfinder",abc.com,151.101.106.217,N/A,200,OK,,https://idolvote-test.abc.com/,200,Client Challenge,New
+idolvote.abc.com,"subfinder,findomain,assetfinder",abc.com,151.101.106.217,N/A,200,OK,,https://idolvote.abc.com/,200,Client Challenge,New
 imap.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 initebs.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 injustice.abc.com,"subfinder,assetfinder",abc.com,54.70.112.205,ec2-54-70-112-205.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/browse,200,"ABC TV Shows, Specials &amp; Movies",New
@@ -190,9 +197,10 @@ int.integration.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 inttst.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 ipam.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 istore.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-jimmykimmellive.abc.com,"subfinder,assetfinder",abc.com,52.43.57.102,ec2-52-43-57-102.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/show/9bfe2f4f-41ad-4492-a6dd-0b67db180543,200,Watch Jimmy Kimmel Live! TV Show - ABC.com,New
-join-abc.com,brand_pattern,abc.com,3.33.130.190,a2aa9ff50de748dbe.awsglobalaccelerator.com,200,OK,,https://join-abc.com/,200,,New
+jimmykimmellive.abc.com,"subfinder,assetfinder",abc.com,54.70.112.205,ec2-54-70-112-205.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/show/9bfe2f4f-41ad-4492-a6dd-0b67db180543,200,Watch Jimmy Kimmel Live! TV Show - ABC.com,New
+join-abc.com,brand_pattern,abc.com,15.197.148.33,a2aa9ff50de748dbe.awsglobalaccelerator.com,200,OK,,https://join-abc.com/,200,,New
 joinabc.com,brand_pattern,abc.com,34.174.221.135,135.221.174.34.bc.googleusercontent.com,200,OK,,https://www.actionbehavior.com/careers,200,"Careers | ABA Therapy, BCBA &amp; RBT Jobs",New
+jss.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 juicy.abc.com,"subfinder,assetfinder",abc.com,192.195.67.81,N/A,,,,,,,New
 juniper.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 k8s-pipelines-tpl-develop.abc.com,subfinder,abc.com,,N/A,,,,,,,New
@@ -208,22 +216,24 @@ la0331.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 la1115.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 la1117.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 lab.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-latency.abc.com,"subfinder,assetfinder",abc.com,54.190.118.130,ec2-54-190-118-130.us-west-2.compute.amazonaws.com,200,OK,,http://www.disneyinternational.com/,200,Disney - Disney Online International,New
-ll.media.abc.com,"findomain,subfinder,assetfinder",abc.com,49.44.95.143,N/A,200,OK,,https://ll.media.abc.com/,200,,New
+latency.abc.com,"subfinder,assetfinder",abc.com,52.43.57.102,ec2-52-43-57-102.us-west-2.compute.amazonaws.com,200,OK,,http://www.disneyinternational.com/,200,Disney - Disney Online International,New
+ll.media.abc.com,"subfinder,findomain,assetfinder",abc.com,49.44.175.33,N/A,200,OK,,https://ll.media.abc.com/,200,,New
 ll.static.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-lostwiki.abc.com,"subfinder,assetfinder",abc.com,54.190.118.130,ec2-54-190-118-130.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/browse,200,"ABC TV Shows, Specials &amp; Movies",New
-m.abc.com,"subfinder,assetfinder",abc.com,54.190.118.130,ec2-54-190-118-130.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/,200,ABC Network - ABC.com,New
+lostwiki.abc.com,"subfinder,assetfinder",abc.com,54.70.112.205,ec2-54-70-112-205.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/browse,200,"ABC TV Shows, Specials &amp; Movies",New
+m.abc.com,"subfinder,assetfinder",abc.com,54.70.112.205,ec2-54-70-112-205.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/,200,ABC Network - ABC.com,New
 m.hsm.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 mail.a.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 mail.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 mail.temp.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 mail.test.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 mailxi.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-marketingops.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-mc-aprimo.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-mc.abc.com,"findomain,subfinder,assetfinder",abc.com,192.195.67.33,N/A,200,OK,,https://mc.abc.com/,200,mc.abc.com,New
+manage.splunk.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+marketingops.net.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
+mc-aprimo.net.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+mc.abc.com,"subfinder,findomain,assetfinder",abc.com,192.195.67.33,N/A,200,OK,,https://mc.abc.com/,200,mc.abc.com,New
 media.abc.com,"subfinder,assetfinder",abc.com,68.71.212.241,media.abc.go.com,,,,,,,New
-mediapulsepoc2.abc.com,"findomain,subfinder",abc.com,40.71.70.250,N/A,502,Bad Gateway,,https://mediapulsepoc2.abc.com/,502,502 Bad Gateway,New
+mediapulsepoc2.abc.com,"subfinder,assetfinder",abc.com,40.71.70.250,N/A,502,Bad Gateway,,https://mediapulsepoc2.abc.com/,502,502 Bad Gateway,New
+mediascreening.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 mi0325.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 mi0328.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 mi03281.abc.com,subfinder,abc.com,,N/A,,,,,,,New
@@ -236,55 +246,60 @@ mn0328.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 mn0330.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 mn1115.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 mn1117.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-modernfamily.abc.com,"subfinder,assetfinder",abc.com,100.49.209.37,ec2-100-49-209-37.compute-1.amazonaws.com,200,OK,,https://abc.com/show/d72316e9-c889-494b-bb3c-a48266fb326d,200,Watch Modern Family TV Show - ABC.com,New
+modernfamily.abc.com,"subfinder,assetfinder",abc.com,52.43.57.102,ec2-52-43-57-102.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/show/d72316e9-c889-494b-bb3c-a48266fb326d,200,Watch Modern Family TV Show - ABC.com,New
+monitor.splunk.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 moren.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-mpowr-aprimo.net.abc.com,"findomain,subfinder",abc.com,192.195.63.64,N/A,,,,,,,New
+mpowr-aprimo.net.abc.com,"subfinder,assetfinder",abc.com,192.195.63.64,N/A,,,,,,,New
 mx.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-my-abc.com,brand_pattern,abc.com,3.96.22.179,ec2-3-96-22-179.ca-central-1.compute.amazonaws.com,502,Bad Gateway,,https://my-abc.com/,502,502 Bad Gateway,New
+my-abc.com,brand_pattern,abc.com,15.156.49.57,ec2-15-156-49-57.ca-central-1.compute.amazonaws.com,502,Bad Gateway,,https://my-abc.com/,502,502 Bad Gateway,New
 myabc.com,brand_pattern,abc.com,165.160.15.20,N/A,200,OK,,http://myabc.com/,200,,New
-mydisney.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-myproject.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
+mydisney.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+myproject.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
 myservice.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 nationalbingonightgame.abc.com,subfinder,abc.com,209.34.85.149,N/A,,,,,,,New
 net.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-netbox.abc.com,"findomain,subfinder",abc.com,52.0.158.81,ec2-52-0-158-81.compute-1.amazonaws.com,200,OK,,https://netbox.abc.com/login/?next=/,200,Home | NetBox,New
-newsmam.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-newsmamdev.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
+netbox.abc.com,"subfinder,assetfinder",abc.com,3.213.171.250,ec2-3-213-171-250.compute-1.amazonaws.com,200,OK,,https://netbox.abc.com/login/?next=/,200,Home | NetBox,New
+newsmam.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+newsmamdev.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
 ngrok.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 ngrok2.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 nodelete.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 ny0330.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-nyoffair.abc.com,"findomain,subfinder",abc.com,139.104.232.44,N/A,,,,,,,New
+nyoffair.abc.com,"subfinder,assetfinder",abc.com,139.104.232.44,N/A,,,,,,,New
 oc.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 ocsinventory.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 office.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-onceuponatime.abc.com,subfinder,abc.com,54.70.112.205,ec2-54-70-112-205.us-west-2.compute.amazonaws.com,404,Not Found,,https://abc.com/shows/once-upon-a-time,404,Page not found - ABC.com,New
+onceuponatime.abc.com,subfinder,abc.com,52.43.57.102,ec2-52-43-57-102.us-west-2.compute.amazonaws.com,404,Not Found,,https://abc.com/shows/once-upon-a-time,404,Page not found - ABC.com,New
 origin.beta.vp2.abc.com,subfinder,abc.com,192.147.170.20,N/A,,,,,,,New
-origin.vp2.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
+origin.vp2.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
 p.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 pak.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 partners.abc.com,subfinder,abc.com,184.85.220.78,a184-85-220-78.deploy.static.akamaitechnologies.com,200,OK,,https://abc.com/,200,ABC Network - ABC.com,New
 passport.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 pl0331.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 plm.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-prod.cd.abc.com,"findomain,subfinder",abc.com,108.158.245.6,server-108-158-245-6.del51.r.cloudfront.net,403,Forbidden,,https://prod.cd.abc.com/,403,,New
-proxy.mit.abc.com,findomain,abc.com,,N/A,,,,,,,New
-pushingdaisies.abc.com,subfinder,abc.com,54.190.118.130,ec2-54-190-118-130.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/browse,200,"ABC TV Shows, Specials &amp; Movies",New
-qa.api.abc.com,"findomain,subfinder",abc.com,3.218.217.30,ec2-3-218-217-30.compute-1.amazonaws.com,596,596,,https://qa.api.abc.com/,596,,New
-qa.cd.abc.com,"findomain,subfinder",abc.com,99.86.30.39,server-99-86-30-39.del51.r.cloudfront.net,403,Forbidden,,https://qa.cd.abc.com/,403,,New
+prod.cd.abc.com,"subfinder,findomain,assetfinder",abc.com,108.158.245.18,server-108-158-245-18.del51.r.cloudfront.net,403,Forbidden,,https://prod.cd.abc.com/,403,,New
+proxy.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+pushingdaisies.abc.com,subfinder,abc.com,52.43.57.102,ec2-52-43-57-102.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/browse,200,"ABC TV Shows, Specials &amp; Movies",New
+qa.api.abc.com,"subfinder,assetfinder",abc.com,52.2.165.156,ec2-52-2-165-156.compute-1.amazonaws.com,596,596,,https://qa.api.abc.com/,596,,New
+qa.cd.abc.com,"subfinder,findomain,assetfinder",abc.com,18.164.246.14,server-18-164-246-14.del54.r.cloudfront.net,403,Forbidden,,https://qa.cd.abc.com/,403,,New
 qa.int.integration.abc.com,subfinder,abc.com,,N/A,,,,,,,New
+qmjkfwtx.abc--abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+qmjkk.abc--abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 qradar-aio.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 r1.abc.com,subfinder,abc.com,204.202.134.76,N/A,,,,,,,New
 r2.abc.com,subfinder,abc.com,204.202.134.77,N/A,,,,,,,New
 r3.abc.com,subfinder,abc.com,204.202.134.78,N/A,,,,,,,New
 rds.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-redirect.abc.com,"findomain,subfinder",abc.com,192.195.67.129,N/A,200,OK,,https://redirect.abc.com/,200,Redirect,New
-remotesupport.abc.com,"findomain,subfinder",abc.com,52.150.35.231,N/A,,,,,,,New
-reset.abc.com,"findomain,subfinder",abc.com,100.30.242.112,ec2-100-30-242-112.compute-1.amazonaws.com,,,,,,,New
-revenge.abc.com,subfinder,abc.com,13.217.182.13,ec2-13-217-182-13.compute-1.amazonaws.com,404,Not Found,,https://abc.com/shows/revenge,404,Page not found - ABC.com,New
+redirect.abc.com,"subfinder,findomain,assetfinder",abc.com,192.195.67.129,N/A,200,OK,,https://redirect.abc.com/,200,Redirect,New
+remotesupport.abc.com,"subfinder,assetfinder",abc.com,52.150.35.231,N/A,,,,,,,New
+reset.abc.com,"subfinder,assetfinder",abc.com,100.30.242.112,ec2-100-30-242-112.compute-1.amazonaws.com,,,,,,,New
+revenge.abc.com,subfinder,abc.com,52.43.57.102,ec2-52-43-57-102.us-west-2.compute.amazonaws.com,404,Not Found,,https://abc.com/shows/revenge,404,Page not found - ABC.com,New
 robert.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-rogue.mit.abc.com,findomain,abc.com,,N/A,,,,,,,New
-rstudio-stgngvm.mit.abc.com,findomain,abc.com,,N/A,,,,,,,New
+rogue.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+rosendo.pena@abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+rrp.abc--abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+rstudio-stgngvm.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 rt.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 sandbox.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 sc0031.abc.com,subfinder,abc.com,,N/A,,,,,,,New
@@ -293,58 +308,61 @@ sc0328.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 sc03281.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 sc03282.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 sc0330.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-scalari6k.mit.abc.com,findomain,abc.com,,N/A,,,,,,,New
-scandal.abc.com,subfinder,abc.com,54.70.112.205,ec2-54-70-112-205.us-west-2.compute.amazonaws.com,404,Not Found,,https://abc.com/shows/scandal,404,Page not found - ABC.com,New
+scalari6k.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+scandal.abc.com,subfinder,abc.com,54.190.118.130,ec2-54-190-118-130.us-west-2.compute.amazonaws.com,404,Not Found,,https://abc.com/shows/scandal,404,Page not found - ABC.com,New
 search-es-log-dev.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 secure-abc.com,brand_pattern,abc.com,,N/A,,,,,,,New
-secure.cdn.media.oscar.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
+secure.cdn.media.oscar.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
 secureabc.com,brand_pattern,abc.com,35.197.121.119,119.121.197.35.bc.googleusercontent.com,403,Forbidden,,https://secureabc.com/,403,403 Forbidden,New
-secureaccess.abc.com,"findomain,subfinder",abc.com,139.104.232.57,N/A,,,,,,,New
+secureaccess.abc.com,"subfinder,assetfinder",abc.com,139.104.232.57,N/A,,,,,,,New
 server.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 server1.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 server12053.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 servername.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 sfgdsg65xcv.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-sgadmin.mit.abc.com,findomain,abc.com,,N/A,,,,,,,New
-sip.abc.com,subfinder,abc.com,192.195.66.83,N/A,,,,,,,New
-slingshot.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-slingshotdev.net.abc.com,findomain,abc.com,,N/A,,,,,,,New
+sgadmin.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+sip.abc.com,"subfinder,assetfinder",abc.com,192.195.66.83,N/A,,,,,,,New
+slingshot.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+slingshotdev.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 smtp.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 so.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-solarwinds.mit.abc.com,findomain,abc.com,,N/A,,,,,,,New
-soundminer.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
+solarwinds.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+soundminer.net.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
 sp0330.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-splunk.mit.abc.com,findomain,abc.com,,N/A,,,,,,,New
-spotfinder-akstest.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-spotfinder.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
+splunk.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+spotfinder-akstest.net.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
+spotfinder.net.abc.com,"subfinder,findomain,assetfinder",abc.com,,N/A,,,,,,,New
 squid1.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 ss.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 sslvpn.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-stage.cd.abc.com,"findomain,subfinder",abc.com,18.164.217.118,server-18-164-217-118.del54.r.cloudfront.net,403,Forbidden,,https://stage.cd.abc.com/,403,,New
-storefront.abc.com,"findomain,subfinder",abc.com,99.84.152.104,server-99-84-152-104.fra56.r.cloudfront.net,403,Forbidden,,http://storefront.abc.com/,403,ERROR: The request could not be satisfied,New
-storefrontdev.abc.com,"findomain,subfinder",abc.com,99.84.152.6,server-99-84-152-6.fra56.r.cloudfront.net,403,Forbidden,,http://storefrontdev.abc.com/,403,ERROR: The request could not be satisfied,New
-stories.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-stratodesk.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
+stage.cd.abc.com,"subfinder,findomain,assetfinder",abc.com,18.164.217.118,server-18-164-217-118.del54.r.cloudfront.net,403,Forbidden,,https://stage.cd.abc.com/,403,,New
+storefront.abc.com,"subfinder,assetfinder",abc.com,99.84.152.104,server-99-84-152-104.fra56.r.cloudfront.net,403,Forbidden,,http://storefront.abc.com/,403,ERROR: The request could not be satisfied,New
+storefrontdev.abc.com,"subfinder,assetfinder",abc.com,99.84.152.6,server-99-84-152-6.fra56.r.cloudfront.net,403,Forbidden,,http://storefrontdev.abc.com/,403,ERROR: The request could not be satisfied,New
+stories.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+stratodesk.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
 stream.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-support.abc.com,"findomain,subfinder,assetfinder",abc.com,216.198.53.11,N/A,403,Forbidden,,https://support.abc.com/hc/en-us,403,Just a moment...,New
+support.abc.com,"subfinder,findomain,assetfinder",abc.com,216.198.54.11,N/A,403,Forbidden,,https://support.abc.com/hc/en-us,403,Just a moment...,New
 sv.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 svrctx01.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-sw88.abc.com,"findomain,subfinder",abc.com,66.117.22.113,ip-66-117-22-113.data.adobedc.net,200,OK,,https://sw88.abc.com/,200,,New
-sweepstakes.abc.com,findomain,abc.com,,N/A,,,,,,,New
+sw88.abc.com,"subfinder,findomain,assetfinder",abc.com,66.117.22.113,ip-66-117-22-113.data.adobedc.net,200,OK,,https://sw88.abc.com/,200,,New
+sweepstakes.6abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+sweepstakes.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 temp.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-test.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
+test.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+test.sweepstakes.6abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+test.sweepstakes.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 test.xxx.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-test2.abc.com,subfinder,abc.com,,N/A,,,,,,,New
+test2.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
 testprint.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 tools.abc.com,subfinder,abc.com,204.202.137.92,N/A,,,,,,,New
-tower.mit.abc.com,findomain,abc.com,,N/A,,,,,,,New
-transfer.mit.abc.com,subfinder,abc.com,,N/A,,,,,,,New
+tower.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+transfer.mit.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
 try-abc.com,brand_pattern,abc.com,13.248.169.48,a904c694c05102f30.awsglobalaccelerator.com,200,OK,,https://try-abc.com/,200,,New
 tryabc.com,brand_pattern,abc.com,208.115.240.122,122-240-115-208.static.reverse.lstn.net,200,OK,,http://www.chinesemenu.com,200,Chinese Menu | Chinese Restaurant | Chinese Cuisine | Chinese Food in LA | Delivery Food,New
 u003elab.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 u003emc.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-uag.abc.com,findomain,abc.com,,N/A,,,,,,,New
-ugw.abc.com,findomain,abc.com,,N/A,,,,,,,New
+uag.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+ugw.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 untrusted.plm.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 us1026.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 usas.abc.com,subfinder,abc.com,,N/A,,,,,,,New
@@ -354,27 +372,28 @@ usch1017.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 usla1018.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 usla1019.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 usweekly.abc.com,subfinder,abc.com,199.181.134.92,N/A,,,,,,,New
-vdigate.abc.com,"findomain,subfinder",abc.com,52.147.216.119,N/A,,,,,,,New
-vdigate1.abc.com,"findomain,subfinder",abc.com,52.147.216.119,N/A,,,,,,,New
-vdigate1qa.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-vdigate2.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-vdigate2qa.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-vdigate3.abc.com,subfinder,abc.com,139.104.232.100,N/A,,,,,,,New
-vdigate3qa.abc.com,subfinder,abc.com,139.104.232.107,N/A,,,,,,,New
-vdigate4.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-vdigate4qa.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-vdigate5.abc.com,subfinder,abc.com,67.212.182.149,xperience.plus,200,OK,,https://vdigate5.abc.com/,200,Vdigate5,New
-vdigate5qa.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-vdigate6.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-vdigate6qa.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-vdigateqa.abc.com,"findomain,subfinder",abc.com,20.127.42.140,N/A,502,Bad Gateway,,https://vdigateqa.abc.com/,502,502 Bad Gateway,New
+vcip.abc--abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+vdigate.abc.com,"subfinder,assetfinder",abc.com,52.147.216.119,N/A,,,,,,,New
+vdigate1.abc.com,"subfinder,assetfinder",abc.com,52.147.216.119,N/A,,,,,,,New
+vdigate1qa.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+vdigate2.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+vdigate2qa.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+vdigate3.abc.com,"subfinder,assetfinder",abc.com,139.104.232.100,N/A,,,,,,,New
+vdigate3qa.abc.com,"subfinder,assetfinder",abc.com,139.104.232.107,N/A,,,,,,,New
+vdigate4.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+vdigate4qa.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+vdigate5.abc.com,"subfinder,assetfinder",abc.com,67.212.182.149,xperience.plus,200,OK,,https://vdigate5.abc.com/,200,Vdigate5,New
+vdigate5qa.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+vdigate6.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+vdigate6qa.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+vdigateqa.abc.com,"subfinder,assetfinder",abc.com,20.127.42.140,N/A,502,Bad Gateway,,https://vdigateqa.abc.com/,502,502 Bad Gateway,New
 veritas-dlo.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 voltage-pp-0000.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-vp2.abc.com,subfinder,abc.com,49.44.175.11,N/A,503,Service Unavailable,,https://vp2.abc.com/,503,Service Unavailable,New
+vp2.abc.com,subfinder,abc.com,49.44.175.27,N/A,503,Service Unavailable,,https://vp2.abc.com/,503,Service Unavailable,New
 vpn.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-w88.abc.com,"findomain,subfinder",abc.com,66.117.22.113,ip-66-117-22-113.data.adobedc.net,200,OK,,https://w88.abc.com/,200,,New
+w88.abc.com,"subfinder,assetfinder",abc.com,66.117.22.191,ip-66-117-22-191.data.adobedc.net,200,OK,,https://w88.abc.com/,200,,New
 wap.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-watch.abc.com,subfinder,abc.com,54.190.118.130,ec2-54-190-118-130.us-west-2.compute.amazonaws.com,200,OK,,http://www.disneyinternational.com/,200,Disney - Disney Online International,New
+watch.abc.com,subfinder,abc.com,54.197.191.132,ec2-54-197-191-132.compute-1.amazonaws.com,200,OK,,http://www.disneyinternational.com/,200,Disney - Disney Online International,New
 webdisk.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 webdisk.temp.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 webdisk.test.abc.com,subfinder,abc.com,,N/A,,,,,,,New
@@ -382,19 +401,38 @@ webmail.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 webmail.temp.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 webmail.test.abc.com,subfinder,abc.com,,N/A,,,,,,,New
 whm.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-workspaces.abc.com,findomain,abc.com,,N/A,,,,,,,New
+workspaces.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.606166e16abc.com,assetfinder,abc.com,194.53.53.2,N/A,200,OK,,https://e2ozfn9uqsv1f.com/,200,React App,New
 www.a.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-www.abc.com,"findomain,subfinder,assetfinder",abc.com,13.225.103.63,server-13-225-103-63.del51.r.cloudfront.net,200,OK,,https://abc.com/,200,ABC Network - ABC.com,New
-www.autolink.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-www.bachelor.abc.com,"subfinder,assetfinder",abc.com,54.190.118.130,ec2-54-190-118-130.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/browse,200,"ABC TV Shows, Specials &amp; Movies",New
-www.boesfx.net.abc.com,subfinder,abc.com,,N/A,,,,,,,New
+www.abc--abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.abc.com,"subfinder,findomain,assetfinder",abc.com,108.158.245.79,server-108-158-245-79.del51.r.cloudfront.net,200,OK,,https://abc.com/,200,ABC Network - ABC.com,New
+www.abcnyprod01.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.abcnyprod02.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.akarmi.abc.com.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.autolink.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+www.autolink.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.bachelor.abc.com,"subfinder,assetfinder",abc.com,52.43.57.102,ec2-52-43-57-102.us-west-2.compute.amazonaws.com,200,OK,,https://abc.com/browse,200,"ABC TV Shows, Specials &amp; Movies",New
+www.boesfx.net.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+www.car-car-car-----abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 www.datgpodcast.abc.com,"subfinder,assetfinder",abc.com,49.44.50.67,N/A,404,Not Found,,https://www.datgpodcast.abc.com/,404,,New
-www.gist.abc.com,findomain,abc.com,,N/A,,,,,,,New
-www.haivision.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-www.marketingops.net.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-www.remotesupport.abc.com,subfinder,abc.com,,N/A,,,,,,,New
+www.emindexdb.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.emreach-staging.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.emreach.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.emsoundminerdev.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.emvault.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.faspex.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.gist.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.haivision.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+www.marketingops.net.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+www.newsmamdev.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.remotesupport.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+www.secure.cdn.media.oscar.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.solarwinds.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
 www.temp.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-www.test.abc.com,subfinder,abc.com,,N/A,,,,,,,New
-xkm-emg-pautlnk.net.abc.com,"findomain,subfinder",abc.com,,N/A,,,,,,,New
-xkm-emg-qautlnk.net.abc.com,findomain,abc.com,,N/A,,,,,,,New
-xvl-mit-trnsfr2.mit.abc.com,findomain,abc.com,,N/A,,,,,,,New
+www.test.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+www.vdigate.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+www.xvl-mit-trnsfr2.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+xkm-emg-pautlnk.net.abc.com,"subfinder,assetfinder",abc.com,,N/A,,,,,,,New
+xkm-emg-qautlnk.net.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+xvl-mit-trnsfr2.mit.abc.com,assetfinder,abc.com,,N/A,,,,,,,New
+zy.abc--abc.com,assetfinder,abc.com,,N/A,,,,,,,New

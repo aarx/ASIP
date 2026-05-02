@@ -12,6 +12,41 @@ import HygieneChart from "./components/HygieneChart";
 import InvestigationTable from "./components/InvestigationTable";
 import ShadowChart from "./components/ShadowChart";
 
+const UnvalidatedBrandCard = () => {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    fetch("http://localhost:8555/metrics/unvalidated-brand-footprint")
+      .then(res => res.json())
+      .then(setData);
+  }, []);
+
+  if (!data) return null;
+
+  return (
+    <Card style={{ background: "#fff3f3", borderLeft: "6px solid #ff4d4f" }}>
+      <CardContent>
+        <Typography variant="h6">
+          🚨 Unvalidated Brand Footprint
+        </Typography>
+    
+        <Typography variant="h3" style={{ marginTop: 8 }}>
+          {data.count}
+        </Typography>
+    
+        <Typography variant="body2" style={{ marginTop: 8 }}>
+          {data.count} domains match brand patterns but remain unvalidated
+        </Typography>
+    
+        <Typography variant="caption">
+          {data.percentage}% of total discovered assets
+        </Typography>
+      </CardContent>
+    </Card>
+  );
+};
+
+
 function App() {
 
   const [summary, setSummary] = useState(null);
@@ -33,6 +68,7 @@ function App() {
   const [showSensitive, setShowSensitive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  
 
   const downloadCSV = async () => {
     window.open("http://localhost:8555/export", "_blank");
@@ -149,6 +185,13 @@ Reason: ${data.reasons}
             ))}
           </Grid>
 
+          {/* 🚨 BRAND FOOTPRINT ROW */}
+          <Grid container spacing={3} style={{ marginTop: "10px" }}>
+            <Grid item xs={12}>
+              <UnvalidatedBrandCard />
+            </Grid>
+          </Grid>
+
           {/* CHARTS */}
           <Grid container spacing={3} style={{ marginTop: "20px" }}>
             <Grid item xs={12} md={4}>
@@ -197,6 +240,7 @@ Reason: ${data.reasons}
 
         </Grid>
       )}
+            
 
       {/* 🔥 Risk Leaderboard */}
       <div style={{ marginTop: "50px" }}>

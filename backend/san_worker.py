@@ -58,6 +58,10 @@ def main():
     seeds = [r[0].strip().lower() for r in cur.fetchall()]  
     print("Loaded seeds:", seeds)
 
+    cur.execute("SELECT domain FROM known_domains")
+    known_set = set(r[0].strip().lower() for r in cur.fetchall())
+    
+    print("Loaded known domains:", len(known_set))
 
     cur.execute("""
     SELECT DISTINCT ON (d.id) d.id, d.domain
@@ -69,6 +73,8 @@ def main():
     LEFT JOIN domain_san dsan
       ON d.id = dsan.domain_id
       AND dsan.scan_id = %s
+      
+    WHERE dsan.domain_id IS NULL
     
     AND dsan.domain_id IS NULL
     ORDER BY d.id, ds.scan_id DESC
@@ -84,7 +90,9 @@ def main():
     for i, (domain_id, domain) in enumerate(rows, start=1):
     
         # classify original domain too
-        scannable = is_scannable(domain, seeds)
+        
+        is_known = domain in known_set
+        scannable = is_scannable(domain, seeds) or is_known
         
         cur.execute("""
         UPDATE domains
@@ -118,7 +126,8 @@ def main():
             # insert or get domain_id
             san = san.lower().strip()
             
-            scannable = is_scannable(san, seeds)
+            is_known = san in known_set
+            scannable = is_scannable(san, seeds) or is_known
             
             cur.execute("""
             INSERT INTO domains(
