@@ -145,6 +145,7 @@ def main():
                 NOW(),
                 NOW(),
                 EXISTS (SELECT 1 FROM known_domains WHERE domain = %s),
+                %s,
                 %s
             )
             ON CONFLICT (domain)
@@ -159,11 +160,11 @@ def main():
                 scannable = CASE
                     WHEN domains.validation_source = 'manual' THEN domains.scannable
                     ELSE EXCLUDED.scannable
+                END,
                 source = CASE
                     WHEN domains.source = 'seed' THEN 'san'
                     ELSE domains.source
                 END
-                
             RETURNING id, (xmax = 0) AS inserted
             """, (san, scan_id, scan_id, san, scannable, "san"))
             

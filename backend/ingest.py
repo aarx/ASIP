@@ -81,14 +81,21 @@ for _, row in df.iterrows():
     # Insert domain
     # ----------------------------
     cur.execute("""
-    INSERT INTO domains(domain, first_seen_scan, last_seen_scan, is_known, source)
+    INSERT INTO domains(
+        domain,
+        first_seen_scan,
+        last_seen_scan,
+        is_known,
+        source
+    )
     VALUES (
         %s,
         %s,
         %s,
         EXISTS (
             SELECT 1 FROM known_domains WHERE domain = %s
-        )
+        ),
+        %s
     )
     ON CONFLICT (domain)
     DO UPDATE SET
@@ -97,7 +104,11 @@ for _, row in df.iterrows():
             SELECT EXISTS (
                 SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
             )
-        )
+        ),
+        source = CASE
+            WHEN domains.source = 'seed' THEN EXCLUDED.source
+            ELSE domains.source
+        END
     RETURNING id
     """, (domain, scan_id, scan_id, domain, primary_source))
     

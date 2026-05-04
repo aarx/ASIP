@@ -15,24 +15,31 @@ def get_conn():
 
 
 def resolve_dns(domain):
-
     records = []
 
-    # A record
     try:
-        answers = dns.resolver.resolve(domain, "A")
-        for r in answers:
-            records.append(("A", r.to_text()))
-    except:
-        pass
+        resolver = dns.resolver.Resolver()
+        resolver.timeout = 2
+        resolver.lifetime = 3
 
-    # CNAME
-    try:
-        answers = dns.resolver.resolve(domain, "CNAME")
-        for r in answers:
-            records.append(("CNAME", r.to_text().rstrip(".")))
-    except:
-        pass
+        # A record
+        try:
+            answers = resolver.resolve(domain, "A")
+            for r in answers:
+                records.append(("A", r.to_text()))
+        except Exception as e:
+            print(f"[A FAIL] {domain} → {e}")
+
+        # CNAME
+        try:
+            answers = resolver.resolve(domain, "CNAME")
+            for r in answers:
+                records.append(("CNAME", r.to_text().rstrip(".")))
+        except Exception as e:
+            print(f"[CNAME FAIL] {domain} → {e}")
+
+    except Exception as e:
+        print(f"[DNS ERROR] {domain} → {e}")
 
     return records
 
@@ -42,8 +49,9 @@ def main():
     conn = get_conn()
     cur = conn.cursor()
 
-    print("DNS worker running for scan:", scan_id)
+    print("\n🌐 DNS worker running for scan:", scan_id)
 
+    # 🔥 safer query (do NOT skip everything)
     cur.execute("""
     SELECT d.id, d.domain
     FROM domains d
@@ -52,25 +60,35 @@ def main():
       ON d.id = ds.domain_id
       AND ds.scan_id = %s
 
-    LEFT JOIN domain_dns dd
-      ON d.id = dd.domain_id
-      AND dd.scan_id = %s
-
     WHERE ds.has_ip = TRUE
-    AND dd.domain_id IS NULL
-    """, (scan_id, scan_id))
+    """, (scan_id,))
 
     rows = cur.fetchall()
 
-    print("Domains to process:", len(rows))
+    print("📊 Domains fetched:", len(rows))
+
+    if not rows:
+        print("⚠️ No domains found. Check domain_states for this scan_id.")
+        return
+
+    processed = 0
+    inserted = 0
 
     for domain_id, domain in rows:
 
-        print("Resolving:", domain)
+        print(f"\n🔍 Processing: {domain}")
 
         records = resolve_dns(domain)
 
+        print(f"Resolved records: {records}")
+
+        if not records:
+            print(f"⛔ No DNS records for {domain}")
+            continue
+
         for rtype, value in records:
+
+            print(f"➡️ INSERT: {domain} | {rtype} | {value}")
 
             cur.execute("""
             INSERT INTO domain_dns(domain_id, scan_id, record_type, value)
@@ -78,10 +96,21 @@ def main():
             ON CONFLICT DO NOTHING
             """, (domain_id, scan_id, rtype, value))
 
+            inserted += 1
+
+        processed += 1
+
+        # 🔥 periodic commit (safe)
+        if processed % 50 == 0:
+            conn.commit()
+            print(f"💾 Checkpoint commit at {processed}")
+
     conn.commit()
     conn.close()
 
-    print("DNS enrichment complete")
+    print("\n✅ DNS enrichment complete")
+    print(f"Processed domains: {processed}")
+    print(f"Inserted records: {inserted}")
 
 
 if __name__ == "__main__":
