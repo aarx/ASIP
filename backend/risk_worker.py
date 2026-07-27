@@ -1,8 +1,8 @@
-import psycopg2
 from datetime import datetime
 import logging
 import os
 import sys
+from db import get_conn
 
 scan_id = int(sys.argv[1])
 
@@ -16,14 +16,6 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-
-def get_conn():
-    return psycopg2.connect(
-        host="db",
-        dbname="asm_db",
-        user="asm",
-        password="asm123"
-    )
 
 
 SENSITIVE_PORTS = {21,22,23,25,53,110,143,445,3389,3306,8080}

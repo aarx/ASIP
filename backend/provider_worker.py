@@ -1,8 +1,8 @@
-import psycopg2
 import socket
 import logging
 import os
 import sys
+from db import get_conn
 
 scan_id = int(sys.argv[1])
 
@@ -27,14 +27,6 @@ PROVIDER_KEYWORDS = {
     "akamai": "Akamai",
     "edgekey": "Akamai"
 }
-
-def get_conn():
-    return psycopg2.connect(
-        host="db",
-        dbname="asm_db",
-        user="asm",
-        password="asm123"
-    )
 
 def detect_provider(ip):
 

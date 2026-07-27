@@ -1,5 +1,5 @@
 import React from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { BarChart, Bar, LabelList, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 export default function ShadowChart({ data }) {
 
@@ -9,7 +9,12 @@ export default function ShadowChart({ data }) {
       <XAxis dataKey="risk" />
       <YAxis />
       <Tooltip />
-      <Bar dataKey="count" />
+      <Bar dataKey="count">
+          <LabelList
+              dataKey="count"
+              position="top"
+          />
+      </Bar>
     </BarChart>
   );
 }

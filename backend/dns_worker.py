@@ -1,18 +1,8 @@
-import psycopg2
 import dns.resolver
 import sys
+from db import get_conn
 
 scan_id = int(sys.argv[1])
-
-
-def get_conn():
-    return psycopg2.connect(
-        host="db",
-        dbname="asm_db",
-        user="asm",
-        password="asm123"
-    )
-
 
 def resolve_dns(domain):
     records = []

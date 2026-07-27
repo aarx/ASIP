@@ -1,4 +1,4 @@
-import { BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
+import { BarChart, Bar, LabelList, XAxis, YAxis, Tooltip } from "recharts";
 
 export default function SourceChart({ data }) {
 
@@ -14,7 +14,15 @@ export default function SourceChart({ data }) {
       <XAxis dataKey="name"/>
       <YAxis/>
       <Tooltip/>
-      <Bar dataKey="value" fill="#00bcd4"/>
+      <Bar
+          dataKey="value"
+          fill="#00bcd4"
+      >
+          <LabelList
+              dataKey="value"
+              position="top"
+          />
+      </Bar>
     </BarChart>
   );
 }

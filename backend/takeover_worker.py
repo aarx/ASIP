@@ -1,18 +1,9 @@
-import psycopg2
 import requests
 import sys
 import dns.resolver
+from db import get_conn
 
 scan_id = int(sys.argv[1])
-
-
-def get_conn():
-    return psycopg2.connect(
-        host="db",
-        dbname="asm_db",
-        user="asm",
-        password="asm123"
-    )
 
 
 def get_live_cname(domain):

@@ -1,0 +1,84 @@
+.
+├── backend
+│   ├── asm_schema_post_guardrails-schema-only.sql
+│   ├── asm_schema_post_guardrails.sql
+│   ├── asm_schema.sql
+│   ├── asn_worker.py
+│   ├── cert_worker.py
+│   ├── data
+│   │   ├── final_output.csv
+│   │   └── known_domains.csv
+│   ├── discovery_validator.py
+│   ├── dns_worker.py
+│   ├── Dockerfile
+│   ├── ingest.py
+│   ├── ingest_scan.py
+│   ├── loader.py
+│   ├── load_known_domains.py
+│   ├── logs
+│   │   └── app.log
+│   ├── main.py
+│   ├── mcp_cli.py
+│   ├── mcp_server.py
+│   ├── orchestration.py
+│   ├── port_scan_worker.py
+│   ├── provider_worker.py
+│   ├── recon.py
+│   ├── requirements.txt
+│   ├── risk_worker.py
+│   ├── san_state_sync.py
+│   ├── san_worker.py
+│   ├── seeds.txt
+│   ├── stats.py
+│   ├── takeover_worker.py
+│   ├── tech_worker.py
+│   ├── validation.csv
+│   └── validation_ingest.py
+├── dashboard
+│   ├── data
+│   │   └── final_output.csv
+│   ├── final_output.csv
+│   ├── loader.py
+│   ├── main.py
+│   └── stats.py
+├── docker-compose.yml
+├── extras
+│   ├── brand_expanded_domains.csv
+│   ├── brand-expansion.py
+│   ├── cgpt-xrecon.py
+│   ├── ns_clustered_domains.csv
+│   ├── ns-clustering.py
+│   ├── results.csv
+│   ├── takeover_candidates.csv
+│   └── takeover-check.py
+├── frontend
+│   ├── asm-dashboard
+│   │   ├── package.json
+│   │   ├── package-lock.json
+│   │   ├── public
+│   │   │   ├── favicon.ico
+│   │   │   ├── index.html
+│   │   │   ├── logo192.png
+│   │   │   ├── logo512.png
+│   │   │   ├── manifest.json
+│   │   │   └── robots.txt
+│   │   ├── README.md
+│   │   └── src
+│   │       ├── App.css
+│   │       ├── App.js
+│   │       ├── App.test.js
+│   │       ├── charts
+│   │       ├── components
+│   │       ├── index.css
+│   │       ├── index.js
+│   │       ├── logo.svg
+│   │       ├── reportWebVitals.js
+│   │       ├── services
+│   │       └── setupTests.js
+│   └── Dockerfile
+├── project_tree.txt
+└── recon
+    ├── recon.py
+    └── seeds.txt
+
+15 directories, 67 files

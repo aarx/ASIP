@@ -6,10 +6,12 @@ services:
     image: postgres:15
     restart: unless-stopped
     container_name: asm_db
+
     environment:
-      POSTGRES_USER: asm
-      POSTGRES_PASSWORD: asm123
-      POSTGRES_DB: asm_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
     volumes:
       - asm_pgdata:/var/lib/postgresql/data
 
@@ -17,35 +19,75 @@ services:
     build: ./backend
     container_name: asm_mcp
     restart: unless-stopped
+
     depends_on:
       - db
+
     ports:
       - "8666:8000"
+
     command: uvicorn mcp_server:app --host 0.0.0.0 --port 8000
 
   backend:
     build: ./backend
     container_name: asm_backend
+
     depends_on:
       - db
+
     ports:
       - "8555:8000"
+
     restart: unless-stopped
+
     volumes:
       - ./backend/data:/app/data
       - ./backend/logs:/app/logs
+
     environment:
-      - DATABASE_URL=postgresql://asm:asm123@db:5432/asm_db
+      - DB_HOST=${DB_HOST}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+
+      # ==========================================
+      # LLM CONFIGURATION
+      #
+      # Current:
+      # Windows Host running Ollama
+      #
+      # Example:
+      # http://192.168.29.222:11434/api/generate
+      #
+      # Future Options:
+      #
+      # Same Server:
+      # http://localhost:11434/api/generate
+      #
+      # Docker Ollama Service:
+      # http://ollama:11434/api/generate
+      #
+      # vLLM:
+      # http://localhost:8000/v1/chat/completions
+      #
+      # CHANGE ONLY THESE VARIABLES
+      # ==========================================
+
+      - LLM_URL=${LLM_URL}
+      - LLM_MODEL=${LLM_MODEL}
+      - CERTSPOTTER_API_KEY=${CERTSPOTTER_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - CENSYS_API_ID=${CENSYS_API_ID}
+      - CENSYS_API_SECRET=${CENSYS_API_SECRET}
 
   frontend:
     build: ./frontend
     container_name: asm_frontend
+
     ports:
       - "3555:3000"
+
     restart: unless-stopped
+
 volumes:
   asm_pgdata:
-  
-
-
-

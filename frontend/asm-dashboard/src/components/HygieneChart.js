@@ -1,4 +1,4 @@
-import { BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
+import { BarChart, Bar, LabelList, XAxis, YAxis, Tooltip } from "recharts";
 
 export default function HygieneChart({ data }) {
 
@@ -14,7 +14,15 @@ export default function HygieneChart({ data }) {
       <XAxis dataKey="name"/>
       <YAxis/>
       <Tooltip/>
-      <Bar dataKey="value" fill="#f44336"/>
+      <Bar
+          dataKey="value"
+          fill="#f44336"
+      >
+          <LabelList
+              dataKey="value"
+              position="top"
+          />
+      </Bar>
     </BarChart>
   );
 }

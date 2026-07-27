@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import psycopg2
 import logging
 import os
 from fastapi import APIRouter
@@ -10,6 +9,9 @@ import io
 import requests
 import re
 from datetime import datetime
+from llm_service import ask_llm
+from urllib.parse import urlparse
+from db import get_conn
 
 os.makedirs("logs", exist_ok=True)
 
@@ -21,14 +23,6 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-
-def get_conn():
-    return psycopg2.connect(
-        host="db",
-        dbname="asm_db",
-        user="asm",
-        password="asm123"
-    )
 
 app = FastAPI(title="External Attack Surface API")
 
@@ -908,6 +902,7 @@ def risk_leaderboard():
 
     return result    
 
+
 @app.get("/domain/{domain_name}")
 def domain_detail(domain_name: str):
 
@@ -1006,6 +1001,46 @@ def domain_detail(domain_name: str):
         "org": asn[1] if asn else "Unknown",
         "tech": tech[0] if tech else "Unknown"
     }
+    
+    
+@app.get("/domain/{domain_name}/analysis")
+def domain_analysis(domain_name: str):
+
+    domain_data = domain_detail(domain_name)
+
+    if "error" in domain_data:
+        return domain_data
+
+    prompt = f"""
+You are an Attack Surface Management analyst.
+
+Analyze the following asset.
+
+Domain: {domain_data.get("domain")}
+IP: {domain_data.get("ip")}
+Provider: {domain_data.get("provider")}
+ASN: {domain_data.get("asn")}
+Organization: {domain_data.get("org")}
+Ports: {domain_data.get("ports")}
+Technology: {domain_data.get("tech")}
+
+Provide:
+
+1. Executive Summary
+
+2. Key Risks
+
+3. Recommended Actions
+
+Keep the response concise and practical.
+"""
+
+    analysis = ask_llm(prompt)
+
+    return {
+        "domain": domain_name,
+        "analysis": analysis
+    }
 
 @app.get("/providers")
 def providers():
@@ -1031,6 +1066,8 @@ def providers():
         {"provider": r[0], "count": r[1]}
         for r in rows
     ]
+
+
 
 @app.get("/tech")
 def tech():
@@ -1254,6 +1291,13 @@ def export_enriched_csv():
 
     df = pd.DataFrame(rows, columns=columns)
     
+    cur.execute("""
+    SELECT LOWER(domain)
+    FROM seed_domains
+    """)
+    
+    trusted_roots = [r[0] for r in cur.fetchall()]
+    
     # fix reasons
     df["confidence_reasons"] = df["confidence_reasons"].apply(
         lambda x: ", ".join(x) if isinstance(x, list) else (x or "")
@@ -1301,6 +1345,14 @@ def export_enriched_csv():
     
     df["tech"] = df["domain"].map(
         lambda d: ",".join(sorted(set(tech_map.get(d, [])))) or "unknown"
+    )
+    df["Redirect Category"] = df.apply(
+        lambda row: classify_redirect(
+            row["domain"],
+            row["final_url"],
+            trusted_roots
+        ),
+        axis=1
     )
 
     # remove duplicate domains 
@@ -1836,3 +1888,213 @@ def chat(q: str):
         return summary()
 
     return {"message": "Didn't understand"}
+
+
+@app.get("/llm-test")
+def llm_test():
+
+    answer = ask_llm(
+        "What is an attack surface? Answer in one sentence."
+    )
+
+    return {
+        "response": answer
+    }
+
+
+@app.get("/asset-growth")
+def asset_growth():
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            ds.scan_id,
+
+            COUNT(*) AS total_assets,
+
+            SUM(
+                CASE
+                    WHEN ds.has_ip = TRUE THEN 1
+                    ELSE 0
+                END
+            ) AS live_assets,
+
+            SUM(
+                CASE
+                    WHEN ds.has_ip = TRUE
+                    AND d.is_known = FALSE
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS shadow_assets
+
+        FROM domain_states ds
+
+        JOIN domains d
+            ON ds.domain_id = d.id
+
+        GROUP BY ds.scan_id
+        ORDER BY ds.scan_id
+    """)
+
+    rows = cur.fetchall()
+
+    conn.close()
+
+    return [
+        {
+            "scan_id": r[0],
+            "total": r[1],
+            "live": r[2],
+            "shadow": r[3]
+        }
+        for r in rows
+    ]
+
+
+def classify_redirect(source_domain, final_url, trusted_roots):
+
+    if not final_url:
+        return "None"
+
+    try:
+        parsed = urlparse(final_url)
+
+        destination = parsed.netloc.lower().split(":")[0]
+
+        if destination.startswith("www."):
+            destination = destination[4:]
+
+        # Internal redirect
+        if (
+            destination == source_domain
+            or destination.endswith("." + source_domain)
+            or source_domain.endswith("." + destination)
+        ):
+            return "Internal"
+
+        # Trusted external
+        for root in trusted_roots:
+            if destination.endswith(root):
+                return "Trusted External"
+
+        # Everything else
+        return "Untrusted External"
+
+    except:
+        return "None"
+
+
+@app.get("/redirect-summary")
+        
+def redirect_summary():
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    # trusted roots
+    cur.execute("""
+        SELECT LOWER(domain)
+        FROM seed_domains
+    """)
+
+    trusted_roots = [r[0] for r in cur.fetchall()]
+
+    # redirects
+    cur.execute("""
+        SELECT
+            d.domain,
+            ds.final_url
+        FROM domain_states ds
+        JOIN domains d
+            ON d.id = ds.domain_id
+        WHERE ds.final_url IS NOT NULL
+          AND ds.final_url <> ''
+          AND ds.final_url <> 'nan'
+    """)
+
+    rows = cur.fetchall()
+
+    internal = 0
+    trusted_external = 0
+    untrusted_external = 0
+    
+    for source_domain, final_url in rows:
+    
+        classification = classify_redirect(
+            source_domain,
+            final_url,
+            trusted_roots
+        )
+    
+        if classification == "Internal":
+            internal += 1
+    
+        elif classification == "Trusted External":
+            trusted_external += 1
+    
+        elif classification == "Untrusted External":
+            untrusted_external += 1
+    
+    conn.close()
+    
+    return {
+        "total": internal + trusted_external + untrusted_external,
+        "internal": internal,
+        "trusted_external": trusted_external,
+        "untrusted_external": untrusted_external
+    }
+    
+@app.get("/environment-exposure")
+def environment_exposure():
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    keywords = [
+        "dev",
+        "test",
+        "uat",
+        "qa",
+        "admin",
+        "temp",
+        "stage",
+        "staging",
+        "sandbox",
+        "preprod",
+        "pre-prod",
+        "nonprod",
+        "non-prod",
+        "lab",
+        "demo"
+    ]
+
+    results = []
+
+    for keyword in keywords:
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM domains d
+            JOIN domain_states ds
+              ON d.id = ds.domain_id
+            WHERE ds.http_status > 0
+              AND d.domain ILIKE %s
+            """,
+            (f"%{keyword}%",)
+        )
+
+        count = cur.fetchone()[0]
+
+        if count > 0:
+            results.append({
+                "keyword": keyword.upper(),
+                "count": count
+            })
+
+    conn.close()
+
+    return results

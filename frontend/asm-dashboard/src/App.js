@@ -1,7 +1,7 @@
 import ChatAssistant from "./components/ChatAssistant";
 import React, { useEffect, useState } from "react";
 import { getSummary, getSources, getHttpStatus, getRiskLeaderboard } from "./services/api";
-import { Grid, Card, CardContent, Typography, TextField } from "@mui/material";
+import { Grid, Card, CardContent, Typography, TextField, Tooltip } from "@mui/material";
 import SourceChart from "./components/SourceChart";
 import HttpStatusChart from "./components/HttpStatusChart";
 import { getProviders, getTech } from "./services/api";
@@ -10,7 +10,8 @@ import TechChart from "./components/TechChart";
 import { getExposureDrift } from "./services/api";
 import HygieneChart from "./components/HygieneChart";
 import InvestigationTable from "./components/InvestigationTable";
-import ShadowChart from "./components/ShadowChart";
+import AssetGrowthChart from "./components/AssetGrowthChart";
+import EnvironmentExposureChart from "./components/EnvironmentExposureChart";
 
 
 const UnvalidatedBreakdownCard = () => {
@@ -75,6 +76,45 @@ const UnvalidatedBrandCard = () => {
   );
 };
 
+const RedirectDistributionCard = ({ data }) => {
+
+  if (!data) return null;
+
+  return (
+    <Card style={{ borderLeft: "6px solid #722ed1" }}>
+      <CardContent>
+
+        <Typography variant="h6">
+          🔁 Redirect Distribution
+        </Typography>
+
+        <Typography
+          variant="h3"
+          style={{ marginTop: 8 }}
+        >
+          {data.total}
+        </Typography>
+
+        <Typography
+          variant="body2"
+          style={{ marginTop: 8 }}
+        >
+          Internal: {data.internal}
+          {" · "}
+          Trusted External: {data.trusted_external}
+          {" · "}
+          Untrusted External: {data.untrusted_external}
+        </Typography>
+
+        <Typography variant="caption">
+          all observed redirects across discovered assets
+        </Typography>
+
+      </CardContent>
+    </Card>
+  );
+};  
+
 const DiscoverySourceCard = () => {
   const [data, setData] = useState(null);
 
@@ -110,7 +150,34 @@ const DiscoverySourceCard = () => {
 
 function App() {
 
+  const kpiTooltips = {
+    "Total Domains":
+      "Total number of domains discovered across all scans.",
+  
+    "New Domains":
+      "Domains discovered for the first time during the latest scan.",
+  
+    "Live Domains":
+      "Domains that successfully resolved and responded during the latest scan.",
+  
+    "Known Domains":
+      "Domains present in the documented repository.",
+  
+    "Shadow Assets":
+      "Active domains that are not present in the documented repository.",
+  
+    "Non-Web Assets":
+      "Assets discovered on non-web infrastructure services or ports.",
+
+    "Suspicious Redirects":
+      "Domains redirecting outside trusted seed domains.",
+      
+      "Environment Assets":
+        "Internet-facing domains containing DEV, TEST, QA, UAT, STAGE, ADMIN or similar environment indicators."      
+      
+  };
   const [summary, setSummary] = useState(null);
+  const [assetGrowth, setAssetGrowth] = useState(null);
   const [sources, setSources] = useState(null);
   const [httpStatus, setHttpStatus] = useState(null);
   const [risk, setRisk] = useState(null);
@@ -122,14 +189,14 @@ function App() {
   const [sensitive, setSensitive] = useState([]);
   const [certs, setCerts] = useState([]);
   const [shadowProvider, setShadowProvider] = useState(null);
-  const [nonWebSummary, setNonWebSummary] = useState(null);
+  const [environmentExposure, setEnvironmentExposure] = useState(null);
+  const [redirectSummary, setRedirectSummary] = useState(null);
   const [chatInput, setChatInput] = useState("");
   const [chatHistory, setChatHistory] = useState([]);
   const [showRisk, setShowRisk] = useState(false);
   const [showSensitive, setShowSensitive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showChat, setShowChat] = useState(false);
-
   const downloadCSV = async () => {
     window.open("http://localhost:8555/export", "_blank");
   };
@@ -175,14 +242,23 @@ Reason: ${data.reasons}
       const providerData = await getProviders();
       const techData = await getTech();
       const driftData = await getExposureDrift();
+      const redirectData =
+        await fetch("http://localhost:8555/redirect-summary")
+        .then(r => r.json());      
+      const assetGrowthData =
+        await fetch("http://localhost:8555/asset-growth")
+          .then(r => r.json());      
       const findingsData = await fetch("http://localhost:8555/findings").then(r => r.json());
       const sensitiveData = await fetch("http://localhost:8555/sensitive-exposure").then(res => res.json());
       const certData = await fetch("http://localhost:8555/cert-expiry").then(r => r.json());
       const shadowProviderData = await fetch("http://localhost:8555/shadow-by-provider").then(r => r.json());
-      const nonWebSummaryData = await fetch("http://localhost:8555/non-web-summary").then(r => r.json());
+      const environmentData =
+        await fetch("http://localhost:8555/environment-exposure")
+          .then(r => r.json());      
 
       setFindings(findingsData);
       setSummary(summaryData);
+      setAssetGrowth(assetGrowthData);
       setSources(sourceData);
       setHttpStatus(httpData);
       setRisk(riskData);
@@ -192,10 +268,14 @@ Reason: ${data.reasons}
       setSensitive(sensitiveData);
       setCerts(certData);
       setShadowProvider(shadowProviderData);
-      setNonWebSummary(nonWebSummaryData);
+      setRedirectSummary(redirectData);
+      setEnvironmentExposure(environmentData);
     }
     fetchData();
   }, []);
+
+
+
 
   return (
     <div style={{ padding: "40px", background: "#f5f7fa", minHeight: "100vh" }}>
@@ -225,17 +305,45 @@ Reason: ${data.reasons}
           {/* KPI ROW */}
           <Grid container spacing={3}>
             {[
-              ["Total Domains", summary.total_domains],
-              ["New Domains", summary.new_domains],
-              ["Live Domains", summary.live_domains],
-              ["Known Domains", summary.known_domains],
-              ["Shadow Assets", summary.shadow_assets || 0],
-              ["Non-Web Assets", summary.non_web_assets || 0],
+                ["Total Domains", summary.total_domains],
+                ["New Domains", summary.new_domains],
+                ["Live Domains", summary.live_domains],
+                ["Known Domains", summary.known_domains],
+                ["Shadow Assets", summary.shadow_assets || 0],
+                ["Non-Web Assets", summary.non_web_assets || 0],
+                [
+                  "Suspicious Redirects",
+                  redirectSummary?.untrusted_external || 0
+              ],
+                [
+                  "Environment Assets",
+                  environmentExposure
+                    ? environmentExposure.reduce(
+                        (sum, item) => sum + item.count,
+                        0
+                      )
+                    : 0
+                ]             
             ].map(([label, value], i) => (
               <Grid item xs={12} sm={6} md={3} key={i}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6">{label}</Typography>
+                    <Tooltip
+                      title={kpiTooltips[label]}
+                      arrow
+                      placement="top"
+                    >
+                      <Typography
+                        variant="h6"
+                        style={{
+                          cursor: "help",
+                          borderBottom: "1px dotted #999",
+                          display: "inline-block"
+                        }}
+                      >
+                        {label} ⓘ
+                      </Typography>
+                    </Tooltip>
                     <Typography variant="h4">{value}</Typography>
                   </CardContent>
                 </Card>
@@ -245,26 +353,51 @@ Reason: ${data.reasons}
 
           {/* 🎯 SIGNAL CARDS ROW */}
           <Grid container spacing={3} style={{ marginTop: "10px" }}>
-            <Grid item xs={12} md={4}>
+          
+            <Grid item xs={12} md={3}>
               <UnvalidatedBreakdownCard />
             </Grid>
-            <Grid item xs={12} md={4}>
+          
+            <Grid item xs={12} md={3}>
               <UnvalidatedBrandCard />
             </Grid>
-            <Grid item xs={12} md={4}>
+          
+            <Grid item xs={12} md={3}>
               <DiscoverySourceCard />
             </Grid>
+          
+            <Grid item xs={12} md={3}>
+              <RedirectDistributionCard
+                data={redirectSummary}
+              />
+            </Grid>
+          
           </Grid>
 
           {/* CHARTS */}
           <Grid container spacing={3} style={{ marginTop: "20px" }}>
             <Grid item xs={12} md={4}>
               <Card style={{ height: 320 }}><CardContent>
-                <Typography variant="h6">Discovery Sources</Typography>
+                <Typography variant="h6">Seeds Distribution</Typography>
                 {sources && <SourceChart data={sources} />}
               </CardContent></Card>
             </Grid>
+            
             <Grid item xs={12} md={4}>
+              <Card style={{ height: 320 }}>
+                <CardContent>
+                  <Typography variant="h6">
+                    Asset Growth Trend
+                  </Typography>
+            
+                  {assetGrowth && (
+                    <AssetGrowthChart data={assetGrowth} />
+                  )}
+                </CardContent>
+              </Card>
+            </Grid>            
+            
+            <Grid item xs={12} md={6}>
               <Card style={{ height: 320 }}><CardContent>
                 <Typography variant="h6">HTTP Status</Typography>
                 {httpStatus && <HttpStatusChart data={httpStatus} />}
@@ -288,22 +421,38 @@ Reason: ${data.reasons}
                 {shadowProvider && <ProviderChart data={shadowProvider} />}
               </CardContent></Card>
             </Grid>
-            <Grid item xs={12} md={4}>
-              <Card style={{ height: 320 }}><CardContent>
-                <Typography variant="h6">Non-Web Risk</Typography>
-                {nonWebSummary && <ShadowChart data={nonWebSummary} />}
-              </CardContent></Card>
+            <Grid item xs={12} md={6}>
+              <Card style={{ height: 320 }}>
+                <CardContent>
+                  <Typography variant="h6">
+                    Environment Exposure
+                  </Typography>
+            
+                  {environmentExposure && (
+                    <EnvironmentExposureChart
+                      data={environmentExposure}
+                    />
+                  )}
+                </CardContent>
+              </Card>
             </Grid>
-            <Grid item xs={12} md={4}>
-              <Card style={{ height: 320 }}><CardContent>
-                <Typography variant="h6">Tech Stack</Typography>
-                {tech && <TechChart data={tech} />}
-              </CardContent></Card>
+            
+            <Grid item xs={12} md={6}>
+              <Card style={{ height: 320 }}>
+                <CardContent>
+                  <Typography variant="h6">
+                    Tech Stack
+                  </Typography>
+            
+                  {tech && <TechChart data={tech} />}
+                </CardContent>
+              </Card>
             </Grid>
+            
           </Grid>
-
         </Grid>
-      )}
+      )}            
+
 
       {/* 🔥 Risk Leaderboard */}
       <div style={{ marginTop: "50px" }}>
@@ -399,7 +548,32 @@ Reason: ${data.reasons}
                 <tr key={i}>
                   <td>{c.domain}</td>
                   <td>{c.days ?? "-"}</td>
-                  <td style={{ color: c.status === "expired" ? "red" : c.status === "critical" ? "orange" : c.status === "warning" ? "goldenrod" : "green" }}>{c.status}</td>
+                  <td
+                    title={
+                      c.status === "healthy"
+                        ? "Certificate has many days remaining before expiry."
+                        : c.status === "warning"
+                        ? "Certificate expiry is approaching."
+                        : c.status === "critical"
+                        ? "Certificate requires immediate attention."
+                        : c.status === "expired"
+                        ? "Certificate has expired."
+                        : ""
+                    }
+                    style={{
+                      color:
+                        c.status === "expired"
+                          ? "red"
+                          : c.status === "critical"
+                          ? "orange"
+                          : c.status === "warning"
+                          ? "goldenrod"
+                          : "green",
+                      cursor: "help"
+                    }}
+                  >
+                    {c.status}
+                  </td>
                   <td>{c.expiry || "-"}</td>
                 </tr>
               ))}

@@ -1,34 +1,27 @@
 import subprocess
-import psycopg2
 from datetime import datetime
 import time
 import logging
 import os
 import sys
+from db import get_conn
 
 # -------------------------
 # LOGGING SETUP
 # -------------------------
+
 os.makedirs("logs", exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler("logs/orchestrator.log"),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+def setup_logging(log_file):
 
-# -------------------------
-# DB CONNECTION
-# -------------------------
-def get_conn():
-    return psycopg2.connect(
-        host="db",
-        dbname="asm_db",
-        user="asm",
-        password="asm123"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler(sys.stdout)
+        ],
+        force=True
     )
 
 # -------------------------
@@ -48,7 +41,6 @@ def create_scan():
     conn.commit()
     conn.close()
 
-    logging.info(f"Scan Created: {scan_id}")
     return scan_id
 
 # -------------------------
@@ -96,9 +88,22 @@ def run_step(name, cmd):
 # -------------------------
 def main():
 
-    logging.info("CRON TRIGGERED ORCHESTRATION")
+    pipeline_start = time.time()
 
     scan_id = create_scan()
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    log_file = f"logs/{timestamp}_scan_{scan_id}.log"
+    
+    setup_logging(log_file)
+    logging.info(f"Scan Created: {scan_id}")
+    
+    logging.info("=" * 70)
+    logging.info("ASM Scan Started")
+    logging.info(f"Scan ID  : {scan_id}")
+    logging.info(f"Log File : {log_file}")
+    logging.info("=" * 70)  
 
     pipeline = [
         # ENTRY
@@ -145,11 +150,25 @@ def main():
 
         conn.commit()
         conn.close()
+        
+        duration = round(time.time() - pipeline_start, 2)
+        logging.info(f"Total Duration : {duration} seconds")
+        logging.info(f"Completed At : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-        logging.info(f"SCAN COMPLETE: {scan_id}")
+        logging.info("=" * 70)
+        logging.info("ASM Scan Completed Successfully")
+        logging.info(f"Scan ID : {scan_id}")
+        logging.info("=" * 70)
 
     except Exception as e:
         logging.error(f"PIPELINE FAILED for scan_id={scan_id}")
+        logging.error("=" * 70)
+        logging.error("ASM Scan Failed")
+        duration = round(time.time() - pipeline_start, 2)
+        logging.error(f"Total Duration : {duration} seconds")
+        logging.error(f"Completed At : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logging.error(f"Scan ID : {scan_id}")
+        logging.error("=" * 70)
 
         # optional: mark failed
         try:

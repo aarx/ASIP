@@ -10,6 +10,9 @@ import re
 import shutil
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from db import get_conn
+from config import CERTSPOTTER_API_KEY
+
 
 if os.path.exists("final_output.csv"):
     os.remove("final_output.csv")
@@ -70,6 +73,7 @@ def add_domain(domain, source, seed):
             "redirect_location": "",
             "final_url": "",
             "final_status": "",
+            "redirect_count": 0,
             "title": ""
         }
 
@@ -126,28 +130,142 @@ def brand_expand(seed):
         add_domain(f"{brand}-{s}.com", "brand_pattern", seed)
 
 
-def ct_expand(seed):
+def certificate_expand(seed):
+
+    print(f"[+] Certificate expansion for {seed}")
+
+    crtsh_expand(seed)
+    
+    certspotter_expand(seed)
+
+
+def crtsh_expand(seed):
+
+    if not CERTSPOTTER_API_KEY:
+        debug("CertSpotter API key not configured")
+        return
 
     brand = extract_brand(seed)
 
     try:
+
+        print(f"[+] Querying crt.sh for {brand}")
+
         url = f"https://crt.sh/?q=%25{brand}%25&output=json"
-        r = requests.get(url, timeout=20)
+
+        r = requests.get(
+            url,
+            timeout=20
+        )
 
         if r.status_code != 200:
+
+            debug(
+                f"crt.sh returned {r.status_code}"
+            )
+
             return
 
         data = r.json()
 
+        discovered = 0
+
         for entry in data:
-            for d in entry.get("name_value","").split("\n"):
-                d = normalize_domain(d.lstrip("*."))
+
+            for d in entry.get(
+                "name_value",
+                ""
+            ).split("\n"):
+
+                d = normalize_domain(
+                    d.lstrip("*.")
+                )
+
                 if brand in d:
-                    add_domain(d,"brand_ct",seed)
+
+                    add_domain(
+                        d,
+                        "brand_ct",
+                        seed
+                    )
+
+                    discovered += 1
+
+        print(
+            f"[+] crt.sh discovered {discovered} domains"
+        )
 
     except Exception as e:
-        debug(f"CT expansion failed for {seed} | {e}")
 
+        debug(
+            f"crt.sh failed for {seed} | {e}"
+        )
+
+
+def certspotter_expand(seed):
+
+    brand = extract_brand(seed)
+
+    try:
+
+        print(f"[+] Querying CertSpotter for {brand}")
+
+        headers = {
+            "Authorization": f"Bearer {CERTSPOTTER_API_KEY}"
+        }
+
+        params = {
+            "domain": seed,
+            "include_subdomains": "true",
+            "expand": ["dns_names"]
+        }
+        
+        r = requests.get(
+            "https://api.certspotter.com/v1/issuances",
+            headers=headers,
+            params=params,
+            timeout=20
+        )
+
+        if r.status_code != 200:
+
+            debug(
+                f"CertSpotter returned {r.status_code}"
+            )
+
+            return
+
+        data = r.json()
+
+        discovered = 0
+
+        for cert in data:
+
+            for d in cert.get("dns_names", []):
+
+                d = normalize_domain(
+                    d.lstrip("*.")
+                )
+
+                if brand in d:
+
+                    add_domain(
+                        d,
+                        "certspotter",
+                        seed
+                    )
+
+                    discovered += 1
+
+        print(
+            f"[+] CertSpotter discovered {discovered} domains"
+        )
+
+    except Exception as e:
+
+        debug(
+            f"CertSpotter failed for {seed} | {e}"
+        )
 
 def resolve_ip(domain):
     try:
@@ -165,25 +283,52 @@ def reverse_dns(ip):
 
 def http_probe(domain):
 
-    for scheme in ["https","http"]:
+    for scheme in ["https", "http"]:
+
         url = f"{scheme}://{domain}"
+
         try:
-            r = requests.get(url, timeout=TIMEOUT, allow_redirects=True, verify=False)
+
+            r = requests.get(
+                url,
+                timeout=TIMEOUT,
+                allow_redirects=True,
+                verify=False
+            )
 
             title = ""
-            m = re.search(r"<title[^>]*>(.*?)</title>", r.text, re.I | re.S)
+
+            m = re.search(
+                r"<title[^>]*>(.*?)</title>",
+                r.text,
+                re.I | re.S
+            )
+
             if m:
-                title = re.sub(r"\s+"," ",m.group(1)).strip()
+                title = re.sub(
+                    r"\s+",
+                    " ",
+                    m.group(1)
+                ).strip()
+
+            # Original response before redirects
+            if r.history:
+                http_status = r.history[0].status_code
+                http_reason = r.history[0].reason
+            else:
+                http_status = r.status_code
+                http_reason = r.reason
 
             return {
-                "http_status": r.status_code,
-                "http_reason": r.reason,
+                "http_status": http_status,
+                "http_reason": http_reason,
                 "final_url": str(r.url),
                 "final_status": r.status_code,
+                "redirect_count": len(r.history),
                 "title": title
             }
 
-        except:
+        except Exception:
             continue
 
     return None
@@ -226,7 +371,7 @@ def main(seed_file, deep, expand):
         run_subdomain_enum(seed, deep)
         if expand:
             brand_expand(seed)
-            ct_expand(seed)
+            certificate_expand(seed)
 
     print(f"\n[+] Total domains discovered: {len(domain_registry)}")
 

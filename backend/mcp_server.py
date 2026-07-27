@@ -1,16 +1,8 @@
 from fastapi import FastAPI
-import psycopg2
 import os
+from db import get_conn
 
 app = FastAPI(title="ASM MCP Server")
-
-def get_conn():
-    return psycopg2.connect(
-        host="db",
-        dbname="asm_db",
-        user="asm",
-        password="asm123"
-    )
 
 # -------------------------
 # TOOL 1: SUMMARY

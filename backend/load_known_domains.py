@@ -1,12 +1,5 @@
-import psycopg2
 import csv
-
-conn = psycopg2.connect(
-    host="db",
-    dbname="asm_db",
-    user="asm",
-    password="asm123"
-)
+from db import get_conn
 
 cur = conn.cursor()
 

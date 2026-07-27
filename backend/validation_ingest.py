@@ -1,14 +1,7 @@
 import psycopg2
 import csv
 import sys
-
-def get_conn():
-    return psycopg2.connect(
-        host="db",
-        dbname="asm_db",
-        user="asm",
-        password="asm123"
-    )
+from db import get_conn
 
 def apply_validation(cur, domain, status):
 
