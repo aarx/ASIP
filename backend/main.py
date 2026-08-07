@@ -1346,9 +1346,11 @@ def export_enriched_csv():
     df["tech"] = df["domain"].map(
         lambda d: ",".join(sorted(set(tech_map.get(d, [])))) or "unknown"
     )
+    print(df.columns.tolist())
     df["Redirect Category"] = df.apply(
         lambda row: classify_redirect(
             row["domain"],
+            row["http_status"],
             row["final_url"],
             trusted_roots
         ),
@@ -1954,20 +1956,40 @@ def asset_growth():
     ]
 
 
-def classify_redirect(source_domain, final_url, trusted_roots):
+def classify_redirect(source_domain, http_status, final_url, trusted_roots):
 
-    if not final_url:
+    # Only HTTP redirects should be classified
+    try:
+        http_status = int(http_status)
+    except:
+        return "None"
+
+    if http_status < 300 or http_status >= 400:
+        return "None"
+
+    if final_url is None:
+        return "None"
+
+    final_url = str(final_url).strip().lower()
+
+    if final_url in ("", "nan", "none", "null"):
         return "None"
 
     try:
+
         parsed = urlparse(final_url)
 
         destination = parsed.netloc.lower().split(":")[0]
 
+        if not destination:
+            return "None"
+
         if destination.startswith("www."):
             destination = destination[4:]
 
-        # Internal redirect
+        source_domain = source_domain.lower()
+
+        # Internal
         if (
             destination == source_domain
             or destination.endswith("." + source_domain)
@@ -1975,15 +1997,16 @@ def classify_redirect(source_domain, final_url, trusted_roots):
         ):
             return "Internal"
 
-        # Trusted external
+        # Trusted External
         for root in trusted_roots:
-            if destination.endswith(root):
+            root = root.lower()
+
+            if destination == root or destination.endswith("." + root):
                 return "Trusted External"
 
-        # Everything else
         return "Untrusted External"
 
-    except:
+    except Exception:
         return "None"
 
 
@@ -2004,15 +2027,16 @@ def redirect_summary():
 
     # redirects
     cur.execute("""
-        SELECT
-            d.domain,
-            ds.final_url
-        FROM domain_states ds
-        JOIN domains d
-            ON d.id = ds.domain_id
-        WHERE ds.final_url IS NOT NULL
-          AND ds.final_url <> ''
-          AND ds.final_url <> 'nan'
+    SELECT
+        d.domain,
+        ds.http_status,
+        ds.final_url
+    FROM domain_states ds
+    JOIN domains d
+        ON d.id = ds.domain_id
+    WHERE ds.http_status BETWEEN 300 AND 399
+      AND ds.final_url <> ''
+      AND ds.final_url <> 'nan'
     """)
 
     rows = cur.fetchall()
@@ -2021,10 +2045,11 @@ def redirect_summary():
     trusted_external = 0
     untrusted_external = 0
     
-    for source_domain, final_url in rows:
+    for source_domain, http_status, final_url in rows:
     
         classification = classify_redirect(
             source_domain,
+            http_status,
             final_url,
             trusted_roots
         )
