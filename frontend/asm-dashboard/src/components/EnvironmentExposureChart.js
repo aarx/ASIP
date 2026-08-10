@@ -19,7 +19,10 @@ export default function EnvironmentExposureChart({ data }) {
       data={data}
       layout="vertical"
     >
-      <XAxis type="number" />
+      <XAxis
+        type="number"
+        domain={[0, "dataMax + 3"]}
+      />
       <YAxis
         type="category"
         dataKey="keyword"

@@ -377,14 +377,14 @@ Reason: ${data.reasons}
           {/* CHARTS */}
           <Grid container spacing={3} style={{ marginTop: "20px" }}>
             <Grid item xs={12} md={4}>
-              <Card style={{ height: 320 }}><CardContent>
+              <Card style={{ height: 360 }}><CardContent>
                 <Typography variant="h6">Seeds Distribution</Typography>
                 {sources && <SourceChart data={sources} />}
               </CardContent></Card>
             </Grid>
             
             <Grid item xs={12} md={4}>
-              <Card style={{ height: 320 }}>
+              <Card style={{ height: 360 }}>
                 <CardContent>
                   <Typography variant="h6">
                     Asset Growth Trend
@@ -398,34 +398,34 @@ Reason: ${data.reasons}
             </Grid>            
             
             <Grid item xs={12} md={6}>
-              <Card style={{ height: 320 }}><CardContent>
+              <Card style={{ height: 360 }}><CardContent>
                 <Typography variant="h6">HTTP Status</Typography>
                 {httpStatus && <HttpStatusChart data={httpStatus} />}
               </CardContent></Card>
             </Grid>
             <Grid item xs={12} md={4}>
-              <Card style={{ height: 320 }}><CardContent>
+              <Card style={{ height: 360 }}><CardContent>
                 <Typography variant="h6">Providers</Typography>
                 {providers && <ProviderChart data={providers} onProviderClick={(p) => setInvestigationFilter({ provider: p })} />}
               </CardContent></Card>
             </Grid>
             <Grid item xs={12} md={4}>
-              <Card style={{ height: 320 }}><CardContent>
+              <Card style={{ height: 360 }}><CardContent>
                 <Typography variant="h6">Exposure Drift</Typography>
                 {drift && <HygieneChart data={drift} />}
               </CardContent></Card>
             </Grid>
             <Grid item xs={12} md={4}>
-              <Card style={{ height: 320 }}><CardContent>
+              <Card style={{ height: 360 }}><CardContent>
                 <Typography variant="h6">Shadow Assets</Typography>
                 {shadowProvider && <ProviderChart data={shadowProvider} />}
               </CardContent></Card>
             </Grid>
             <Grid item xs={12} md={6}>
-              <Card style={{ height: 320 }}>
+              <Card style={{ height: 360 }}>
                 <CardContent>
                   <Typography variant="h6">
-                    Environment Exposure
+                    Naming Exposure Assets
                   </Typography>
             
                   {environmentExposure && (
@@ -438,7 +438,7 @@ Reason: ${data.reasons}
             </Grid>
             
             <Grid item xs={12} md={6}>
-              <Card style={{ height: 320 }}>
+              <Card style={{ height: 360 }}>
                 <CardContent>
                   <Typography variant="h6">
                     Tech Stack

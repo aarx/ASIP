@@ -2084,6 +2084,7 @@ def environment_exposure():
         "uat",
         "qa",
         "admin",
+        "mail",
         "temp",
         "stage",
         "staging",
@@ -2100,17 +2101,27 @@ def environment_exposure():
 
     for keyword in keywords:
 
-        cur.execute(
+        # Keep STAGE and STAGING as separate categories
+        if keyword == "stage":
+            condition = """
+                d.domain ILIKE %s
+                AND d.domain NOT ILIKE %s
             """
-            SELECT COUNT(*)
+            params = ("%stage%", "%staging%")
+
+        else:
+            condition = """
+                d.domain ILIKE %s
+            """
+            params = (f"%{keyword}%",)
+
+        query = f"""
+            SELECT COUNT(DISTINCT d.domain)
             FROM domains d
-            JOIN domain_states ds
-              ON d.id = ds.domain_id
-            WHERE ds.http_status > 0
-              AND d.domain ILIKE %s
-            """,
-            (f"%{keyword}%",)
-        )
+            WHERE {condition}
+        """
+
+        cur.execute(query, params)
 
         count = cur.fetchone()[0]
 
