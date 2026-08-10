@@ -253,7 +253,7 @@ Reason: ${data.reasons}
       const certData = await fetch("http://localhost:8555/cert-expiry").then(r => r.json());
       const shadowProviderData = await fetch("http://localhost:8555/shadow-by-provider").then(r => r.json());
       const environmentData =
-        await fetch("http://localhost:8555/environment-exposure")
+        await fetch("http://localhost:8555/naming-asset-exposure")
           .then(r => r.json());      
 
       setFindings(findingsData);

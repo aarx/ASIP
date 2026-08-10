@@ -2072,8 +2072,8 @@ def redirect_summary():
         "untrusted_external": untrusted_external
     }
     
-@app.get("/environment-exposure")
-def environment_exposure():
+@app.get("/naming-asset-exposure")
+def naming_asset_exposure():
 
     conn = get_conn()
     cur = conn.cursor()
