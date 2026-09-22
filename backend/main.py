@@ -554,78 +554,363 @@ def volatile_domains():
         for r in rows
     ]
 
+ASSET_EXPOSURE_KEYWORDS = [
+    "dev",
+    "test",
+    "uat",
+    "qa",
+    "admin",
+    "mail",
+    "temp",
+    "stage",
+    "staging",
+    "sandbox",
+    "preprod",
+    "pre-prod",
+    "nonprod",
+    "non-prod",
+    "lab",
+    "demo"
+]
+
+
+def get_asset_exposure_keywords(domain):
+    """
+    Return Asset Exposure keywords found in the domain.
+
+    Broad substring matching is intentional for now.
+    STAGE and STAGING remain separate categories.
+    """
+
+    domain = (domain or "").lower()
+
+    matched = []
+
+    for keyword in ASSET_EXPOSURE_KEYWORDS:
+
+        if keyword == "stage":
+            if "stage" in domain and "staging" not in domain:
+                matched.append("STAGE")
+
+        else:
+            if keyword in domain:
+                matched.append(keyword.upper())
+
+    return matched
+
+
 @app.get("/risky-domains")
 def risky_domains():
 
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    latest_scan = cur.fetchone()[0]
+    # --------------------------------------------------
+    # Latest scan
+    # --------------------------------------------------
 
     cur.execute("""
-        WITH volatility AS (
+        SELECT MAX(scan_id)
+        FROM domain_states
+    """)
+
+    scan_id = cur.fetchone()[0]
+
+    if scan_id is None:
+        conn.close()
+        return []
+
+
+    # --------------------------------------------------
+    # Historical volatility
+    # --------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            domain_id,
+            COUNT(*) AS flips
+        FROM (
             SELECT
                 domain_id,
-                COUNT(*) AS flips
-            FROM (
-                SELECT
-                    domain_id,
-                    has_ip,
-                    LAG(has_ip) OVER (
-                        PARTITION BY domain_id
-                        ORDER BY scan_id
-                    ) AS prev_state
-                FROM domain_states
-            ) t
-            WHERE prev_state IS NOT NULL
-            AND prev_state != has_ip
-            GROUP BY domain_id
-        ),
-        latest_state AS (
-            SELECT *
+                has_ip,
+                LAG(has_ip) OVER (
+                    PARTITION BY domain_id
+                    ORDER BY scan_id
+                ) AS prev_state
             FROM domain_states
-            WHERE scan_id = %s
-        )
-        SELECT
-            d.domain,
-            (
-                CASE
-                    WHEN d.first_seen_scan = %s THEN 3
-                    ELSE 0
-                END
-                +
-                CASE
-                    WHEN ls.http_live = TRUE THEN 2
-                    WHEN ls.has_ip = TRUE THEN 1
-                    ELSE 0
-                END
-                +
-                CASE
-                    WHEN v.flips >= 2 THEN 4
-                    ELSE 0
-                END
-            ) AS risk_score
-        FROM domains d
-        JOIN latest_state ls
-        ON d.id = ls.domain_id
-        LEFT JOIN volatility v
-        ON d.id = v.domain_id
-        ORDER BY risk_score DESC
-        LIMIT 100
-    """, (latest_scan, latest_scan))
+        ) t
+        WHERE prev_state IS NOT NULL
+          AND prev_state != has_ip
+        GROUP BY domain_id
+    """)
 
-    rows = cur.fetchall()
+    volatility_map = {
+        row[0]: row[1]
+        for row in cur.fetchall()
+    }
+
+    # --------------------------------------------------
+    # Latest domain state
+    # --------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            d.id,
+            d.domain,
+            d.first_seen_scan,
+            d.is_known,
+            ds.has_ip,
+            ds.http_live,
+            ds.http_status,
+            ds.final_url
+        FROM domains d
+        JOIN domain_states ds
+            ON d.id = ds.domain_id
+        WHERE ds.scan_id = %s
+    """, (scan_id,))
+
+    domain_rows = cur.fetchall()
+
+    # --------------------------------------------------
+    # Sensitive ports / total ports
+    # --------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            dp.domain_id,
+            COUNT(DISTINCT dp.port) AS port_count,
+            COUNT(DISTINCT sp.port) AS sensitive_port_count
+        FROM domain_ports dp
+        LEFT JOIN sensitive_ports sp
+            ON dp.port = sp.port
+        WHERE dp.scan_id = %s
+        GROUP BY dp.domain_id
+    """, (scan_id,))
+
+    port_map = {
+        row[0]: {
+            "port_count": row[1] or 0,
+            "sensitive_ports": row[2] or 0
+        }
+        for row in cur.fetchall()
+    }
+
+    # --------------------------------------------------
+    # Provider / cloud information
+    # --------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            domain_id,
+            provider
+        FROM domain_provider
+        WHERE scan_id = %s
+    """, (scan_id,))
+
+    provider_map = {
+        row[0]: row[1]
+        for row in cur.fetchall()
+    }
+
+    # --------------------------------------------------
+    # Findings
+    # --------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            domain_id,
+            COUNT(*) AS finding_count,
+            COUNT(*) FILTER (
+                WHERE UPPER(severity) = 'HIGH'
+            ) AS high_findings
+        FROM domain_findings
+        WHERE scan_id = %s
+        GROUP BY domain_id
+    """, (scan_id,))
+
+    finding_map = {
+        row[0]: {
+            "count": row[1] or 0,
+            "high": row[2] or 0
+        }
+        for row in cur.fetchall()
+    }
 
     conn.close()
 
-    return [
-        {
-            "domain": r[0],
-            "risk_score": r[1]
-        }
-        for r in rows
-    ]
+    # --------------------------------------------------
+    # Calculate deterministic risk
+    # --------------------------------------------------
+
+    results = []
+
+    for row in domain_rows:
+
+        (
+            domain_id,
+            domain,
+            first_seen_scan,
+            is_known,
+            has_ip,
+            http_live,
+            http_status,
+            final_url
+        ) = row
+
+        score = 0
+        reasons = []
+
+        # ----------------------------------------------
+        # New asset
+        # ----------------------------------------------
+
+        if first_seen_scan == scan_id:
+            score += 3
+            reasons.append("new_asset")
+
+        # ----------------------------------------------
+        # HTTP / IP exposure
+        # ----------------------------------------------
+
+        if http_live:
+            score += 1
+            reasons.append("http_exposed")
+
+        elif has_ip:
+            score += 1
+            reasons.append("resolves_no_http")
+
+        # ----------------------------------------------
+        # Ports
+        # ----------------------------------------------
+
+        port_info = port_map.get(
+            domain_id,
+            {
+                "port_count": 0,
+                "sensitive_ports": 0
+            }
+        )
+
+        port_count = port_info["port_count"]
+        sensitive_port_count = port_info["sensitive_ports"]
+
+        if sensitive_port_count > 0:
+            score += 3
+            reasons.append("sensitive_ports")
+
+        if port_count > 3:
+            score += 1
+            reasons.append("many_ports")
+
+        # ----------------------------------------------
+        # Shadow / unmanaged
+        # ----------------------------------------------
+
+        if is_known is False:
+            score += 2
+            reasons.append("shadow_asset")
+
+        # ----------------------------------------------
+        # Cloud
+        # ----------------------------------------------
+
+        provider = provider_map.get(domain_id)
+
+        if provider and any(
+            cloud in provider.lower()
+            for cloud in [
+                "amazon",
+                "aws",
+                "azure",
+                "gcp",
+                "google cloud"
+            ]
+        ):
+            score += 1
+            reasons.append("cloud")
+
+        # ----------------------------------------------
+        # Asset Exposure
+        # ----------------------------------------------
+
+        asset_keywords = get_asset_exposure_keywords(domain)
+
+        if asset_keywords:
+            score += 1
+
+            reasons.append(
+                "asset_exposure:" + ",".join(asset_keywords)
+            )
+
+        # ----------------------------------------------
+        # Historical volatility
+        # ----------------------------------------------
+
+        flips = volatility_map.get(domain_id, 0)
+
+        if flips >= 2:
+            score += 3
+            reasons.append("ip_state_volatility")
+
+        # ----------------------------------------------
+        # Findings
+        # ----------------------------------------------
+
+        finding_info = finding_map.get(
+            domain_id,
+            {
+                "count": 0,
+                "high": 0
+            }
+        )
+
+        if finding_info["count"] > 0:
+
+            score += 3
+            reasons.append("finding")
+
+        if finding_info["high"] > 0:
+
+            score += 2
+            reasons.append("high_finding")
+
+        # ----------------------------------------------
+        # Keep only meaningful risk
+        # ----------------------------------------------
+
+        if score > 0:
+      
+            if score >= 8:
+                priority = "High"
+            elif score >= 6:
+                priority = "Elevated"
+            elif score >= 4:
+                priority = "Review"
+            else:
+                priority = "Low"
+
+            results.append({
+                "domain": domain,
+                "risk_score": score,
+                "priority": priority,
+                "reasons": reasons
+            })
+
+    # --------------------------------------------------
+    # Highest risk first
+    # --------------------------------------------------
+
+    results.sort(
+        key=lambda x: (
+            x["risk_score"],
+            x["domain"]
+        ),
+        reverse=True
+    )
+
+    return results[:100]
+    
 @app.get("/sensitive-exposure")
 def sensitive_exposure():
 
@@ -1841,12 +2126,28 @@ def discovery_sources():
 @app.get("/chat")
 def chat(q: str):
 
-    q_lower = q.lower()
+    q_lower = q.lower().strip()
 
     # -------------------------
-    # 🧠 INVESTIGATION (NEW)
+    # INVESTIGATION GUIDANCE
     # -------------------------
-    if "investigate" in q_lower or "how" in q_lower:
+    # Only send questions to MCP when the user is
+    # explicitly asking HOW to investigate something.
+    if (
+        ("how" in q_lower or "investigate" in q_lower)
+        and any(
+            x in q_lower
+            for x in [
+                "dangling_dns",
+                "suspicious_dns",
+                "open_port",
+                "sensitive_port",
+                "http_exposed",
+                "ssl",
+                "takeover"
+            ]
+        )
+    ):
 
         match = re.search(
             r"(dangling_dns|suspicious_dns|open_port|sensitive_port|http_exposed|ssl|takeover)",
@@ -1854,6 +2155,7 @@ def chat(q: str):
         )
 
         if match:
+
             finding = match.group(0)
 
             if finding == "takeover":
@@ -1865,31 +2167,344 @@ def chat(q: str):
                     params={"finding": finding},
                     timeout=5
                 )
+
                 return res.json()
+
             except Exception as e:
-                return {"error": f"MCP request failed: {str(e)}"}
-
-        return {"message": "Please specify a finding (e.g., dangling_dns)"}
+                return {
+                    "error": f"MCP request failed: {str(e)}"
+                }
 
     # -------------------------
-    # EXISTING LOGIC (UNCHANGED)
+    # UNKNOWN HIGH-RISK QUERY
     # -------------------------
+
     if "unknown" in q_lower and "risk" in q_lower:
         return unknown_high_risk()
 
+    # -------------------------
+    # RISK QUERIES
+    # -------------------------
+
     elif "risk" in q_lower:
-        return risky_domains()  
+
+        # Direct request for the risk data
+        if any(
+            x in q_lower
+            for x in [
+                "show",
+                "list",
+                "give me the list",
+                "display"
+            ]
+        ):
+            return risky_domains()
+
+        # Get deterministic ASM risk data
+        risk_data = risky_domains()
+
+        # Send the highest-ranked 10 assets to Gemma
+        top_risks = risk_data[:10]
+
+        prompt = f"""
+You are an Attack Surface Management analyst assisting with
+investigation prioritization.
+
+User question:
+{q}
+
+The ASM system has already calculated the risk score,
+priority, and reasons.
+
+The following data is authoritative:
+
+{top_risks}
+
+IMPORTANT:
+The ASM system, not you, determines the risk score and priority.
+
+STRICT RULES:
+
+1. Do NOT recalculate the risk score.
+2. Do NOT modify the risk score.
+3. Do NOT change the supplied priority.
+4. Do NOT invent domains.
+5. Do NOT invent vulnerabilities.
+6. Do NOT assume business criticality.
+7. Do NOT assume malicious activity.
+8. Do NOT claim that a sensitive port is exploitable.
+9. Do NOT claim that cloud hosting is a vulnerability.
+10. Do NOT invent ownership, traffic levels, application purpose,
+    authentication mechanisms, business impact, or attack techniques.
+11. Use ONLY the supplied reasons as evidence.
+12. Treat the supplied score, priority, and reasons as authoritative.
+13. If information is not available, explicitly say so.
+14. These are investigation indicators, not confirmed vulnerabilities.
+15. Do not use words such as "vulnerable", "exploit", "critical",
+    "open", "several", or "multiple" unless that exact information
+    is explicitly present in the supplied data.
+16. "sensitive_ports" only means that sensitive ports were detected.
+17. "http_exposed" only means HTTP exposure was observed.
+18. "shadow_asset" only means the asset is classified as a shadow/unmanaged asset.
+19. "cloud" only means the asset is associated with a cloud provider.
+20. "asset_exposure:<keyword>" only means that the keyword was detected
+    in the domain name.
+
+Return ONLY this structure:
+
+Priority 1
+Domain: <domain>
+Risk Score: <risk_score>
+Priority: <priority>
+Reasons: <reasons>
+Why investigate: <one concise sentence based only on the supplied reasons>
+
+Priority 2
+Domain: <domain>
+Risk Score: <risk_score>
+Priority: <priority>
+Reasons: <reasons>
+Why investigate: <one concise sentence based only on the supplied reasons>
+
+Priority 3
+Domain: <domain>
+Risk Score: <risk_score>
+Priority: <priority>
+Reasons: <reasons>
+Why investigate: <one concise sentence based only on the supplied reasons>
+
+Recommended next steps:
+1. Validate the ownership and expected purpose of the highest-priority assets.
+2. Review the services associated with the supplied exposure indicators.
+3. Confirm whether the observed exposure is expected and authorized.
+
+Keep the response concise and practical.
+Do not provide additional commentary.
+"""
+
+        answer = ask_llm(prompt)
+
+        return {
+            "response": answer,
+            "source": "ASM + Gemma"
+        }
+
+    # -------------------------
+    # SHADOW ASSET QUERIES
+    # -------------------------
 
     elif "shadow" in q_lower:
-        return shadow_assets()
+
+        # Direct request for the asset list
+        if any(
+            x in q_lower
+            for x in [
+                "show",
+                "list",
+                "give me the list",
+                "display"
+            ]
+        ):
+            return shadow_assets()
+
+        # Analytical shadow-asset question
+        #
+        # Use the same deterministic risk engine.
+        # Gemma only explains the supplied ranking.
+        risk_data = risky_domains()
+
+        top_risks = risk_data[:10]
+
+        prompt = f"""
+You are an Attack Surface Management analyst assisting with
+investigation prioritization.
+
+User question:
+{q}
+
+The ASM system has already calculated the risk score,
+priority, and reasons.
+
+The following data is authoritative:
+
+{top_risks}
+
+IMPORTANT:
+The ASM system, not you, determines the risk score and priority.
+
+STRICT RULES:
+
+1. Do NOT recalculate the risk score.
+2. Do NOT modify the risk score.
+3. Do NOT change the supplied priority.
+4. Do NOT invent domains.
+5. Do NOT invent vulnerabilities.
+6. Do NOT assume business criticality.
+7. Do NOT assume malicious activity.
+8. Do NOT claim that a sensitive port is exploitable.
+9. Do NOT claim that cloud hosting is a vulnerability.
+10. Do NOT invent ownership, traffic levels, application purpose,
+    authentication mechanisms, business impact, or attack techniques.
+11. Use ONLY the supplied reasons as evidence.
+12. Treat the supplied score, priority, and reasons as authoritative.
+13. If information is not available, explicitly say so.
+14. These are investigation indicators, not confirmed vulnerabilities.
+
+Return ONLY this structure:
+
+Priority 1
+Domain: <domain>
+Risk Score: <risk_score>
+Priority: <priority>
+Reasons: <reasons>
+Why investigate: <one concise sentence based only on the supplied reasons>
+
+Priority 2
+Domain: <domain>
+Risk Score: <risk_score>
+Priority: <priority>
+Reasons: <reasons>
+Why investigate: <one concise sentence based only on the supplied reasons>
+
+Priority 3
+Domain: <domain>
+Risk Score: <risk_score>
+Priority: <priority>
+Reasons: <reasons>
+Why investigate: <one concise sentence based only on the supplied reasons>
+
+Recommended next steps:
+1. <step based only on the supplied evidence>
+2. <step based only on the supplied evidence>
+3. <step based only on the supplied evidence>
+
+Keep the response concise and practical.
+Do not provide additional commentary.
+"""
+
+        answer = ask_llm(prompt)
+
+        return {
+            "response": answer,
+            "source": "ASM + Gemma"
+        }
+
+    # -------------------------
+    # FINDING QUERIES
+    # -------------------------
 
     elif "finding" in q_lower:
         return findings()
 
+    # -------------------------
+    # SUMMARY QUERIES
+    # -------------------------
+
     elif "summary" in q_lower:
         return summary()
 
-    return {"message": "Didn't understand"}
+    # -------------------------
+    # AI FALLBACK
+    # -------------------------
+
+    try:
+
+        # Determine what ASM context is most relevant
+        if any(
+            x in q_lower
+            for x in [
+                "shadow",
+                "unknown asset",
+                "unknown assets",
+                "unmanaged",
+                "unregistered"
+            ]
+        ):
+
+            context = {
+                "type": "shadow_assets",
+                "data": shadow_assets()
+            }
+
+        elif any(
+            x in q_lower
+            for x in [
+                "risk",
+                "risky",
+                "highest risk",
+                "high risk",
+                "dangerous"
+            ]
+        ):
+
+            context = {
+                "type": "risk",
+                "data": risky_domains()
+            }
+
+        elif any(
+            x in q_lower
+            for x in [
+                "summary",
+                "overview",
+                "attack surface",
+                "posture",
+                "overall"
+            ]
+        ):
+
+            context = {
+                "type": "summary",
+                "data": summary()
+            }
+
+        else:
+
+            context = {
+                "type": "summary",
+                "data": summary()
+            }
+
+        # -------------------------
+        # GEMMA FALLBACK PROMPT
+        # -------------------------
+
+        prompt = f"""
+You are an Attack Surface Management analyst.
+
+User question:
+{q}
+
+ASM context:
+{context}
+
+Use ONLY the supplied ASM context.
+
+STRICT RULES:
+- Do not invent domains.
+- Do not invent vulnerabilities.
+- Do not invent business criticality.
+- Do not assume malicious activity.
+- Do not assume exploitability.
+- Do not invent ownership or traffic information.
+- Clearly distinguish ASM indicators from confirmed findings.
+- If information is unavailable, say so.
+
+Answer the user's question concisely and practically.
+"""
+
+        answer = ask_llm(prompt)
+
+        return {
+            "response": answer,
+            "source": "ASM + Gemma"
+        }
+
+    except Exception as e:
+
+        return {
+            "error": f"AI analysis failed: {str(e)}"
+        }
 
 
 @app.get("/llm-test")

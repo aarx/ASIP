@@ -172,7 +172,7 @@ function App() {
     "Suspicious Redirects":
       "Domains redirecting outside trusted seed domains.",
       
-      "Environment Assets":
+      "Naming Exposure Assets":
         "Internet-facing domains containing DEV, TEST, QA, UAT, STAGE, ADMIN or similar environment indicators."      
       
   };
@@ -316,7 +316,7 @@ Reason: ${data.reasons}
                   redirectSummary?.untrusted_external || 0
               ],
                 [
-                  "Environment Assets",
+                  "Naming Exposure Assets",
                   environmentExposure
                     ? environmentExposure.reduce(
                         (sum, item) => sum + item.count,
