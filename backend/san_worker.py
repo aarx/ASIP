@@ -39,6 +39,27 @@ def is_scannable(domain, seeds):
             return True
     return False
 
+
+def add_current_scan_membership(cur, parent_domain_id, child_domain_id):
+    cur.execute("""
+    SELECT seed
+    FROM scan_results
+    WHERE scan_id = %s
+    AND domain_id = %s
+    """, (scan_id, parent_domain_id))
+
+    parent_scan_result = cur.fetchone()
+    if not parent_scan_result:
+        raise RuntimeError(
+            f"Parent domain {parent_domain_id} is missing scan_results for scan {scan_id}"
+        )
+
+    cur.execute("""
+    INSERT INTO scan_results(scan_id, domain_id, seed)
+    VALUES (%s, %s, %s)
+    ON CONFLICT (scan_id, domain_id) DO NOTHING
+    """, (scan_id, child_domain_id, parent_scan_result[0]))
+
 def main():
      
     conn = get_conn()
@@ -161,6 +182,8 @@ def main():
             """, (san, scan_id, scan_id, san, scannable, "san"))
             
             new_domain_id, inserted = cur.fetchone()
+
+            add_current_scan_membership(cur, domain_id, new_domain_id)
             
             # add SAN as a source (for attribution)
             cur.execute("""

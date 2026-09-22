@@ -116,6 +116,7 @@ def main():
 
         # DNS
         ("DNS Resolution", f"python -u dns_worker.py {scan_id}"),
+        ("SAN HTTP Observation", f"python -u san_http_worker.py {scan_id}"),
 
         # ENRICHMENT
         ("Cert Worker", f"python -u cert_worker.py {scan_id}"),

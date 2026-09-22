@@ -53,14 +53,15 @@ def summary():
     """, (latest_scan,))
     live_domains = cur.fetchone()[0]
 
-    # http live
+    # domains first observed in the latest scan and included in that scan
     cur.execute("""
-        SELECT COUNT(*)
-        FROM domain_states
-        WHERE scan_id=%s
-        AND http_live = TRUE
-    """, (latest_scan,))
-    http_live = cur.fetchone()[0]
+        SELECT COUNT(DISTINCT d.id)
+        FROM domains d
+        JOIN scan_results sr ON sr.domain_id = d.id
+        WHERE sr.scan_id = %s
+        AND d.first_seen_scan = %s
+    """, (latest_scan, latest_scan))
+    new_domains = cur.fetchone()[0]
 
     cur.execute("""
         SELECT COUNT(*) 
@@ -119,7 +120,7 @@ def summary():
         "total_domains": total_domains,
         "live_domains": live_domains,
         "known_domains": known_domains,
-        "new_domains": http_live,
+        "new_domains": new_domains,
         "findings": findings_count,
         "shadow_assets": shadow_assets,
         "non_web_assets": non_web_assets,
@@ -285,12 +286,13 @@ def new_domains():
     cur.execute("""
         SELECT d.domain
         FROM domains d
-        JOIN scan_domains sd
-        ON d.id = sd.domain_id
-        WHERE sd.scan_id = %s
-        ORDER BY d.first_seen DESC
+        JOIN scan_results sr
+        ON d.id = sr.domain_id
+        WHERE sr.scan_id = %s
+        AND d.first_seen_scan = %s
+        ORDER BY d.first_seen_at DESC NULLS LAST, d.domain
         LIMIT 100
-    """, (latest_scan,))
+    """, (latest_scan, latest_scan))
 
     rows = cur.fetchall()
 
@@ -1161,8 +1163,11 @@ def risk_leaderboard():
     SELECT d.domain, dr.risk_score, dr.reasons
     FROM domain_risk dr
     JOIN domains d ON dr.domain_id = d.id
-    JOIN domain_states ds ON d.id = ds.domain_id
-    WHERE ds.has_ip = TRUE
+    JOIN domain_states ds
+      ON d.id = ds.domain_id
+      AND ds.scan_id = dr.scan_id
+    WHERE dr.scan_id = %s
+    AND ds.has_ip = TRUE
     ORDER BY dr.risk_score DESC
     LIMIT 50;
     """

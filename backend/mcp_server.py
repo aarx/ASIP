@@ -122,7 +122,7 @@ def get_findings():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT d.domain, f.issue
+        SELECT d.domain, f.finding
         FROM domain_findings f
         JOIN domains d ON d.id = f.domain_id
         WHERE f.scan_id = (
@@ -223,6 +223,8 @@ def priority_targets():
 def investigation_guide(finding: str):
 
     finding = finding.lower().strip()
+    if finding == "ssl":
+        finding = "ssl_issue"
 
     guides = {
 

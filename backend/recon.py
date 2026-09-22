@@ -6,12 +6,12 @@ import argparse
 import csv
 import os
 import requests
-import re
 import shutil
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from db import get_conn
 from config import CERTSPOTTER_API_KEY
+from http_probe import http_probe
 
 
 if os.path.exists("final_output.csv"):
@@ -37,7 +37,6 @@ COMMON_TLDS = ["com","net","org","co","io","in","ai","app","tech","cloud"]
 PREFIX_PATTERNS = ["get","join","try","my","secure"]
 SUFFIX_PATTERNS = ["group","corp","global","cloud","tech","services"]
 
-TIMEOUT = 8
 MAX_WORKERS = 40
 
 KNOWN_DOMAINS_FILE = "known_domains.csv"
@@ -279,59 +278,6 @@ def reverse_dns(ip):
         return socket.gethostbyaddr(ip)[0]
     except:
         return "N/A"
-
-
-def http_probe(domain):
-
-    for scheme in ["https", "http"]:
-
-        url = f"{scheme}://{domain}"
-
-        try:
-
-            r = requests.get(
-                url,
-                timeout=TIMEOUT,
-                allow_redirects=True,
-                verify=False
-            )
-
-            title = ""
-
-            m = re.search(
-                r"<title[^>]*>(.*?)</title>",
-                r.text,
-                re.I | re.S
-            )
-
-            if m:
-                title = re.sub(
-                    r"\s+",
-                    " ",
-                    m.group(1)
-                ).strip()
-
-            # Original response before redirects
-            if r.history:
-                http_status = r.history[0].status_code
-                http_reason = r.history[0].reason
-            else:
-                http_status = r.status_code
-                http_reason = r.reason
-
-            return {
-                "http_status": http_status,
-                "http_reason": http_reason,
-                "final_url": str(r.url),
-                "final_status": r.status_code,
-                "redirect_count": len(r.history),
-                "title": title
-            }
-
-        except Exception:
-            continue
-
-    return None
 
 
 def load_known():

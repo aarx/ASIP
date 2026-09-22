@@ -95,7 +95,7 @@ def main():
         ds.http_status,
         COALESCE(dp.provider,'Unknown'),
         COALESCE(dt.tech,'unknown'),
-        ce.days_to_expiry,
+        dc.days_to_expiry,
     
         COALESCE((
             SELECT MAX(sp.risk)
@@ -120,9 +120,9 @@ def main():
         ON d.id = dt.domain_id
         AND dt.scan_id = %s   
     
-    LEFT JOIN cert_expiry ce
-        ON d.id = ce.domain_id
-        AND ce.scan_id = %s
+    LEFT JOIN domain_cert dc
+        ON d.id = dc.domain_id
+        AND dc.scan_id = %s
         
     WHERE ds.has_ip = TRUE
     

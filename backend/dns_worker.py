@@ -1,4 +1,5 @@
 import dns.resolver
+import socket
 import sys
 from db import get_conn
 
@@ -34,6 +35,13 @@ def resolve_dns(domain):
     return records
 
 
+def reverse_dns(ip):
+    try:
+        return socket.gethostbyaddr(ip)[0]
+    except Exception:
+        return "N/A"
+
+
 def main():
 
     conn = get_conn()
@@ -43,14 +51,13 @@ def main():
 
     # 🔥 safer query (do NOT skip everything)
     cur.execute("""
-    SELECT d.id, d.domain
+    SELECT d.id, d.domain, ds.has_ip
     FROM domains d
 
     JOIN domain_states ds
       ON d.id = ds.domain_id
       AND ds.scan_id = %s
 
-    WHERE ds.has_ip = TRUE
     """, (scan_id,))
 
     rows = cur.fetchall()
@@ -64,7 +71,7 @@ def main():
     processed = 0
     inserted = 0
 
-    for domain_id, domain in rows:
+    for domain_id, domain, has_ip in rows:
 
         print(f"\n🔍 Processing: {domain}")
 
@@ -87,6 +94,20 @@ def main():
             """, (domain_id, scan_id, rtype, value))
 
             inserted += 1
+
+        if not has_ip:
+            a_records = sorted({value for rtype, value in records if rtype == "A"})
+            if a_records:
+                ip = a_records[0]
+                cur.execute("""
+                UPDATE domain_states
+                SET ip = %s,
+                    has_ip = TRUE,
+                    reverse_dns = %s
+                WHERE domain_id = %s
+                AND scan_id = %s
+                AND has_ip IS NOT TRUE
+                """, (ip, reverse_dns(ip), domain_id, scan_id))
 
         processed += 1
 

@@ -44,7 +44,7 @@ def detect_provider(ip):
 
 def map_provider(org):
     if not org:
-        provider = "Unknown"
+        return "Unknown"
 
     o = org.lower()
 
