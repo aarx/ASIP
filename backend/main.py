@@ -1338,15 +1338,24 @@ def providers():
     conn = get_conn()
     cur = conn.cursor()
 
+    scan_id = get_latest_authoritative_scan_id(cur)
+
+    if scan_id is None:
+        conn.close()
+        return []
+
     cur.execute("""
         SELECT dp.provider, COUNT(*)
         FROM domain_provider dp
         JOIN domain_states ds 
           ON dp.domain_id = ds.domain_id
+         AND dp.scan_id = ds.scan_id
         WHERE ds.has_ip = TRUE
+        AND ds.scan_id = %s
+        AND dp.scan_id = %s
         GROUP BY dp.provider
         ORDER BY COUNT(*) DESC
-    """)
+    """, (scan_id, scan_id))
 
     rows = cur.fetchall()
 
@@ -1365,15 +1374,24 @@ def tech():
     conn = get_conn()
     cur = conn.cursor()
 
+    scan_id = get_latest_authoritative_scan_id(cur)
+
+    if scan_id is None:
+        conn.close()
+        return []
+
     cur.execute("""
         SELECT dt.tech, COUNT(*)
         FROM domain_tech dt
         JOIN domain_states ds 
           ON dt.domain_id = ds.domain_id
+         AND dt.scan_id = ds.scan_id
         WHERE ds.has_ip = TRUE
+        AND ds.scan_id = %s
+        AND dt.scan_id = %s
         GROUP BY dt.tech
         ORDER BY COUNT(*) DESC;
-    """)
+    """, (scan_id, scan_id))
 
     rows = cur.fetchall()
 
@@ -1459,10 +1477,13 @@ def export_targets():
             ON d.id = ds.domain_id
         LEFT JOIN domain_ports dp 
             ON d.id = dp.domain_id
+           AND dp.scan_id = ds.scan_id
         LEFT JOIN domain_asn da 
             ON d.id = da.domain_id
+           AND da.scan_id = ds.scan_id
         LEFT JOIN domain_provider pr 
             ON d.id = pr.domain_id
+           AND pr.scan_id = ds.scan_id
         WHERE ds.scan_id = %s
         GROUP BY d.domain, ds.ip, ds.http_live, da.asn, pr.provider
         ORDER BY open_ports DESC
