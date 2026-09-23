@@ -113,6 +113,9 @@ def main():
     SELECT d.id, d.domain, dd.value
     FROM domain_dns dd
     JOIN domains d ON d.id = dd.domain_id
+    JOIN scan_results sr
+      ON sr.domain_id = dd.domain_id
+      AND sr.scan_id = dd.scan_id
     WHERE dd.scan_id = %s
     AND dd.record_type = 'CNAME'
     AND d.scannable = TRUE   
@@ -161,14 +164,20 @@ def main():
 
                 cur.execute("""
                 INSERT INTO domain_findings(domain_id, scan_id, finding, severity, evidence)
-                VALUES (%s, %s, %s, %s, %s)
+                SELECT %s, %s, %s, %s, %s
+                WHERE EXISTS (
+                    SELECT 1 FROM scan_results sr
+                    WHERE sr.scan_id = %s AND sr.domain_id = %s
+                )
                 ON CONFLICT (domain_id, scan_id, finding) DO NOTHING
                 """, (
                     domain_id,
                     scan_id,
                     "dangling_dns",
                     "HIGH",
-                    fp
+                    fp,
+                    scan_id,
+                    domain_id
                 ))
 
                 found = True
@@ -191,14 +200,20 @@ def main():
             if severity:
                 cur.execute("""
                 INSERT INTO domain_findings(domain_id, scan_id, finding, severity, evidence)
-                VALUES (%s, %s, %s, %s, %s)
+                SELECT %s, %s, %s, %s, %s
+                WHERE EXISTS (
+                    SELECT 1 FROM scan_results sr
+                    WHERE sr.scan_id = %s AND sr.domain_id = %s
+                )
                 ON CONFLICT (domain_id, scan_id, finding) DO NOTHING
                 """, (
                     domain_id,
                     scan_id,
                     "suspicious_dns",
                     severity,
-                    f"status={status}, length={length}"
+                    f"status={status}, length={length}",
+                    scan_id,
+                    domain_id
                 ))
 
     conn.commit()

@@ -25,11 +25,7 @@ logging.basicConfig(
 
 
 
-def get_domains():
-
-    conn = get_conn()
-    cur = conn.cursor()
-    require_running_scan(cur, scan_id)
+def get_domains(cur, scan_id):
 
     cur.execute("""
         SELECT d.id, d.domain, ds.ip, ds.final_url
@@ -37,6 +33,9 @@ def get_domains():
         JOIN domains d 
           ON d.id = ds.domain_id
           AND ds.scan_id = %s
+        JOIN scan_results sr
+          ON sr.domain_id = ds.domain_id
+          AND sr.scan_id = ds.scan_id
         
         LEFT JOIN domain_cert dc
           ON d.id = dc.domain_id
@@ -49,7 +48,6 @@ def get_domains():
     """, (scan_id, scan_id))
 
     rows = cur.fetchall()
-    conn.close()
 
     return rows    
 
@@ -103,14 +101,13 @@ def fetch_cert_expiry(domain):
 
 def main():
 
-    domains = get_domains()
-
-    print("Scan ID:", scan_id)
-    print("Rows to process:", len(domains))
-
     conn = get_conn()
     cur = conn.cursor()
     require_running_scan(cur, scan_id)
+
+    domains = get_domains(cur, scan_id)
+    print("Scan ID:", scan_id)
+    print("Rows to process:", len(domains))
 
     
     MAX_WORKERS = 40
@@ -160,9 +157,13 @@ def main():
                     days_to_expiry,
                     cert_status
                 )
-                VALUES (%s,%s,%s,%s,%s)
+                SELECT %s,%s,%s,%s,%s
+                WHERE EXISTS (
+                    SELECT 1 FROM scan_results sr
+                    WHERE sr.scan_id = %s AND sr.domain_id = %s
+                )
                 ON CONFLICT (domain_id, scan_id) DO NOTHING
-            """, (domain_id, scan_id, expiry, days, status))
+            """, (domain_id, scan_id, expiry, days, status, scan_id, domain_id))
     
     
     conn.commit()

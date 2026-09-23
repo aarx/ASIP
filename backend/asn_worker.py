@@ -18,10 +18,7 @@ logging.basicConfig(
 )
 
 
-def get_domains(scan_id):
-    conn = get_conn()
-    cur = conn.cursor()
-    require_running_scan(cur, scan_id)
+def get_domains(cur, scan_id):
 
     cur.execute("""
     SELECT DISTINCT ON (d.id) d.id, d.domain, s.ip
@@ -29,6 +26,9 @@ def get_domains(scan_id):
     JOIN domain_states s
       ON d.id = s.domain_id
       AND s.scan_id = %s
+    JOIN scan_results sr
+      ON sr.domain_id = s.domain_id
+      AND sr.scan_id = s.scan_id
     
     LEFT JOIN domain_asn da
       ON d.id = da.domain_id
@@ -40,7 +40,6 @@ def get_domains(scan_id):
     """, (scan_id, scan_id))
 
     rows = cur.fetchall()
-    conn.close()
     return rows
 
 
@@ -60,11 +59,11 @@ def enrich_asn(ip):
 
 def main():
 
-    domains = get_domains(scan_id)
-
     conn = get_conn()
     cur = conn.cursor()
     require_running_scan(cur, scan_id)
+
+    domains = get_domains(cur, scan_id)
 
     for domain_id, domain, ip in domains:
 
@@ -75,9 +74,13 @@ def main():
 
         cur.execute("""
         INSERT INTO domain_asn(domain_id, scan_id, ip, asn, org)
-        VALUES (%s, %s, %s, %s, %s)
+        SELECT %s, %s, %s, %s, %s
+        WHERE EXISTS (
+            SELECT 1 FROM scan_results sr
+            WHERE sr.scan_id = %s AND sr.domain_id = %s
+        )
         ON CONFLICT (domain_id, scan_id) DO NOTHING
-        """, (domain_id, scan_id, ip, asn, org))
+        """, (domain_id, scan_id, ip, asn, org, scan_id, domain_id))
 
     conn.commit()
     conn.close()

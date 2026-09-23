@@ -55,11 +55,15 @@ def main():
     SELECT d.id, d.domain, ds.has_ip
     FROM domains d
 
+    JOIN scan_results sr
+      ON d.id = sr.domain_id
+      AND sr.scan_id = %s
+
     JOIN domain_states ds
       ON d.id = ds.domain_id
       AND ds.scan_id = %s
 
-    """, (scan_id,))
+    """, (scan_id, scan_id))
 
     rows = cur.fetchall()
 
@@ -71,8 +75,24 @@ def main():
 
     processed = 0
     inserted = 0
+    membership_recheck_required = False
 
     for domain_id, domain, has_ip in rows:
+
+        # The original candidate list survives checkpoint commits. Once that
+        # happens, revalidate each remaining candidate before network work.
+        if membership_recheck_required:
+            cur.execute("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM scan_results sr
+                WHERE sr.scan_id = %s
+                AND sr.domain_id = %s
+            )
+            """, (scan_id, domain_id))
+            if not cur.fetchone()[0]:
+                print(f"Skipping non-member DNS candidate: {domain}")
+                continue
 
         print(f"\n🔍 Processing: {domain}")
 
@@ -90,9 +110,18 @@ def main():
 
             cur.execute("""
             INSERT INTO domain_dns(domain_id, scan_id, record_type, value)
-            VALUES (%s, %s, %s, %s)
+            SELECT %s, %s, %s, %s
+            WHERE EXISTS (
+                SELECT 1
+                FROM scan_results sr
+                WHERE sr.scan_id = %s
+                AND sr.domain_id = %s
+            )
             ON CONFLICT DO NOTHING
-            """, (domain_id, scan_id, rtype, value))
+            """, (
+                domain_id, scan_id, rtype, value,
+                scan_id, domain_id,
+            ))
 
             inserted += 1
 
@@ -108,7 +137,15 @@ def main():
                 WHERE domain_id = %s
                 AND scan_id = %s
                 AND has_ip IS NOT TRUE
-                """, (ip, reverse_dns(ip), domain_id, scan_id))
+                AND EXISTS (
+                    SELECT 1
+                    FROM scan_results sr
+                    WHERE sr.scan_id = domain_states.scan_id
+                    AND sr.domain_id = domain_states.domain_id
+                )
+                """, (
+                    ip, reverse_dns(ip), domain_id, scan_id,
+                ))
 
         processed += 1
 
@@ -116,6 +153,7 @@ def main():
         if processed % 50 == 0:
             conn.commit()
             require_running_scan(cur, scan_id)
+            membership_recheck_required = True
             print(f"💾 Checkpoint commit at {processed}")
 
     conn.commit()

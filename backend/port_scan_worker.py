@@ -19,11 +19,7 @@ logging.basicConfig(
 )
 
 
-def get_resolving_domains():
-
-    conn = get_conn()
-    cur = conn.cursor()
-    require_running_scan(cur, scan_id)
+def get_resolving_domains(cur, scan_id):
 
     cur.execute("""
     SELECT DISTINCT ON (d.id) d.id, d.domain
@@ -31,6 +27,9 @@ def get_resolving_domains():
     JOIN domain_states s
       ON d.id = s.domain_id
       AND s.scan_id = %s
+    JOIN scan_results sr
+      ON sr.domain_id = s.domain_id
+      AND sr.scan_id = s.scan_id
     
     LEFT JOIN domain_ports dp
       ON d.id = dp.domain_id
@@ -44,7 +43,6 @@ def get_resolving_domains():
 
     rows = cur.fetchall()
 
-    conn.close()
 
     return rows
 
@@ -101,14 +99,13 @@ def scan_ports(domain):
 
 def main():
 
-    domains = get_resolving_domains()
-    
-    print("Scan ID:", scan_id)              
-    print("Rows to scan:", len(domains))  
-
     conn = get_conn()
     cur = conn.cursor()
     require_running_scan(cur, scan_id)
+
+    domains = get_resolving_domains(cur, scan_id)
+    print("Scan ID:", scan_id)
+    print("Rows to scan:", len(domains))
 
     for domain_id, domain in domains:
     
@@ -123,9 +120,13 @@ def main():
     
             cur.execute("""
             INSERT INTO domain_ports(domain_id, scan_id, port, service)
-            VALUES (%s, %s, %s, %s)
+            SELECT %s, %s, %s, %s
+            WHERE EXISTS (
+                SELECT 1 FROM scan_results sr
+                WHERE sr.scan_id = %s AND sr.domain_id = %s
+            )
             ON CONFLICT (domain_id, port, scan_id) DO NOTHING
-            """, (domain_id, scan_id, port, service))
+            """, (domain_id, scan_id, port, service, scan_id, domain_id))
          
         if not domains:
             print("No domains to scan for this run")

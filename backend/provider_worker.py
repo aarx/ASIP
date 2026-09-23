@@ -76,6 +76,9 @@ def main():
     JOIN domain_asn a
       ON d.id = a.domain_id
       AND a.scan_id = %s
+    JOIN scan_results sr
+      ON sr.domain_id = a.domain_id
+      AND sr.scan_id = a.scan_id
     
     LEFT JOIN domain_provider dp
       ON d.id = dp.domain_id
@@ -95,9 +98,13 @@ def main():
 
         cur.execute("""
         INSERT INTO domain_provider(domain_id, scan_id, provider)
-        VALUES (%s, %s, %s)
+        SELECT %s, %s, %s
+        WHERE EXISTS (
+            SELECT 1 FROM scan_results sr
+            WHERE sr.scan_id = %s AND sr.domain_id = %s
+        )
         ON CONFLICT (domain_id, scan_id) DO NOTHING
-        """, (domain_id, scan_id, provider)) 
+        """, (domain_id, scan_id, provider, scan_id, domain_id))
 
     conn.commit()
     conn.close()

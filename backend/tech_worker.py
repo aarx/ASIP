@@ -116,6 +116,9 @@ def main():
     FROM domains d
     JOIN domain_states s
       ON d.id = s.domain_id
+    JOIN scan_results sr
+      ON sr.domain_id = s.domain_id
+      AND sr.scan_id = s.scan_id
     LEFT JOIN domain_tech dt
       ON d.id = dt.domain_id
       AND dt.scan_id = %s
@@ -155,8 +158,12 @@ def main():
             if not cur.fetchone():
                 cur.execute("""
                 INSERT INTO domain_tech(domain_id, scan_id, tech)
-                VALUES (%s, %s, %s)
-                """, (domain_id, scan_id, tech))
+                SELECT %s, %s, %s
+                WHERE EXISTS (
+                    SELECT 1 FROM scan_results sr
+                    WHERE sr.scan_id = %s AND sr.domain_id = %s
+                )
+                """, (domain_id, scan_id, tech, scan_id, domain_id))
 
     conn.commit()
     conn.close()

@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import importlib.util
 import logging
@@ -14,8 +15,8 @@ from unittest import mock
 
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
-RISK_WORKER_BASELINE_SHA256 = (
-    "cc8c00f619f529356d8d05359225808ac32fafea9a6b7e73842bb4c4f9945b23"
+RISK_COMPUTE_BASELINE_SHA256 = (
+    "c797d4c35687eb5a329393f7d94a54488cdfbd5168a87c1c4845d99ff7c1fa33"
 )
 
 
@@ -317,7 +318,7 @@ class WriterWiringTests(unittest.TestCase):
                 self.assertLess(guard, source.index(mutation))
                 self.assertIn("require_running_scan", source.splitlines()[0:15].__str__())
 
-    def test_split_connection_workers_guard_actual_mutation_connection(self):
+    def test_selection_and_mutation_share_guarded_connection(self):
         for filename, mutation in {
             "cert_worker.py": "INSERT INTO domain_cert(",
             "port_scan_worker.py": "INSERT INTO domain_ports(",
@@ -325,16 +326,14 @@ class WriterWiringTests(unittest.TestCase):
         }.items():
             with self.subTest(filename=filename):
                 source = (BACKEND / filename).read_text(encoding="utf-8")
-                second_connection = source.find(
-                    "conn = get_conn()", source.find("conn = get_conn()") + 1
-                )
-                guard = source.find(
-                    "require_running_scan(cur, scan_id)", second_connection
-                )
+                connection = source.index("conn = get_conn()")
+                self.assertEqual(source.count("conn = get_conn()"), 1)
+                guard = source.index("require_running_scan(cur, scan_id)", connection)
+                selection = source.index("domains = get_", guard)
                 mutation_position = source.index(mutation)
-                self.assertGreater(second_connection, -1)
-                self.assertGreater(guard, second_connection)
-                self.assertLess(guard, mutation_position)
+                self.assertGreater(guard, connection)
+                self.assertLess(guard, selection)
+                self.assertLess(selection, mutation_position)
 
     def test_checkpoint_workers_reacquire_after_commit(self):
         for filename in ("san_worker.py", "dns_worker.py"):
@@ -512,30 +511,51 @@ class FailClosedWriterTests(unittest.TestCase):
         self.assertEqual(len(inserts), 50)
         self.assertEqual(connection.commits, 1)
 
-    def test_certificate_actual_mutation_connection_is_guarded(self):
-        queue = FakeConnection(
-            RecordingCursor(fetchall=[(7, "cert.example", "192.0.2.7", None)])
+    def test_shared_connection_workers_enforce_real_lifecycle_before_selection(self):
+        config = types.ModuleType("config")
+        real_db = load_backend_module(BACKEND / "db.py", {"config": config})
+        cases = (
+            ("cert_worker.py", (7, "cert.example", "192.0.2.7", None),
+             "fetch_cert_expiry", (None, None, "no_cert"), "domain_cert"),
+            ("port_scan_worker.py", (7, "port.example"),
+             "scan_ports", [(443, "https")], "domain_ports"),
+            ("asn_worker.py", (7, "asn.example", "192.0.2.7"),
+             "enrich_asn", ("AS1", "example"), "domain_asn"),
         )
-        mutation = FakeConnection()
-        guard = mock.Mock()
-        fake_db = types.ModuleType("db")
-        fake_db.get_conn = mock.Mock(side_effect=[queue, mutation])
-        fake_db.require_running_scan = guard
-        module = load_backend_module(
-            BACKEND / "cert_worker.py",
-            {"db": fake_db},
-            ["cert_worker.py", "42"],
-        )
-        module.fetch_cert_expiry = lambda domain: (None, None, "no_cert")
-
-        with mock.patch("builtins.print"):
-            module.main()
-
-        guard.assert_any_call(mutation.cursor(), 42)
-        self.assertTrue(any(
-            "INSERT INTO domain_cert" in query
-            for query, _ in mutation.cursor().executions
-        ))
+        for filename, row, observation, result, table in cases:
+            for status in (None, "SUCCEEDED", "FAILED", "UNKNOWN", "RUNNING"):
+                with self.subTest(worker=filename, status=status):
+                    cursor = RecordingCursor(
+                        fetchone=None if status is None else (status,), fetchall=[row]
+                    )
+                    connection = FakeConnection(cursor)
+                    guard = mock.Mock(wraps=real_db.require_running_scan)
+                    fake_db = make_db_module(connection, guard)
+                    module = load_backend_module(
+                        BACKEND / filename, {"db": fake_db}, [filename, "42"]
+                    )
+                    network = mock.Mock(return_value=result)
+                    setattr(module, observation, network)
+                    with mock.patch("builtins.print"):
+                        if status == "RUNNING":
+                            module.main()
+                        else:
+                            with self.assertRaises(real_db.ScanNotRunningError):
+                                module.main()
+                    fake_db.get_conn.assert_called_once_with()
+                    guard.assert_called_once_with(cursor, 42)
+                    self.assertIn("FROM scans", cursor.executions[0][0])
+                    if status == "RUNNING":
+                        self.assertIn("scan_results", cursor.executions[1][0])
+                        self.assertTrue(any(
+                            f"INSERT INTO {table}" in sql for sql, _ in cursor.executions
+                        ))
+                        network.assert_called_once()
+                        self.assertEqual(connection.commits, 1)
+                    else:
+                        self.assertEqual(len(cursor.executions), 1)
+                        network.assert_not_called()
+                        self.assertEqual(connection.commits, 0)
 
     def test_risk_invalid_scan_writes_no_risk_rows(self):
         connection = FakeConnection()
@@ -551,17 +571,17 @@ class FailClosedWriterTests(unittest.TestCase):
 
         self.assertEqual(connection.cursor().executions, [])
 
-    def test_risk_worker_change_is_lifecycle_guard_only(self):
+    def test_risk_scoring_unchanged_and_mutation_is_lifecycle_guarded(self):
         source = (BACKEND / "risk_worker.py").read_text(encoding="utf-8")
-        normalized = source.replace(
-            "from db import get_conn, require_running_scan",
-            "from db import get_conn",
-        ).replace("    require_running_scan(cur, scan_id)\n", "")
-
+        tree = ast.parse(source)
+        compute = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                       and n.name == "compute_risk")
         self.assertEqual(
-            hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
-            RISK_WORKER_BASELINE_SHA256,
+            hashlib.sha256(ast.get_source_segment(source, compute).encode()).hexdigest(),
+            RISK_COMPUTE_BASELINE_SHA256,
         )
+        self.assertLess(source.index("require_running_scan(cur, scan_id)"),
+                        source.index("INSERT INTO domain_risk"))
 
 
 if __name__ == "__main__":

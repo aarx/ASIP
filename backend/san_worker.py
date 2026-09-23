@@ -80,6 +80,9 @@ def main():
     cur.execute("""
     SELECT DISTINCT ON (d.id) d.id, d.domain
     FROM domains d
+    JOIN scan_results sr
+      ON d.id = sr.domain_id
+      AND sr.scan_id = %s
     JOIN domain_states ds
       ON d.id = ds.domain_id
       AND ds.scan_id = %s
@@ -90,7 +93,7 @@ def main():
       
     WHERE dsan.domain_id IS NULL
     ORDER BY d.id, ds.scan_id DESC
-    """, (scan_id, scan_id))
+    """, (scan_id, scan_id, scan_id))
     
     rows = cur.fetchall()
 
@@ -100,6 +103,19 @@ def main():
     new_count = 0
 
     for i, (domain_id, domain) in enumerate(rows, start=1):
+
+        # The candidate list survives checkpoint commits, so prove current-scan
+        # membership again before any global update, network observation, or
+        # scan-scoped write.
+        cur.execute("""
+        SELECT 1
+        FROM scan_results
+        WHERE scan_id = %s
+        AND domain_id = %s
+        """, (scan_id, domain_id))
+        if cur.fetchone() is None:
+            print(f"Skipping non-member SAN parent: {domain}")
+            continue
     
         # classify original domain too
         
@@ -120,9 +136,15 @@ def main():
 
         cur.execute("""
         INSERT INTO domain_san(domain_id, scan_id)
-        VALUES (%s, %s)
+        SELECT %s, %s
+        WHERE EXISTS (
+            SELECT 1
+            FROM scan_results sr
+            WHERE sr.scan_id = %s
+            AND sr.domain_id = %s
+        )
         ON CONFLICT (domain_id, scan_id) DO NOTHING
-        """, (domain_id, scan_id))
+        """, (domain_id, scan_id, scan_id, domain_id))
             
         for san in san_domains:
             san = san.lower().strip()
@@ -189,9 +211,18 @@ def main():
             # add SAN as a source (for attribution)
             cur.execute("""
             INSERT INTO domain_sources(domain_id, scan_id, source, seed)
-            VALUES (%s, %s, %s, %s)
+            SELECT %s, %s, %s, %s
+            WHERE EXISTS (
+                SELECT 1
+                FROM scan_results sr
+                WHERE sr.scan_id = %s
+                AND sr.domain_id = %s
+            )
             ON CONFLICT DO NOTHING
-            """, (new_domain_id, scan_id, "san", domain))                        
+            """, (
+                new_domain_id, scan_id, "san", domain,
+                scan_id, new_domain_id,
+            ))
                         
                         
             # count only if newly inserted

@@ -15,6 +15,9 @@ def main():
     cur.execute("""
         SELECT d.id, d.domain
         FROM domains d
+        JOIN scan_results sr
+          ON d.id = sr.domain_id
+          AND sr.scan_id = %s
         JOIN domain_states ds
           ON d.id = ds.domain_id
           AND ds.scan_id = %s
@@ -28,7 +31,7 @@ def main():
             AND src.scan_id = %s
             AND src.source = 'san'
         )
-    """, (scan_id, scan_id))
+    """, (scan_id, scan_id, scan_id))
 
     rows = cur.fetchall()
     observed = 0
@@ -50,6 +53,12 @@ def main():
             WHERE domain_id = %s
             AND scan_id = %s
             AND COALESCE(http_status, 0) = 0
+            AND EXISTS (
+                SELECT 1
+                FROM scan_results sr
+                WHERE sr.scan_id = domain_states.scan_id
+                AND sr.domain_id = domain_states.domain_id
+            )
         """, (
             http_status,
             200 <= http_status < 600,

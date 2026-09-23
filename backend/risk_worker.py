@@ -108,6 +108,9 @@ def main():
         ), 0) as sensitive_port_score
     
     FROM domains d
+    JOIN scan_results sr
+        ON sr.domain_id = d.id
+        AND sr.scan_id = %s
     
     LEFT JOIN domain_states ds
         ON d.id = ds.domain_id
@@ -127,7 +130,7 @@ def main():
         
     WHERE ds.has_ip = TRUE
     
-    """, (scan_id, scan_id, scan_id, scan_id, scan_id))   
+    """, (scan_id, scan_id, scan_id, scan_id, scan_id, scan_id))
     
     rows = cur.fetchall()
     
@@ -172,12 +175,16 @@ def main():
     
         cur.execute("""
         INSERT INTO domain_risk(domain_id, scan_id, risk_score, reasons)
-        VALUES (%s,%s,%s,%s)
+        SELECT %s,%s,%s,%s
+        WHERE EXISTS (
+            SELECT 1 FROM scan_results sr
+            WHERE sr.scan_id = %s AND sr.domain_id = %s
+        )
         ON CONFLICT(domain_id,scan_id)
         DO UPDATE SET
             risk_score = EXCLUDED.risk_score,
             reasons = EXCLUDED.reasons
-        """, (domain_id, scan_id, risk, reasons))
+        """, (domain_id, scan_id, risk, reasons, scan_id, domain_id))
     
         count += 1
     

@@ -22,22 +22,25 @@ def main():
         http_status,
         http_live
     )
-    SELECT 
-        d.id,
-        %s,
+    SELECT
+        sr.domain_id,
+        sr.scan_id,
         '',
         FALSE,
         0,
         FALSE
-    FROM domains d
+    FROM scan_results sr
+
+    JOIN domains d
+      ON d.id = sr.domain_id
 
     LEFT JOIN domain_states ds
-      ON d.id = ds.domain_id
-      AND ds.scan_id = %s
+      ON sr.domain_id = ds.domain_id
+      AND sr.scan_id = ds.scan_id
 
-    WHERE ds.domain_id IS NULL
-    AND d.last_seen_scan = %s
-    """, (scan_id, scan_id, scan_id))
+    WHERE sr.scan_id = %s
+    AND ds.domain_id IS NULL
+    """, (scan_id,))
 
     inserted = cur.rowcount
 
