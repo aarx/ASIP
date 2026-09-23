@@ -6,16 +6,12 @@ import argparse
 import csv
 import os
 import requests
-import shutil
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from db import get_conn
 from config import CERTSPOTTER_API_KEY
 from http_probe import http_probe
-
-
-if os.path.exists("final_output.csv"):
-    os.remove("final_output.csv")
+from recon_artifact import publish_recon_artifact
 
 
 def debug(msg):
@@ -297,10 +293,10 @@ def load_known():
     return known
 
 
-def main(seed_file, deep, expand):
+def main(seed_file, deep, expand, scan_id):
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    outdir = f"recon_{timestamp}"
+    outdir = f"recon_scan_{scan_id}_{timestamp}"
     os.makedirs(outdir, exist_ok=True)
 
     print("[+] Loading seed domains")
@@ -376,26 +372,23 @@ def main(seed_file, deep, expand):
 
     print(f"[+] Recon output saved → {csv_file}")
 
-    # ⭐ AUTO COPY TO INGEST PATH (DOCKER SAFE)
-    try:
-        os.makedirs("data", exist_ok=True)
-    
-        backend_csv = os.path.join("data", "final_output.csv")
-    
-        shutil.copy2(csv_file, backend_csv)
-    
-        print(f"[+] Latest CSV copied to ingestion path → {backend_csv}")
-    
-    except Exception as e:
-        print(f"[!] Failed to copy CSV → {e}")
+    backend_csv = os.path.join("data", "final_output.csv")
+    publish_recon_artifact(
+        csv_file,
+        backend_csv,
+        scan_id=scan_id,
+        row_count=len(domain_registry),
+    )
+    print(f"[+] Scan {scan_id} artifact published → {backend_csv}")
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("seed_file")
+    parser.add_argument("--scan-id", type=int, required=True)
     parser.add_argument("--deep", action="store_true")
     parser.add_argument("--expand", action="store_true")
 
     args = parser.parse_args()
 
-    main(args.seed_file, args.deep, args.expand)
+    main(args.seed_file, args.deep, args.expand, args.scan_id)

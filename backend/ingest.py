@@ -1,10 +1,13 @@
+import io
 import pandas as pd
 import logging
 import os
 import sys
 from db import get_conn
+from recon_artifact import ReconArtifactError, read_validated_recon_artifact
 
 scan_id = int(sys.argv[1])
+artifact_path = "data/final_output.csv"
 
 os.makedirs("logs", exist_ok=True)
 
@@ -17,10 +20,16 @@ logging.basicConfig(
     ]
 )
 
+manifest, artifact_data = read_validated_recon_artifact(artifact_path, scan_id)
+df = pd.read_csv(io.BytesIO(artifact_data))
+
+if len(df.index) != manifest["row_count"]:
+    raise ReconArtifactError(
+        "Recon artifact row count does not match its manifest"
+    )
+
 conn = get_conn()
 cur = conn.cursor()
-
-df = pd.read_csv("data/final_output.csv")
 
 for _, row in df.iterrows():
 

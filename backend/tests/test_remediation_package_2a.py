@@ -102,6 +102,8 @@ class ScanLifecycleUnitTests(unittest.TestCase):
         module.setup_logging = self.original_setup_logging
         module.run_step = self.original_run_step
         module.mark_scan_terminal = self.original_mark_scan_terminal
+        module.acquire_orchestration_lock = lambda: object()
+        module.release_orchestration_lock = lambda connection: None
 
     def test_new_scan_starts_running_with_no_completed_at(self):
         cursor = RecordingCursor(fetchones=[(42,)])

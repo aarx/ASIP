@@ -6,6 +6,8 @@ import os
 import sys
 from db import get_conn
 
+ASIP_ORCHESTRATION_LOCK_ID = 0x41534950
+
 # -------------------------
 # LOGGING SETUP
 # -------------------------
@@ -23,6 +25,41 @@ def setup_logging(log_file):
         ],
         force=True
     )
+
+
+def acquire_orchestration_lock():
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT pg_try_advisory_lock(%s)",
+            (ASIP_ORCHESTRATION_LOCK_ID,)
+        )
+        locked = bool(cur.fetchone()[0])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+
+    if not locked:
+        conn.close()
+        return None
+
+    return conn
+
+
+def release_orchestration_lock(conn):
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT pg_advisory_unlock(%s)",
+            (ASIP_ORCHESTRATION_LOCK_ID,)
+        )
+        cur.fetchone()
+        conn.commit()
+    finally:
+        conn.close()
 
 # -------------------------
 # CREATE SCAN
@@ -117,7 +154,7 @@ def run_step(name, cmd):
 # -------------------------
 # MAIN PIPELINE
 # -------------------------
-def main():
+def run_pipeline():
 
     pipeline_start = time.time()
 
@@ -125,7 +162,7 @@ def main():
     
     pipeline = [
         # ENTRY
-        ("Recon", "python -u recon.py --expand seeds.txt"),
+        ("Recon", f"python -u recon.py --scan-id {scan_id} --expand seeds.txt"),
         ("Ingest", f"python -u ingest.py {scan_id}"),
 
         # EXPANSION
@@ -200,6 +237,24 @@ def main():
     logging.info("ASM Scan Completed Successfully")
     logging.info(f"Scan ID : {scan_id}")
     logging.info("=" * 70)
+
+
+def main():
+    lock_conn = acquire_orchestration_lock()
+
+    if lock_conn is None:
+        logging.error(
+            "Another ASIP orchestration pipeline is already running; exiting"
+        )
+        sys.exit(1)
+
+    try:
+        run_pipeline()
+    finally:
+        try:
+            release_orchestration_lock(lock_conn)
+        except Exception:
+            logging.exception("Failed to explicitly release orchestration lock")
 
 
 # -------------------------
