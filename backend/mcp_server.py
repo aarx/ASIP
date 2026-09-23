@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 import os
-from db import get_conn
+from db import get_conn, get_latest_authoritative_scan_id
 
 app = FastAPI(title="ASM MCP Server")
 
@@ -13,8 +13,7 @@ def get_summary():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(scan_id) FROM domain_states")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT COUNT(*)
@@ -49,8 +48,7 @@ def get_shadow_assets():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(scan_id) FROM domain_states")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT d.domain, ds.ip
@@ -121,15 +119,15 @@ def get_findings():
     conn = get_conn()
     cur = conn.cursor()
 
+    scan_id = get_latest_authoritative_scan_id(cur)
+
     cur.execute("""
         SELECT d.domain, f.finding
         FROM domain_findings f
         JOIN domains d ON d.id = f.domain_id
-        WHERE f.scan_id = (
-            SELECT MAX(scan_id) FROM domain_findings
-        )
+        WHERE f.scan_id = %s
         LIMIT 50
-    """)
+    """, (scan_id,))
 
     rows = cur.fetchall()
     conn.close()

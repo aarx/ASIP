@@ -365,7 +365,8 @@ CREATE TABLE public.scans (
     scan_time timestamp without time zone DEFAULT now(),
     seed text,
     started_at timestamp without time zone,
-    completed_at timestamp without time zone
+    completed_at timestamp without time zone,
+    status text DEFAULT 'UNKNOWN'::text NOT NULL
 );
 
 
@@ -587,6 +588,22 @@ ALTER TABLE ONLY public.scans
 
 
 --
+-- Name: scans scans_status_check; Type: CHECK CONSTRAINT; Schema: public; Owner: asm
+--
+
+ALTER TABLE ONLY public.scans
+    ADD CONSTRAINT scans_status_check CHECK ((status = ANY (ARRAY['UNKNOWN'::text, 'RUNNING'::text, 'SUCCEEDED'::text, 'FAILED'::text])));
+
+
+--
+-- Name: scans scans_status_completed_at_check; Type: CHECK CONSTRAINT; Schema: public; Owner: asm
+--
+
+ALTER TABLE ONLY public.scans
+    ADD CONSTRAINT scans_status_completed_at_check CHECK (((status = 'UNKNOWN'::text) OR ((status = 'RUNNING'::text) AND (completed_at IS NULL)) OR ((status = ANY (ARRAY['SUCCEEDED'::text, 'FAILED'::text])) AND (completed_at IS NOT NULL))));
+
+
+--
 -- Name: seed_domains seed_domains_domain_key; Type: CONSTRAINT; Schema: public; Owner: asm
 --
 
@@ -707,6 +724,13 @@ CREATE INDEX idx_domains_domain ON public.domains USING btree (domain);
 --
 
 CREATE INDEX idx_known_domains_domain ON public.known_domains USING btree (domain);
+
+
+--
+-- Name: idx_scans_succeeded_id_desc; Type: INDEX; Schema: public; Owner: asm
+--
+
+CREATE INDEX idx_scans_succeeded_id_desc ON public.scans USING btree (id DESC) WHERE (status = 'SUCCEEDED'::text);
 
 
 --

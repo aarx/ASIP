@@ -1,5 +1,7 @@
 # 🔒 Sensitive / heavy
 *.sql
+!backend/migrations/
+!backend/migrations/*.sql
 *.dump
 backend/logs/
 

@@ -11,7 +11,7 @@ import re
 from datetime import datetime
 from llm_service import ask_llm
 from urllib.parse import urlparse
-from db import get_conn
+from db import get_conn, get_latest_authoritative_scan_id
 
 os.makedirs("logs", exist_ok=True)
 
@@ -40,9 +40,7 @@ def summary():
     cur.execute("SELECT COUNT(*) FROM domains")
     total_domains = cur.fetchone()[0]
 
-    # latest scan
-    cur.execute("SELECT MAX(scan_id) FROM domain_states")
-    latest_scan = cur.fetchone()[0]
+    latest_scan = get_latest_authoritative_scan_id(cur)
 
     # domains resolving in latest scan
     cur.execute("""
@@ -134,9 +132,7 @@ def http_status():
     conn = get_conn()
     cur = conn.cursor()
 
-    # get latest scan
-    cur.execute("SELECT MAX(id) FROM scans")
-    latest = cur.fetchone()[0]
+    latest = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
     SELECT
@@ -176,8 +172,7 @@ def sources():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    latest = cur.fetchone()[0]
+    latest = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT seed, COUNT(*)
@@ -202,8 +197,7 @@ def seeds():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    latest = cur.fetchone()[0]
+    latest = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT seed, COUNT(domain_id)
@@ -228,8 +222,7 @@ def assets():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    latest = cur.fetchone()[0]
+    latest = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT 
@@ -274,14 +267,11 @@ def new_domains():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    row = cur.fetchone()
+    latest_scan = get_latest_authoritative_scan_id(cur)
 
-    if not row or row[0] is None:
+    if latest_scan is None:
         conn.close()
         return {"latest_scan": None, "new_domains": []}
-
-    latest_scan = row[0]
 
     cur.execute("""
         SELECT d.domain
@@ -378,8 +368,7 @@ def exposure_summary():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    latest = cur.fetchone()[0]
+    latest = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT COUNT(*)
@@ -611,12 +600,7 @@ def risky_domains():
     # Latest scan
     # --------------------------------------------------
 
-    cur.execute("""
-        SELECT MAX(scan_id)
-        FROM domain_states
-    """)
-
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
     if scan_id is None:
         conn.close()
@@ -919,8 +903,7 @@ def sensitive_exposure():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(scan_id) FROM domain_ports")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT 
@@ -958,9 +941,7 @@ def hygiene_score():
     conn = get_conn()
     cur = conn.cursor()
 
-    # latest scan with domain_states
-    cur.execute("SELECT MAX(scan_id) FROM domain_states")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
 
@@ -1040,8 +1021,7 @@ def provider_clusters():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(scan_id) FROM domain_provider")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT 
@@ -1074,9 +1054,7 @@ def shadow_assets():
     conn = get_conn()
     cur = conn.cursor()
 
-    # latest scan ids
-    cur.execute("SELECT MAX(scan_id) FROM domain_states")
-    state_scan = cur.fetchone()[0]
+    state_scan = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT
@@ -1155,9 +1133,7 @@ def risk_leaderboard():
     conn = get_conn()
     cur = conn.cursor()
 
-    # latest scan
-    cur.execute("SELECT MAX(id) FROM scans")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
     query = """
     SELECT d.domain, dr.risk_score, dr.reasons
@@ -1199,13 +1175,11 @@ def domain_detail(domain_name: str):
     conn = get_conn()
     cur = conn.cursor()
 
-    # latest scan id
-    cur.execute("SELECT MAX(id) FROM scans")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
-    if not scan_id:
+    if scan_id is None:
         conn.close()
-        return {"error": "no scans yet"}
+        return {"error": "no authoritative scan yet"}
 
     # domain basic
     cur.execute("""
@@ -1442,6 +1416,12 @@ def export_targets():
     conn = get_conn()
     cur = conn.cursor()
 
+    scan_id = get_latest_authoritative_scan_id(cur)
+
+    if scan_id is None:
+        conn.close()
+        return []
+
     cur.execute("""
         SELECT 
             d.domain,
@@ -1459,11 +1439,11 @@ def export_targets():
             ON d.id = da.domain_id
         LEFT JOIN domain_provider pr 
             ON d.id = pr.domain_id
-        WHERE ds.scan_id = (SELECT MAX(id) FROM scans)
+        WHERE ds.scan_id = %s
         GROUP BY d.domain, ds.ip, ds.http_live, da.asn, pr.provider
         ORDER BY open_ports DESC
         LIMIT 500
-    """)
+    """, (scan_id,))
 
     rows = cur.fetchall()
 
@@ -1497,9 +1477,31 @@ def export_enriched_csv():
     conn = get_conn()
     cur = conn.cursor()
 
-    # latest scan
-    cur.execute("SELECT MAX(id) FROM scans")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
+
+    if scan_id is None:
+        columns = [
+            "Domain", "Is Known", "First Seen", "Last Seen",
+            "first_seen_at", "last_seen_at", "IP", "HTTP Status",
+            "Reverse DNS", "Final URL", "Title", "Provider", "ASN",
+            "Risk Score", "Reasons", "Cert Status", "Days to Expiry",
+            "scannable", "confidence_score", "confidence_label",
+            "confidence_reasons", "Open Ports", "Tech",
+            "Redirect Category", "Sensitive Ports", "Shadow Type",
+            "Exposure"
+        ]
+        stream = io.StringIO()
+        pd.DataFrame(columns=columns).to_csv(stream, index=False)
+        conn.close()
+
+        response = StreamingResponse(
+            iter([stream.getvalue()]),
+            media_type="text/csv"
+        )
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        response.headers["Content-Disposition"] = \
+            f"attachment; filename=asm_scan_none_{timestamp}.csv"
+        return response
 
     query = """
     SELECT 
@@ -1746,9 +1748,16 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
     conn = get_conn()
     cur = conn.cursor()
 
-    # latest scan id
-    cur.execute("SELECT MAX(id) FROM scans")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
+
+    if scan_id is None:
+        conn.close()
+        return {
+            "page": page,
+            "limit": limit,
+            "count": 0,
+            "assets": []
+        }
 
     query = """
     SELECT 
@@ -1844,9 +1853,7 @@ def findings():
     conn = get_conn()
     cur = conn.cursor()
 
-    # latest scan
-    cur.execute("SELECT MAX(id) FROM scans")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT 
@@ -1885,6 +1892,8 @@ def cert_expiry():
     conn = get_conn()
     cur = conn.cursor()
 
+    scan_id = get_latest_authoritative_scan_id(cur)
+
     cur.execute("""
         SELECT 
             d.domain,
@@ -1893,10 +1902,10 @@ def cert_expiry():
             dc.cert_status
         FROM domain_cert dc
         JOIN domains d ON d.id = dc.domain_id
-        WHERE dc.scan_id = (SELECT MAX(id) FROM scans)
+        WHERE dc.scan_id = %s
         ORDER BY dc.days_to_expiry ASC NULLS LAST
         LIMIT 50
-    """)
+    """, (scan_id,))
 
     rows = cur.fetchall()
     conn.close()
@@ -1917,9 +1926,7 @@ def shadow_summary():
     conn = get_conn()
     cur = conn.cursor()
 
-    # latest scan
-    cur.execute("SELECT MAX(scan_id) FROM domain_states")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT 
@@ -1952,9 +1959,7 @@ def shadow_by_provider():
     conn = get_conn()
     cur = conn.cursor()
 
-    # latest scan
-    cur.execute("SELECT MAX(scan_id) FROM domain_states")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT 
@@ -1979,8 +1984,7 @@ def non_web_summary():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(scan_id) FROM domain_states")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT 
@@ -2017,9 +2021,7 @@ def unknown_high_risk():
     conn = get_conn()
     cur = conn.cursor()
 
-    # latest scan
-    cur.execute("SELECT MAX(scan_id) FROM domain_states")
-    scan_id = cur.fetchone()[0]
+    scan_id = get_latest_authoritative_scan_id(cur)
 
     cur.execute("""
         SELECT d.domain, dr.risk_score

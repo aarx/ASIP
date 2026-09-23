@@ -17,6 +17,17 @@ def load_backend_module(filename, argv=None, extra_modules=None):
     module = importlib.util.module_from_spec(spec)
     fake_db = types.ModuleType("db")
     fake_db.get_conn = lambda: None
+    def get_latest_authoritative_scan_id(cursor):
+        cursor.execute("""
+            SELECT id
+            FROM scans
+            WHERE status = 'SUCCEEDED'
+            ORDER BY id DESC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+        return row[0] if row else None
+    fake_db.get_latest_authoritative_scan_id = get_latest_authoritative_scan_id
     replacements = {"db": fake_db}
     replacements.update(extra_modules or {})
 
@@ -265,7 +276,10 @@ class ApiAndWorkerRegressionTests(unittest.TestCase):
         self.assertEqual(params, (42,))
 
     def test_mcp_findings_uses_finding_column_and_preserves_issue_key(self):
-        cursor = RecordingCursor(fetchalls=[[('asset.example', 'dangling_dns')]])
+        cursor = RecordingCursor(
+            fetchones=[(42,)],
+            fetchalls=[[('asset.example', 'dangling_dns')]]
+        )
         connection = FakeConnection(cursor)
         self.mcp.get_conn = lambda: connection
 
@@ -275,8 +289,8 @@ class ApiAndWorkerRegressionTests(unittest.TestCase):
             "domain": "asset.example",
             "issue": "dangling_dns"
         }])
-        self.assertIn("f.finding", cursor.executions[0][0])
-        self.assertNotIn("f.issue", cursor.executions[0][0])
+        self.assertIn("f.finding", cursor.executions[1][0])
+        self.assertNotIn("f.issue", cursor.executions[1][0])
 
     def test_ssl_guide_normalizes_to_existing_ssl_issue_guide(self):
         result = self.mcp.investigation_guide("ssl")

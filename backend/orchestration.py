@@ -29,19 +29,50 @@ def setup_logging(log_file):
 # -------------------------
 def create_scan():
     conn = get_conn()
-    cur = conn.cursor()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+        INSERT INTO scans(started_at, completed_at, status)
+        VALUES (NOW(), NULL, 'RUNNING')
+        RETURNING id
+        """)
+        scan_id = cur.fetchone()[0]
+        conn.commit()
+        return scan_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
-    cur.execute("""
-    INSERT INTO scans(started_at)
-    VALUES (NOW())
-    RETURNING id
-    """)
 
-    scan_id = cur.fetchone()[0]
-    conn.commit()
-    conn.close()
+def mark_scan_terminal(scan_id, status):
+    if status not in {"SUCCEEDED", "FAILED"}:
+        raise ValueError(f"Invalid terminal scan status: {status}")
 
-    return scan_id
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE scans
+        SET status = %s,
+            completed_at = NOW()
+        WHERE id = %s
+        AND status = 'RUNNING'
+        RETURNING id
+        """, (status, scan_id))
+
+        if cur.fetchone() is None:
+            raise RuntimeError(
+                f"Scan {scan_id} did not transition from RUNNING to {status}"
+            )
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 # -------------------------
 # RUN STEP
@@ -92,19 +123,6 @@ def main():
 
     scan_id = create_scan()
     
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    log_file = f"logs/{timestamp}_scan_{scan_id}.log"
-    
-    setup_logging(log_file)
-    logging.info(f"Scan Created: {scan_id}")
-    
-    logging.info("=" * 70)
-    logging.info("ASM Scan Started")
-    logging.info(f"Scan ID  : {scan_id}")
-    logging.info(f"Log File : {log_file}")
-    logging.info("=" * 70)  
-
     pipeline = [
         # ENTRY
         ("Recon", "python -u recon.py --expand seeds.txt"),
@@ -136,30 +154,19 @@ def main():
     ]
 
     try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = f"logs/{timestamp}_scan_{scan_id}.log"
+
+        setup_logging(log_file)
+        logging.info(f"Scan Created: {scan_id}")
+        logging.info("=" * 70)
+        logging.info("ASM Scan Started")
+        logging.info(f"Scan ID  : {scan_id}")
+        logging.info(f"Log File : {log_file}")
+        logging.info("=" * 70)
+
         for name, cmd in pipeline:
             run_step(name, cmd)
-
-        # mark complete
-        conn = get_conn()
-        cur = conn.cursor()
-
-        cur.execute("""
-        UPDATE scans
-        SET completed_at = NOW()
-        WHERE id = %s
-        """, (scan_id,))
-
-        conn.commit()
-        conn.close()
-        
-        duration = round(time.time() - pipeline_start, 2)
-        logging.info(f"Total Duration : {duration} seconds")
-        logging.info(f"Completed At : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-        logging.info("=" * 70)
-        logging.info("ASM Scan Completed Successfully")
-        logging.info(f"Scan ID : {scan_id}")
-        logging.info("=" * 70)
 
     except Exception as e:
         logging.error(f"PIPELINE FAILED for scan_id={scan_id}")
@@ -167,27 +174,32 @@ def main():
         logging.error("ASM Scan Failed")
         duration = round(time.time() - pipeline_start, 2)
         logging.error(f"Total Duration : {duration} seconds")
-        logging.error(f"Completed At : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logging.error(f"Failure Detected At : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logging.error(f"Scan ID : {scan_id}")
         logging.error("=" * 70)
 
-        # optional: mark failed
         try:
-            conn = get_conn()
-            cur = conn.cursor()
-
-            cur.execute("""
-            UPDATE scans
-            SET completed_at = NOW()
-            WHERE id = %s
-            """, (scan_id,))
-
-            conn.commit()
-            conn.close()
-        except:
-            logging.error("Failed to update scan status in DB")
+            mark_scan_terminal(scan_id, "FAILED")
+        except Exception:
+            logging.exception("Failed to persist FAILED scan status")
 
         sys.exit(1)
+
+    try:
+        mark_scan_terminal(scan_id, "SUCCEEDED")
+    except Exception:
+        logging.exception(
+            "All required stages completed, but SUCCEEDED status could not be persisted"
+        )
+        sys.exit(1)
+
+    duration = round(time.time() - pipeline_start, 2)
+    logging.info(f"Total Duration : {duration} seconds")
+    logging.info(f"Completed At : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logging.info("=" * 70)
+    logging.info("ASM Scan Completed Successfully")
+    logging.info(f"Scan ID : {scan_id}")
+    logging.info("=" * 70)
 
 
 # -------------------------
