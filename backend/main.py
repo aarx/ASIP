@@ -504,13 +504,16 @@ def exposure_trend():
 
     cur.execute("""
         SELECT
-            scan_id,
+            ds.scan_id,
             COUNT(*) AS total,
             SUM(CASE WHEN has_ip THEN 1 ELSE 0 END) AS resolving,
             SUM(CASE WHEN http_live THEN 1 ELSE 0 END) AS http_live
-        FROM domain_states
-        GROUP BY scan_id
-        ORDER BY scan_id
+        FROM domain_states ds
+        JOIN scans s
+          ON s.id = ds.scan_id
+        WHERE s.status = 'SUCCEEDED'
+        GROUP BY ds.scan_id
+        ORDER BY ds.scan_id
     """)
 
     rows = cur.fetchall()
@@ -534,7 +537,17 @@ def volatile_domains():
     cur = conn.cursor()
 
     cur.execute("""
-        WITH ordered AS (
+        WITH authoritative_states AS (
+            SELECT
+                ds.domain_id,
+                ds.scan_id,
+                ds.has_ip
+            FROM domain_states ds
+            JOIN scans s
+              ON s.id = ds.scan_id
+            WHERE s.status = 'SUCCEEDED'
+        ),
+        ordered AS (
             SELECT
                 domain_id,
                 scan_id,
@@ -543,7 +556,7 @@ def volatile_domains():
                     PARTITION BY domain_id
                     ORDER BY scan_id
                 ) AS prev_state
-            FROM domain_states
+            FROM authoritative_states
         )
         SELECT
             d.domain,
@@ -638,10 +651,17 @@ def risky_domains():
     # --------------------------------------------------
 
     cur.execute("""
-        SELECT
-            domain_id,
-            COUNT(*) AS flips
-        FROM (
+        WITH authoritative_states AS (
+            SELECT
+                ds.domain_id,
+                ds.scan_id,
+                ds.has_ip
+            FROM domain_states ds
+            JOIN scans s
+              ON s.id = ds.scan_id
+            WHERE s.status = 'SUCCEEDED'
+        ),
+        ordered AS (
             SELECT
                 domain_id,
                 has_ip,
@@ -649,8 +669,12 @@ def risky_domains():
                     PARTITION BY domain_id
                     ORDER BY scan_id
                 ) AS prev_state
-            FROM domain_states
-        ) t
+            FROM authoritative_states
+        )
+        SELECT
+            domain_id,
+            COUNT(*) AS flips
+        FROM ordered
         WHERE prev_state IS NOT NULL
           AND prev_state != has_ip
         GROUP BY domain_id
@@ -2603,6 +2627,11 @@ def asset_growth():
 
         JOIN domains d
             ON ds.domain_id = d.id
+
+        JOIN scans s
+            ON s.id = ds.scan_id
+
+        WHERE s.status = 'SUCCEEDED'
 
         GROUP BY ds.scan_id
         ORDER BY ds.scan_id

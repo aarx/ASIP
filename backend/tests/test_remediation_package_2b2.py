@@ -1,6 +1,7 @@
-"""Package 2B2-A REST current-snapshot isolation regression tests."""
+"""Package 2B2 REST scan-isolation regression tests."""
 
 import importlib.util
+import inspect
 import logging
 import pathlib
 import sys
@@ -208,6 +209,168 @@ class FakeConnection:
         self.closed = True
 
 
+class HistoricalCursor:
+    def __init__(self):
+        self.statuses = {
+            19: "UNKNOWN",
+            20: "SUCCEEDED",
+            21: "FAILED",
+            22: "SUCCEEDED",
+            23: "RUNNING",
+            24: "SUCCEEDED",
+        }
+        self.domains = {
+            1: {"name": "stable.example.test", "is_known": False},
+            2: {"name": "changed.example.test", "is_known": True},
+        }
+        self.states = [
+            {"domain_id": 1, "scan_id": 19, "has_ip": False, "http_live": False},
+            {"domain_id": 1, "scan_id": 20, "has_ip": True, "http_live": True},
+            {"domain_id": 1, "scan_id": 21, "has_ip": False, "http_live": False},
+            {"domain_id": 1, "scan_id": 22, "has_ip": True, "http_live": True},
+            {"domain_id": 1, "scan_id": 23, "has_ip": False, "http_live": False},
+            {"domain_id": 1, "scan_id": 24, "has_ip": True, "http_live": True},
+            {"domain_id": 2, "scan_id": 19, "has_ip": False, "http_live": False},
+            {"domain_id": 2, "scan_id": 20, "has_ip": True, "http_live": False},
+            {"domain_id": 2, "scan_id": 21, "has_ip": True, "http_live": False},
+            {"domain_id": 2, "scan_id": 22, "has_ip": False, "http_live": False},
+            {"domain_id": 2, "scan_id": 23, "has_ip": True, "http_live": True},
+            {"domain_id": 2, "scan_id": 24, "has_ip": False, "http_live": False},
+        ]
+        self.executions = []
+        self.result = None
+
+    @staticmethod
+    def normalize(sql):
+        return " ".join(sql.lower().split())
+
+    def execute(self, sql, params=None):
+        self.executions.append((sql, params))
+        normalized = self.normalize(sql)
+
+        if "from scans" in normalized:
+            successful = [
+                scan_id for scan_id, status in self.statuses.items()
+                if status == "SUCCEEDED"
+            ]
+            self.result = (max(successful),) if successful else None
+            return
+
+        if "as total_assets" in normalized:
+            self.assert_succeeded_history(normalized)
+            assert "d.is_known = false" in normalized
+            self.result = self.asset_growth_rows()
+            return
+
+        if "as resolving" in normalized and "as http_live" in normalized:
+            self.assert_succeeded_history(normalized)
+            self.result = self.exposure_rows()
+            return
+
+        if "as volatility_score" in normalized:
+            self.assert_authoritative_window(normalized)
+            self.result = [
+                (self.domains[domain_id]["name"], flips)
+                for domain_id, flips in self.volatility_rows()
+            ]
+            return
+
+        if "count(*) as flips" in normalized:
+            self.assert_authoritative_window(normalized)
+            self.result = self.volatility_rows()
+            return
+
+        if "d.first_seen_scan" in normalized:
+            self.result = []
+            return
+
+        if "count(distinct dp.port)" in normalized:
+            self.result = []
+            return
+
+        if "from domain_provider" in normalized:
+            self.result = []
+            return
+
+        if "from domain_findings" in normalized:
+            self.result = []
+            return
+
+        raise AssertionError(f"Unexpected SQL in Package 2B2-B test: {normalized}")
+
+    @staticmethod
+    def assert_succeeded_history(sql):
+        assert "join scans s" in sql
+        assert "s.id = ds.scan_id" in sql
+        assert "s.status = 'succeeded'" in sql
+
+    @staticmethod
+    def assert_authoritative_window(sql):
+        status_position = sql.index("s.status = 'succeeded'")
+        lag_position = sql.index("lag(")
+        assert "with authoritative_states as" in sql
+        assert "from authoritative_states" in sql
+        assert status_position < lag_position
+
+    def successful_scan_ids(self):
+        return sorted(
+            scan_id for scan_id, status in self.statuses.items()
+            if status == "SUCCEEDED"
+        )
+
+    def exposure_rows(self):
+        rows = []
+        for scan_id in self.successful_scan_ids():
+            states = [row for row in self.states if row["scan_id"] == scan_id]
+            rows.append((
+                scan_id,
+                len(states),
+                sum(row["has_ip"] for row in states),
+                sum(row["http_live"] for row in states),
+            ))
+        return rows
+
+    def asset_growth_rows(self):
+        rows = []
+        for scan_id in self.successful_scan_ids():
+            states = [row for row in self.states if row["scan_id"] == scan_id]
+            rows.append((
+                scan_id,
+                len(states),
+                sum(row["has_ip"] for row in states),
+                sum(
+                    row["has_ip"] and not self.domains[row["domain_id"]]["is_known"]
+                    for row in states
+                ),
+            ))
+        return rows
+
+    def volatility_rows(self):
+        rows = []
+        successful = set(self.successful_scan_ids())
+        for domain_id in self.domains:
+            history = sorted(
+                (
+                    row for row in self.states
+                    if row["domain_id"] == domain_id and row["scan_id"] in successful
+                ),
+                key=lambda row: row["scan_id"],
+            )
+            flips = sum(
+                previous["has_ip"] != current["has_ip"]
+                for previous, current in zip(history, history[1:])
+            )
+            if flips:
+                rows.append((domain_id, flips))
+        return sorted(rows, key=lambda row: -row[1])
+
+    def fetchone(self):
+        return self.result
+
+    def fetchall(self):
+        return self.result
+
+
 class CurrentSnapshotIsolationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -300,6 +463,110 @@ class CurrentSnapshotIsolationTests(unittest.TestCase):
 
         self.assertEqual(response, [])
         self.assertEqual(len(cursor.executions), 1)
+
+
+class AuthoritativeHistoryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        fake_config = types.SimpleNamespace(
+            DB_HOST="unused", DB_NAME="unused", DB_USER="unused", DB_PASSWORD="unused"
+        )
+        cls.db = load_module(BACKEND / "db.py", {"config": fake_config})
+        fake_db = types.ModuleType("db")
+        fake_db.get_conn = lambda: None
+        fake_db.get_latest_authoritative_scan_id = cls.db.get_latest_authoritative_scan_id
+        fake_db.get_previous_authoritative_scan_id = cls.db.get_previous_authoritative_scan_id
+        fake_llm = types.ModuleType("llm_service")
+        fake_llm.ask_llm = lambda prompt: "unused"
+        cls.main = load_module(BACKEND / "main.py", {
+            "db": fake_db, "llm_service": fake_llm,
+        })
+
+    def run_endpoint(self, endpoint):
+        cursor = HistoricalCursor()
+        connection = FakeConnection(cursor)
+        self.main.get_conn = lambda: connection
+        response = getattr(self.main, endpoint)()
+        self.assertTrue(connection.closed)
+        return response, cursor
+
+    def test_exposure_trend_keeps_only_successful_snapshots(self):
+        response, cursor = self.run_endpoint("exposure_trend")
+
+        self.assertEqual(response, [
+            {"scan_id": 20, "total": 2, "resolving": 2, "http_live": 1},
+            {"scan_id": 22, "total": 2, "resolving": 1, "http_live": 1},
+            {"scan_id": 24, "total": 2, "resolving": 1, "http_live": 1},
+        ])
+        self.assertEqual(len(cursor.executions), 1)
+
+    def test_asset_growth_keeps_successes_and_global_known_semantics(self):
+        response, cursor = self.run_endpoint("asset_growth")
+
+        self.assertEqual(response, [
+            {"scan_id": 20, "total": 2, "live": 2, "shadow": 1},
+            {"scan_id": 22, "total": 2, "live": 1, "shadow": 1},
+            {"scan_id": 24, "total": 2, "live": 1, "shadow": 1},
+        ])
+        sql = HistoricalCursor.normalize(cursor.executions[0][0])
+        self.assertIn("d.is_known = false", sql)
+
+    def test_volatile_domains_filters_before_lag(self):
+        response, cursor = self.run_endpoint("volatile_domains")
+
+        self.assertEqual(response, [
+            {"domain": "changed.example.test", "volatility_score": 1},
+        ])
+        sql = HistoricalCursor.normalize(cursor.executions[0][0])
+        self.assertLess(sql.index("s.status = 'succeeded'"), sql.index("lag("))
+
+    def test_risky_domains_volatility_filters_before_lag(self):
+        response, cursor = self.run_endpoint("risky_domains")
+
+        self.assertEqual(response, [])
+        volatility_sql = next(
+            HistoricalCursor.normalize(sql)
+            for sql, _ in cursor.executions
+            if "COUNT(*) AS flips" in sql
+        )
+        self.assertLess(
+            volatility_sql.index("s.status = 'succeeded'"),
+            volatility_sql.index("lag("),
+        )
+
+    def test_risky_domains_scoring_model_is_unchanged(self):
+        source = inspect.getsource(self.main.risky_domains)
+
+        reason_weights = {
+            "new_asset": 3,
+            "http_exposed": 1,
+            "resolves_no_http": 1,
+            "sensitive_ports": 3,
+            "many_ports": 1,
+            "shadow_asset": 2,
+            "cloud": 1,
+            "ip_state_volatility": 3,
+            "finding": 3,
+            "high_finding": 2,
+        }
+        for reason, weight in reason_weights.items():
+            with self.subTest(reason=reason):
+                self.assertRegex(
+                    source,
+                    rf"score \+= {weight}\s+reasons\.append\(\"{reason}\"\)",
+                )
+
+        self.assertRegex(source, r"if asset_keywords:\s+score \+= 1")
+        self.assertIn("if flips >= 2:", source)
+        self.assertIn('reasons.append(\n                "asset_exposure:"', source)
+        self.assertRegex(
+            source,
+            r'if score >= 8:\s+priority = "High"\s+'
+            r'elif score >= 6:\s+priority = "Elevated"\s+'
+            r'elif score >= 4:\s+priority = "Review"\s+'
+            r'else:\s+priority = "Low"',
+        )
+        self.assertIn("return results[:100]", source)
 
 
 if __name__ == "__main__":
