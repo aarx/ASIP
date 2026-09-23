@@ -11,7 +11,7 @@ import re
 from datetime import datetime
 from llm_service import ask_llm
 from urllib.parse import urlparse
-from db import get_conn, get_latest_authoritative_scan_id
+from db import get_conn, get_latest_authoritative_scan_id, get_previous_authoritative_scan_id
 
 os.makedirs("logs", exist_ok=True)
 
@@ -299,10 +299,16 @@ def disappeared():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    latest = cur.fetchone()[0]
+    current = get_latest_authoritative_scan_id(cur)
+    previous = get_previous_authoritative_scan_id(cur, current)
 
-    previous = latest - 1
+    if previous is None:
+        conn.close()
+        return {
+            "from_scan": None,
+            "to_scan": current,
+            "disappeared_domains": []
+        }
 
     cur.execute("""
         SELECT d.domain
@@ -316,7 +322,7 @@ def disappeared():
             WHERE scan_id = %s
         )
         LIMIT 100
-    """, (previous, latest))
+    """, (previous, current))
 
     rows = cur.fetchall()
 
@@ -324,7 +330,7 @@ def disappeared():
 
     return {
         "from_scan": previous,
-        "to_scan": latest,
+        "to_scan": current,
         "disappeared_domains": [r[0] for r in rows]
     }
 
@@ -334,10 +340,16 @@ def new_domains_delta():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    latest = cur.fetchone()[0]
+    current = get_latest_authoritative_scan_id(cur)
+    previous = get_previous_authoritative_scan_id(cur, current)
 
-    previous = latest - 1
+    if previous is None:
+        conn.close()
+        return {
+            "from_scan": None,
+            "to_scan": current,
+            "new_domains": []
+        }
 
     cur.execute("""
         SELECT d.domain
@@ -351,7 +363,7 @@ def new_domains_delta():
             WHERE scan_id = %s
         )
         LIMIT 100
-    """, (latest, previous))
+    """, (current, previous))
 
     rows = cur.fetchall()
 
@@ -359,7 +371,7 @@ def new_domains_delta():
 
     return {
         "from_scan": previous,
-        "to_scan": latest,
+        "to_scan": current,
         "new_domains": [r[0] for r in rows]
     }
 @app.get("/exposure-summary")
@@ -408,9 +420,16 @@ def newly_live():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    latest = cur.fetchone()[0]
-    previous = latest - 1
+    current = get_latest_authoritative_scan_id(cur)
+    previous = get_previous_authoritative_scan_id(cur, current)
+
+    if previous is None:
+        conn.close()
+        return {
+            "from_scan": None,
+            "to_scan": current,
+            "newly_live_domains": []
+        }
 
     cur.execute("""
         SELECT d.domain
@@ -424,7 +443,7 @@ def newly_live():
         AND s1.has_ip = FALSE
         AND s2.has_ip = TRUE
         LIMIT 100
-    """, (previous, latest))
+    """, (previous, current))
 
     rows = cur.fetchall()
 
@@ -432,7 +451,7 @@ def newly_live():
 
     return {
         "from_scan": previous,
-        "to_scan": latest,
+        "to_scan": current,
         "newly_live_domains": [r[0] for r in rows]
     }
 
@@ -442,9 +461,16 @@ def newly_dead():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    latest = cur.fetchone()[0]
-    previous = latest - 1
+    current = get_latest_authoritative_scan_id(cur)
+    previous = get_previous_authoritative_scan_id(cur, current)
+
+    if previous is None:
+        conn.close()
+        return {
+            "from_scan": None,
+            "to_scan": current,
+            "newly_dead_domains": []
+        }
 
     cur.execute("""
         SELECT d.domain
@@ -458,7 +484,7 @@ def newly_dead():
         AND s1.has_ip = TRUE
         AND s2.has_ip = FALSE
         LIMIT 100
-    """, (previous, latest))
+    """, (previous, current))
 
     rows = cur.fetchall()
 
@@ -466,7 +492,7 @@ def newly_dead():
 
     return {
         "from_scan": previous,
-        "to_scan": latest,
+        "to_scan": current,
         "newly_dead_domains": [r[0] for r in rows]
     }
 
@@ -1364,13 +1390,11 @@ def exposure_drift():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT MAX(id) FROM scans")
-    latest = cur.fetchone()[0]
+    current = get_latest_authoritative_scan_id(cur)
+    previous = get_previous_authoritative_scan_id(cur, current)
 
-    cur.execute("SELECT MAX(id) FROM scans WHERE id < %s", (latest,))
-    prev = cur.fetchone()[0]
-
-    if not prev:
+    if previous is None:
+        conn.close()
         return {"new":0,"disappeared":0}
 
     # new domains
@@ -1383,7 +1407,7 @@ def exposure_drift():
             FROM domain_states
             WHERE scan_id = %s
         )
-    """,(latest, prev))
+    """,(current, previous))
 
     new_domains = cur.fetchone()[0]
 
@@ -1397,7 +1421,7 @@ def exposure_drift():
             FROM domain_states
             WHERE scan_id = %s
         )
-    """,(prev, latest))
+    """,(previous, current))
 
     disappeared = cur.fetchone()[0]
 
@@ -1406,8 +1430,8 @@ def exposure_drift():
     return {
         "new": new_domains,
         "disappeared": disappeared,
-        "latest_scan": latest,
-        "previous_scan": prev
+        "latest_scan": current,
+        "previous_scan": previous
     }
 
 @app.get("/targets")

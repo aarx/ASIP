@@ -28,6 +28,7 @@ def load_backend_module(filename, argv=None, extra_modules=None):
         row = cursor.fetchone()
         return row[0] if row else None
     fake_db.get_latest_authoritative_scan_id = get_latest_authoritative_scan_id
+    fake_db.get_previous_authoritative_scan_id = lambda cursor, current_scan_id=None: None
     replacements = {"db": fake_db}
     replacements.update(extra_modules or {})
 

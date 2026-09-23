@@ -20,6 +20,7 @@ def load_backend_module(filename, extra_modules=None):
     fake_db = types.ModuleType("db")
     fake_db.get_conn = lambda: None
     fake_db.get_latest_authoritative_scan_id = lambda cursor: None
+    fake_db.get_previous_authoritative_scan_id = lambda cursor, current_scan_id=None: None
     replacements = {"db": fake_db}
     replacements.update(extra_modules or {})
 
@@ -370,16 +371,6 @@ class ApiContractTests(unittest.TestCase):
                 source[start:end],
                 name
             )
-
-    def test_package_2b_predecessor_queries_remain_unchanged(self):
-        source = (BACKEND / "main.py").read_text()
-        for name in ["disappeared", "new_domains_delta", "newly_live", "newly_dead"]:
-            start = source.index(f"def {name}(")
-            end = source.find("\n@app.get", start)
-            block = source[start:end]
-            self.assertIn("SELECT MAX(id) FROM scans", block)
-            self.assertIn("latest - 1", block)
-
 
 class SchemaArtifactTests(unittest.TestCase):
     def test_migration_is_transactional_and_preserves_legacy_values(self):
