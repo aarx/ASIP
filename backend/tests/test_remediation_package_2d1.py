@@ -18,6 +18,7 @@ def load_backend_module(filename, extra_modules=None):
     module = importlib.util.module_from_spec(spec)
     fake_db = types.ModuleType("db")
     fake_db.get_conn = lambda: None
+    fake_db.require_running_scan = lambda cursor, scan_id: None
     replacements = {"db": fake_db}
     replacements.update(extra_modules or {})
 
@@ -343,6 +344,8 @@ class HandoffIntegrationTests(unittest.TestCase):
             {"config": fake_config, "http_probe": fake_probe},
         )
         recon.load_known = lambda: set()
+        recon.get_conn = lambda: FakeConnection(None)
+        recon.require_running_scan = lambda cursor, scan_id: None
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
@@ -374,6 +377,7 @@ class HandoffIntegrationTests(unittest.TestCase):
         fake_db = types.ModuleType("db")
         connection = FakeConnection(None)
         fake_db.get_conn = mock.Mock(return_value=connection)
+        fake_db.require_running_scan = lambda cursor, scan_id: None
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
@@ -399,6 +403,7 @@ class HandoffIntegrationTests(unittest.TestCase):
         artifacts = load_backend_module(BACKEND / "recon_artifact.py")
         fake_db = types.ModuleType("db")
         fake_db.get_conn = mock.Mock()
+        fake_db.require_running_scan = lambda cursor, scan_id: None
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)

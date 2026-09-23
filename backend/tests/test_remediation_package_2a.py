@@ -19,6 +19,7 @@ def load_backend_module(filename, extra_modules=None):
     module = importlib.util.module_from_spec(spec)
     fake_db = types.ModuleType("db")
     fake_db.get_conn = lambda: None
+    fake_db.require_running_scan = lambda cursor, scan_id: None
     fake_db.get_latest_authoritative_scan_id = lambda cursor: None
     fake_db.get_previous_authoritative_scan_id = lambda cursor, current_scan_id=None: None
     replacements = {"db": fake_db}

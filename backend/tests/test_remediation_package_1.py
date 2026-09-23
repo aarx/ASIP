@@ -17,6 +17,7 @@ def load_backend_module(filename, argv=None, extra_modules=None):
     module = importlib.util.module_from_spec(spec)
     fake_db = types.ModuleType("db")
     fake_db.get_conn = lambda: None
+    fake_db.require_running_scan = lambda cursor, scan_id: None
     def get_latest_authoritative_scan_id(cursor):
         cursor.execute("""
             SELECT id

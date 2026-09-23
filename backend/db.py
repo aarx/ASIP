@@ -1,6 +1,10 @@
 import psycopg2
 from config import *
 
+
+class ScanNotRunningError(RuntimeError):
+    pass
+
 def get_conn():
     return psycopg2.connect(
         host=DB_HOST,
@@ -8,6 +12,25 @@ def get_conn():
         user=DB_USER,
         password=DB_PASSWORD
     )
+
+
+def require_running_scan(cursor, scan_id):
+    cursor.execute("""
+        SELECT status
+        FROM scans
+        WHERE id = %s
+        FOR UPDATE
+    """, (scan_id,))
+
+    row = cursor.fetchone()
+    if row is None:
+        raise ScanNotRunningError(f"Scan {scan_id} does not exist")
+
+    status = row[0]
+    if status != "RUNNING":
+        raise ScanNotRunningError(
+            f"Scan {scan_id} is {status}, not RUNNING"
+        )
 
 
 def get_latest_authoritative_scan_id(cursor):

@@ -1,7 +1,7 @@
 import dns.resolver
 import socket
 import sys
-from db import get_conn
+from db import get_conn, require_running_scan
 
 scan_id = int(sys.argv[1])
 
@@ -46,6 +46,7 @@ def main():
 
     conn = get_conn()
     cur = conn.cursor()
+    require_running_scan(cur, scan_id)
 
     print("\n🌐 DNS worker running for scan:", scan_id)
 
@@ -114,6 +115,7 @@ def main():
         # 🔥 periodic commit (safe)
         if processed % 50 == 0:
             conn.commit()
+            require_running_scan(cur, scan_id)
             print(f"💾 Checkpoint commit at {processed}")
 
     conn.commit()

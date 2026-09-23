@@ -7,7 +7,7 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
-from db import get_conn
+from db import get_conn, require_running_scan
 
 
 scan_id = int(sys.argv[1])
@@ -29,6 +29,7 @@ def get_domains():
 
     conn = get_conn()
     cur = conn.cursor()
+    require_running_scan(cur, scan_id)
 
     cur.execute("""
         SELECT d.id, d.domain, ds.ip, ds.final_url
@@ -109,6 +110,7 @@ def main():
 
     conn = get_conn()
     cur = conn.cursor()
+    require_running_scan(cur, scan_id)
 
     
     MAX_WORKERS = 40

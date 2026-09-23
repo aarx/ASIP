@@ -1,7 +1,7 @@
 import requests
 import sys
 import dns.resolver
-from db import get_conn
+from db import get_conn, require_running_scan
 
 scan_id = int(sys.argv[1])
 
@@ -105,6 +105,7 @@ def main():
 
     conn = get_conn()
     cur = conn.cursor()
+    require_running_scan(cur, scan_id)
 
     print("Takeover scan for scan_id:", scan_id)
 

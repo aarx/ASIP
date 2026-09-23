@@ -1,6 +1,6 @@
 import sys
 
-from db import get_conn
+from db import get_conn, require_running_scan
 from http_probe import http_probe
 
 
@@ -10,6 +10,7 @@ scan_id = int(sys.argv[1])
 def main():
     conn = get_conn()
     cur = conn.cursor()
+    require_running_scan(cur, scan_id)
 
     cur.execute("""
         SELECT d.id, d.domain

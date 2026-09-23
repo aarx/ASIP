@@ -3,7 +3,7 @@ import pandas as pd
 import logging
 import os
 import sys
-from db import get_conn
+from db import get_conn, require_running_scan
 from recon_artifact import ReconArtifactError, read_validated_recon_artifact
 
 scan_id = int(sys.argv[1])
@@ -30,6 +30,7 @@ if len(df.index) != manifest["row_count"]:
 
 conn = get_conn()
 cur = conn.cursor()
+require_running_scan(cur, scan_id)
 
 for _, row in df.iterrows():
 

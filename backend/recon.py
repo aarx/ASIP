@@ -8,7 +8,7 @@ import os
 import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from db import get_conn
+from db import get_conn, require_running_scan
 from config import CERTSPOTTER_API_KEY
 from http_probe import http_probe
 from recon_artifact import publish_recon_artifact
@@ -373,12 +373,22 @@ def main(seed_file, deep, expand, scan_id):
     print(f"[+] Recon output saved → {csv_file}")
 
     backend_csv = os.path.join("data", "final_output.csv")
-    publish_recon_artifact(
-        csv_file,
-        backend_csv,
-        scan_id=scan_id,
-        row_count=len(domain_registry),
-    )
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        require_running_scan(cur, scan_id)
+        publish_recon_artifact(
+            csv_file,
+            backend_csv,
+            scan_id=scan_id,
+            row_count=len(domain_registry),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
     print(f"[+] Scan {scan_id} artifact published → {backend_csv}")
 
 if __name__ == "__main__":
