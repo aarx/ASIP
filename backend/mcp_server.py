@@ -78,6 +78,12 @@ def get_domain(domain: str):
     conn = get_conn()
     cur = conn.cursor()
 
+    scan_id = get_latest_authoritative_scan_id(cur)
+
+    if scan_id is None:
+        conn.close()
+        return {"error": "domain not found"}
+
     cur.execute("""
         SELECT 
             d.domain,
@@ -87,12 +93,15 @@ def get_domain(domain: str):
             dr.risk_score,
             dr.reasons
         FROM domains d
-        LEFT JOIN domain_states ds ON d.id = ds.domain_id
-        LEFT JOIN domain_risk dr ON d.id = dr.domain_id
+        LEFT JOIN domain_states ds
+          ON d.id = ds.domain_id
+         AND ds.scan_id = %s
+        LEFT JOIN domain_risk dr
+          ON d.id = dr.domain_id
+         AND dr.scan_id = %s
         WHERE d.domain = %s
-        ORDER BY ds.scan_id DESC
         LIMIT 1
-    """, (domain,))
+    """, (scan_id, scan_id, domain))
 
     row = cur.fetchone()
     conn.close()
@@ -143,14 +152,21 @@ def high_risk():
     conn = get_conn()
     cur = conn.cursor()
 
+    scan_id = get_latest_authoritative_scan_id(cur)
+
+    if scan_id is None:
+        conn.close()
+        return []
+
     cur.execute("""
         SELECT d.domain, dr.risk_score
         FROM domain_risk dr
         JOIN domains d ON d.id = dr.domain_id
-        WHERE dr.risk_score >= 3
+        WHERE dr.scan_id = %s
+        AND dr.risk_score >= 3
         ORDER BY dr.risk_score DESC
         LIMIT 20
-    """)
+    """, (scan_id,))
 
     rows = cur.fetchall()
     conn.close()
@@ -171,6 +187,12 @@ def priority_targets():
     conn = get_conn()
     cur = conn.cursor()
 
+    scan_id = get_latest_authoritative_scan_id(cur)
+
+    if scan_id is None:
+        conn.close()
+        return []
+
     cur.execute("""
         SELECT 
             d.domain,
@@ -182,6 +204,7 @@ def priority_targets():
 
         LEFT JOIN domain_risk dr
             ON d.id = dr.domain_id
+           AND dr.scan_id = %s
 
         WHERE d.scannable = FALSE
         AND d.confidence_label IN ('medium', 'high')
@@ -190,6 +213,7 @@ def priority_targets():
             SELECT 1 
             FROM domain_states ds
             WHERE ds.domain_id = d.id
+            AND ds.scan_id = %s
             AND ds.has_ip = TRUE
         )
 
@@ -198,7 +222,7 @@ def priority_targets():
             d.confidence_score DESC
 
         LIMIT 20
-    """)
+    """, (scan_id, scan_id))
 
     rows = cur.fetchall()
     conn.close()

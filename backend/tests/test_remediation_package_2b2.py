@@ -371,6 +371,186 @@ class HistoricalCursor:
         return self.result
 
 
+class McpCursor:
+    def __init__(self, statuses=None):
+        self.statuses = statuses if statuses is not None else {
+            29: "SUCCEEDED",
+            30: "UNKNOWN",
+            31: "SUCCEEDED",
+            32: "FAILED",
+            33: "RUNNING",
+        }
+        self.domains = {
+            1: {
+                "domain": "current.example.test", "is_known": False,
+                "scannable": True, "confidence_score": 90,
+                "confidence_label": "high",
+            },
+            2: {
+                "domain": "historical-live.example.test", "is_known": False,
+                "scannable": False, "confidence_score": 85,
+                "confidence_label": "high",
+            },
+            3: {
+                "domain": "historical-risk.example.test", "is_known": False,
+                "scannable": False, "confidence_score": 70,
+                "confidence_label": "medium",
+            },
+            4: {
+                "domain": "priority.example.test", "is_known": False,
+                "scannable": False, "confidence_score": 95,
+                "confidence_label": "high",
+            },
+        }
+        self.states = [
+            {"domain_id": 1, "scan_id": 29, "ip": "192.0.2.29", "http_status": 201, "has_ip": True},
+            {"domain_id": 1, "scan_id": 30, "ip": "192.0.2.30", "http_status": 202, "has_ip": True},
+            {"domain_id": 1, "scan_id": 31, "ip": "192.0.2.31", "http_status": 200, "has_ip": True},
+            {"domain_id": 1, "scan_id": 32, "ip": "192.0.2.32", "http_status": 503, "has_ip": True},
+            {"domain_id": 1, "scan_id": 33, "ip": "192.0.2.33", "http_status": 500, "has_ip": True},
+            {"domain_id": 2, "scan_id": 29, "ip": "192.0.2.42", "http_status": 200, "has_ip": True},
+            {"domain_id": 2, "scan_id": 31, "ip": None, "http_status": None, "has_ip": False},
+            {"domain_id": 3, "scan_id": 31, "ip": "192.0.2.53", "http_status": 200, "has_ip": True},
+            {"domain_id": 4, "scan_id": 31, "ip": "192.0.2.64", "http_status": 200, "has_ip": True},
+        ]
+        self.risks = [
+            {"domain_id": 1, "scan_id": 29, "risk_score": 9, "reasons": ["old"]},
+            {"domain_id": 1, "scan_id": 30, "risk_score": 7, "reasons": ["unknown"]},
+            {"domain_id": 1, "scan_id": 31, "risk_score": 4, "reasons": ["current"]},
+            {"domain_id": 1, "scan_id": 32, "risk_score": 10, "reasons": ["failed"]},
+            {"domain_id": 1, "scan_id": 33, "risk_score": 11, "reasons": ["running"]},
+            {"domain_id": 2, "scan_id": 29, "risk_score": 8, "reasons": ["old"]},
+            {"domain_id": 2, "scan_id": 31, "risk_score": 6, "reasons": ["current"]},
+            {"domain_id": 3, "scan_id": 29, "risk_score": 9, "reasons": ["old"]},
+            {"domain_id": 3, "scan_id": 31, "risk_score": 1, "reasons": ["current"]},
+            {"domain_id": 4, "scan_id": 31, "risk_score": 5, "reasons": ["current"]},
+            {"domain_id": 4, "scan_id": 32, "risk_score": 12, "reasons": ["failed"]},
+        ]
+        self.executions = []
+        self.result = None
+
+    @staticmethod
+    def normalize(sql):
+        return " ".join(sql.lower().split())
+
+    def execute(self, sql, params=None):
+        self.executions.append((sql, params))
+        normalized = self.normalize(sql)
+
+        if "from scans" in normalized:
+            successful = [
+                scan_id for scan_id, status in self.statuses.items()
+                if status == "SUCCEEDED"
+            ]
+            self.result = (max(successful),) if successful else None
+            return
+
+        if "dr.reasons" in normalized:
+            self.assert_domain_isolation(normalized, params)
+            self.result = self.domain_row(params[2], params[0])
+            return
+
+        if "where dr.scan_id = %s" in normalized and "dr.risk_score >= 3" in normalized:
+            self.assert_high_risk_isolation(normalized, params)
+            self.result = self.high_risk_rows(params[0])
+            return
+
+        if "d.confidence_label in ('medium', 'high')" in normalized:
+            self.assert_priority_isolation(normalized, params)
+            self.result = self.priority_rows(params[0])
+            return
+
+        raise AssertionError(f"Unexpected SQL in Package 2B2-C test: {normalized}")
+
+    @staticmethod
+    def assert_domain_isolation(sql, params):
+        assert "ds.scan_id = %s" in sql
+        assert "dr.scan_id = %s" in sql
+        assert "order by ds.scan_id" not in sql
+        assert "max(" not in sql
+        assert params[:2] == (31, 31)
+
+    @staticmethod
+    def assert_high_risk_isolation(sql, params):
+        assert "where dr.scan_id = %s" in sql
+        assert "dr.risk_score >= 3" in sql
+        assert "order by dr.risk_score desc" in sql
+        assert "limit 20" in sql
+        assert params == (31,)
+
+    @staticmethod
+    def assert_priority_isolation(sql, params):
+        assert "dr.scan_id = %s" in sql
+        assert "ds.scan_id = %s" in sql
+        assert "ds.has_ip = true" in sql
+        assert "order by coalesce(dr.risk_score, 0) desc" in sql
+        assert "limit 20" in sql
+        assert params == (31, 31)
+
+    def domain_row(self, domain_name, scan_id):
+        match = next((
+            (domain_id, domain) for domain_id, domain in self.domains.items()
+            if domain["domain"] == domain_name
+        ), None)
+        if match is None:
+            return None
+        domain_id, domain = match
+        state = next((
+            row for row in self.states
+            if row["domain_id"] == domain_id and row["scan_id"] == scan_id
+        ), None)
+        risk = next((
+            row for row in self.risks
+            if row["domain_id"] == domain_id and row["scan_id"] == scan_id
+        ), None)
+        return (
+            domain["domain"],
+            domain["is_known"],
+            state["ip"] if state else None,
+            state["http_status"] if state else None,
+            risk["risk_score"] if risk else None,
+            risk["reasons"] if risk else None,
+        )
+
+    def high_risk_rows(self, scan_id):
+        rows = [
+            (self.domains[row["domain_id"]]["domain"], row["risk_score"])
+            for row in self.risks
+            if row["scan_id"] == scan_id and row["risk_score"] >= 3
+        ]
+        return sorted(rows, key=lambda row: -row[1])[:20]
+
+    def priority_rows(self, scan_id):
+        current_risk = {
+            row["domain_id"]: row["risk_score"] for row in self.risks
+            if row["scan_id"] == scan_id
+        }
+        current_live = {
+            row["domain_id"] for row in self.states
+            if row["scan_id"] == scan_id and row["has_ip"]
+        }
+        rows = []
+        for domain_id, domain in self.domains.items():
+            if domain["scannable"] is not False:
+                continue
+            if domain["confidence_label"] not in ("medium", "high"):
+                continue
+            if domain_id not in current_live:
+                continue
+            rows.append((
+                domain["domain"], domain["scannable"],
+                domain["confidence_score"], domain["confidence_label"],
+                current_risk.get(domain_id, 0),
+            ))
+        return sorted(rows, key=lambda row: (row[4], row[2]), reverse=True)[:20]
+
+    def fetchone(self):
+        return self.result
+
+    def fetchall(self):
+        return self.result
+
+
 class CurrentSnapshotIsolationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -567,6 +747,107 @@ class AuthoritativeHistoryTests(unittest.TestCase):
             r'else:\s+priority = "Low"',
         )
         self.assertIn("return results[:100]", source)
+
+
+class McpCurrentSnapshotTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        fake_config = types.SimpleNamespace(
+            DB_HOST="unused", DB_NAME="unused", DB_USER="unused", DB_PASSWORD="unused"
+        )
+        cls.db = load_module(BACKEND / "db.py", {"config": fake_config})
+        fake_db = types.ModuleType("db")
+        fake_db.get_conn = lambda: None
+        fake_db.get_latest_authoritative_scan_id = cls.db.get_latest_authoritative_scan_id
+        cls.mcp = load_module(BACKEND / "mcp_server.py", {"db": fake_db})
+
+    def run_endpoint(self, endpoint, *args, statuses=None):
+        cursor = McpCursor(statuses)
+        connection = FakeConnection(cursor)
+        self.mcp.get_conn = lambda: connection
+        response = getattr(self.mcp, endpoint)(*args)
+        self.assertTrue(connection.closed)
+        return response, cursor
+
+    def test_domain_uses_one_authoritative_state_and_risk_snapshot(self):
+        response, cursor = self.run_endpoint(
+            "get_domain", "current.example.test"
+        )
+
+        self.assertEqual(response, {
+            "domain": "current.example.test",
+            "is_known": False,
+            "ip": "192.0.2.31",
+            "http_status": 200,
+            "risk_score": 4,
+            "reasons": ["current"],
+        })
+        self.assertEqual(len(cursor.executions), 2)
+        self.assertIn("FROM scans", cursor.executions[0][0])
+        self.assertEqual(cursor.executions[1][1], (31, 31, "current.example.test"))
+
+    def test_domain_zero_authoritative_uses_existing_not_found_shape(self):
+        response, cursor = self.run_endpoint(
+            "get_domain", "current.example.test",
+            statuses={30: "UNKNOWN", 32: "FAILED", 33: "RUNNING"},
+        )
+
+        self.assertEqual(response, {"error": "domain not found"})
+        self.assertEqual(len(cursor.executions), 1)
+
+    def test_high_risk_uses_only_current_risk_without_history_duplicates(self):
+        response, cursor = self.run_endpoint("high_risk")
+
+        self.assertEqual(response, [
+            {"domain": "historical-live.example.test", "risk": 6},
+            {"domain": "priority.example.test", "risk": 5},
+            {"domain": "current.example.test", "risk": 4},
+        ])
+        self.assertEqual(len({row["domain"] for row in response}), len(response))
+        self.assertEqual(cursor.executions[1][1], (31,))
+
+    def test_high_risk_zero_authoritative_returns_empty_list(self):
+        response, cursor = self.run_endpoint(
+            "high_risk",
+            statuses={30: "UNKNOWN", 32: "FAILED", 33: "RUNNING"},
+        )
+
+        self.assertEqual(response, [])
+        self.assertEqual(len(cursor.executions), 1)
+
+    def test_priority_targets_align_current_risk_and_liveness(self):
+        response, cursor = self.run_endpoint("priority_targets")
+
+        self.assertEqual(response, [
+            {
+                "domain": "priority.example.test",
+                "scannable": False,
+                "confidence_score": 95,
+                "confidence_label": "high",
+                "risk_score": 5,
+            },
+            {
+                "domain": "historical-risk.example.test",
+                "scannable": False,
+                "confidence_score": 70,
+                "confidence_label": "medium",
+                "risk_score": 1,
+            },
+        ])
+        self.assertNotIn(
+            "historical-live.example.test",
+            {row["domain"] for row in response},
+        )
+        self.assertEqual(cursor.executions[1][1], (31, 31))
+
+    def test_priority_targets_zero_authoritative_returns_empty_list(self):
+        response, cursor = self.run_endpoint(
+            "priority_targets",
+            statuses={30: "UNKNOWN", 32: "FAILED", 33: "RUNNING"},
+        )
+
+        self.assertEqual(response, [])
+        self.assertEqual(len(cursor.executions), 1)
 
 
 if __name__ == "__main__":
