@@ -23,7 +23,6 @@ def main():
           AND ds.scan_id = %s
         WHERE ds.has_ip = TRUE
         AND COALESCE(ds.http_status, 0) = 0
-        AND d.scannable = TRUE
         AND EXISTS (
             SELECT 1
             FROM domain_sources src

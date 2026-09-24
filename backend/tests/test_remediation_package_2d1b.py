@@ -296,7 +296,7 @@ class WriterWiringTests(unittest.TestCase):
     WRITERS = {
         "recon.py": "publish_recon_artifact(",
         "ingest.py": "INSERT INTO domains(",
-        "san_worker.py": "UPDATE domains",
+        "san_worker.py": "INSERT INTO domain_san",
         "san_state_sync.py": "INSERT INTO domain_states(",
         "dns_worker.py": "INSERT INTO domain_dns",
         "san_http_worker.py": "UPDATE domain_states",

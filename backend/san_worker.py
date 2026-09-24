@@ -33,13 +33,6 @@ def fetch_san_domains(domain):
         print(f"[SAN ERROR] {domain} -> {e}")
         return None
 
-def is_scannable(domain, seeds):
-    for seed in seeds:
-        if domain == seed or domain.endswith("." + seed):
-            return True
-    return False
-
-
 def add_current_scan_membership(cur, parent_domain_id, child_domain_id):
     cur.execute("""
     SELECT seed
@@ -67,10 +60,6 @@ def main():
     require_running_scan(cur, scan_id)
 
     print("SAN scan for scan_id:", scan_id)
-
-    cur.execute("SELECT domain FROM seed_domains")
-    seeds = [r[0].strip().lower() for r in cur.fetchall()]  
-    print("Loaded seeds:", seeds)
 
     cur.execute("SELECT domain FROM known_domains")
     known_set = set(r[0].strip().lower() for r in cur.fetchall())
@@ -117,18 +106,6 @@ def main():
             print(f"Skipping non-member SAN parent: {domain}")
             continue
     
-        # classify original domain too
-        
-        is_known = domain in known_set
-        scannable = is_scannable(domain, seeds) or is_known
-        
-        cur.execute("""
-        UPDATE domains
-        SET scannable = %s
-        WHERE id = %s
-        AND (validation_source IS NULL OR validation_source != 'manual')
-        """, (scannable, domain_id))
-    
         if i % 50 == 0:
             print(f"[{i}/{len(rows)}] Processing: {domain}")
     
@@ -164,9 +141,6 @@ def main():
             # insert or get domain_id
             san = san.lower().strip()
             
-            is_known = san in known_set
-            scannable = is_scannable(san, seeds) or is_known
-            
             cur.execute("""
             INSERT INTO domains(
                 domain,
@@ -175,7 +149,6 @@ def main():
                 first_seen_at,
                 last_seen_at,
                 is_known,
-                scannable,
                 source
             )
             VALUES (
@@ -185,7 +158,6 @@ def main():
                 NOW(),
                 NOW(),
                 EXISTS (SELECT 1 FROM known_domains WHERE domain = %s),
-                %s,
                 %s
             )
             ON CONFLICT (domain)
@@ -206,16 +178,12 @@ def main():
                         SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
                     )
                 ),
-                scannable = CASE
-                    WHEN domains.validation_source = 'manual' THEN domains.scannable
-                    ELSE EXCLUDED.scannable
-                END,
                 source = CASE
                     WHEN domains.source = 'seed' THEN 'san'
                     ELSE domains.source
                 END
             RETURNING id, (xmax = 0) AS inserted
-            """, (san, scan_id, scan_id, san, scannable, "san"))
+            """, (san, scan_id, scan_id, san, "san"))
             
             new_domain_id, inserted = cur.fetchone()
 

@@ -114,7 +114,6 @@ def main():
       AND sr.scan_id = dd.scan_id
     WHERE dd.scan_id = %s
     AND dd.record_type = 'CNAME'
-    AND d.scannable = TRUE   
     """, (scan_id,))
 
     rows = cur.fetchall()

@@ -54,12 +54,22 @@ def normalized_sql(text):
 
 
 def sql_statements(filename):
-    return [normalized_sql(node.args[0].value)
-            for node in ast.walk(ast.parse(source(filename)))
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-            and node.func.attr == 'execute' and node.args
-            and isinstance(node.args[0], ast.Constant)
-            and isinstance(node.args[0].value, str)]
+    statements = []
+    for node in ast.walk(ast.parse(source(filename))):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'execute' and node.args):
+            continue
+        sql_arg = node.args[0]
+        if isinstance(sql_arg, ast.Constant) and isinstance(sql_arg.value, str):
+            statements.append(normalized_sql(sql_arg.value))
+        elif isinstance(sql_arg, ast.JoinedStr):
+            text = ''.join(
+                part.value if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                else '%s'
+                for part in sql_arg.values
+            )
+            statements.append(normalized_sql(text))
+    return statements
 
 
 class StaticMembershipContractTests(unittest.TestCase):
@@ -393,6 +403,8 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                     self.setUp()
                     member = self.domain('parent.example', 42, http_status=0 if filename in ('dns_worker.py','san_http_worker.py') else 200,
                                          has_ip=filename != 'dns_worker.py')
+                    if filename == 'port_scan_worker.py':
+                        self.sql("UPDATE domains SET validation_source='manual' WHERE id=%s", (member,))
                     self.sql("INSERT INTO domain_sources VALUES (%s,42,'san','root.example')", (member,))
                     self.sql("INSERT INTO domain_dns VALUES (%s,42,'CNAME','target.github.io')", (member,))
                     self.sql("INSERT INTO domain_asn VALUES (%s,42,'AS1','192.0.2.1','AS1 Amazon')", (member,))
@@ -420,6 +432,8 @@ class PostgreSQLMembershipTests(unittest.TestCase):
             with self.subTest(worker=filename):
                 self.setUp()
                 member = self.domain('member.example', 42)
+                if filename == 'port_scan_worker.py':
+                    self.sql("UPDATE domains SET validation_source='manual' WHERE id=%s", (member,))
                 def remove_member(cur, query, params):
                     cur.execute('DELETE FROM scan_results WHERE scan_id=42 AND domain_id=%s', (member,))
                 executions, _ = self.run_worker(filename, before_write=remove_member)

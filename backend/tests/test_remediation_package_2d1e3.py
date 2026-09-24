@@ -96,7 +96,7 @@ class SanFalseCompletionTests(unittest.TestCase):
 
     def run_main(self, observation, fetchones=None):
         cursor = RecordingCursor(
-            fetchalls=[[('root.example',)], [], [(1, 'parent.example')]],
+            fetchalls=[[], [(1, 'parent.example')]],
             fetchones=fetchones or [(1,)],
         )
         connection = FakeConnection(cursor)

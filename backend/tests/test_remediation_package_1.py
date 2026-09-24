@@ -183,7 +183,7 @@ class SanPipelineTests(unittest.TestCase):
         module.main()
 
         select_sql = cursor.executions[0][0]
-        self.assertIn("d.scannable = TRUE", select_sql)
+        self.assertNotIn("scannable", select_sql.lower())
         self.assertIn("src.source = 'san'", select_sql)
         self.assertIn("ds.has_ip = TRUE", select_sql)
         update_sql, update_params = cursor.executions[1]

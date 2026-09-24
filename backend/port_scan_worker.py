@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from db import get_conn, require_running_scan
+from authorization_policy import explicit_t2_authorization_sql
 
 scan_id = int(sys.argv[1])
 
@@ -21,7 +22,7 @@ logging.basicConfig(
 
 def get_resolving_domains(cur, scan_id):
 
-    cur.execute("""
+    cur.execute(f"""
     SELECT DISTINCT ON (d.id) d.id, d.domain
     FROM domains d
     JOIN domain_states s
@@ -37,7 +38,7 @@ def get_resolving_domains(cur, scan_id):
     
     WHERE s.has_ip = TRUE
     AND dp.domain_id IS NULL
-    AND d.scannable = TRUE   -- ✅ ADD THIS LINE
+    AND {explicit_t2_authorization_sql("d")}
     ORDER BY d.id, s.scan_id DESC
     """, (scan_id, scan_id))
 
