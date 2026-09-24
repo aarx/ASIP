@@ -345,10 +345,10 @@ class WriterWiringTests(unittest.TestCase):
                 )
                 self.assertGreater(reacquire, checkpoint)
 
-    def test_orchestration_and_package_2d1a_artifact_module_are_unchanged(self):
+    def test_orchestration_and_artifact_match_authorized_package_baselines(self):
         expected = {
             "orchestration.py": (
-                "e090c345f1a278a911ea6f5e73104989287b3fd4b16a2092882c528c88017d1f"
+                "2813d097152f3e7deb5d3b235c3e2777b30f527e361a270485cfb7b286a43960"
             ),
             "recon_artifact.py": (
                 "096c44848356e2f4b7f0587e5a26f8008724531101edf405098ed708916bb370"

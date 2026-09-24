@@ -155,9 +155,9 @@ class ScanLifecycleUnitTests(unittest.TestCase):
     def test_successful_pipeline_transitions_only_to_succeeded(self):
         module = self.orchestration
         transitions = []
-        module.create_scan = lambda: 42
+        module.create_scan = lambda identity=None: 42
         module.setup_logging = lambda path: None
-        module.run_step = lambda name, cmd: None
+        module.run_step = lambda name, cmd, attempt, maximum: 0
         module.mark_scan_terminal = lambda scan_id, status: transitions.append((scan_id, status))
 
         module.main()
@@ -167,7 +167,7 @@ class ScanLifecycleUnitTests(unittest.TestCase):
     def test_stage_failure_attempts_failed_and_exits_nonzero(self):
         module = self.orchestration
         transitions = []
-        module.create_scan = lambda: 42
+        module.create_scan = lambda identity=None: 42
         module.setup_logging = lambda path: None
         module.run_step = mock.Mock(side_effect=RuntimeError("stage failed"))
         module.mark_scan_terminal = lambda scan_id, status: transitions.append((scan_id, status))
@@ -179,7 +179,7 @@ class ScanLifecycleUnitTests(unittest.TestCase):
 
     def test_failed_transition_failure_still_exits_without_success(self):
         module = self.orchestration
-        module.create_scan = lambda: 42
+        module.create_scan = lambda identity=None: 42
         module.setup_logging = lambda path: None
         module.run_step = mock.Mock(side_effect=RuntimeError("stage failed"))
         module.mark_scan_terminal = mock.Mock(side_effect=RuntimeError("db failed"))
@@ -191,9 +191,9 @@ class ScanLifecycleUnitTests(unittest.TestCase):
 
     def test_succeeded_transition_failure_does_not_attempt_failed(self):
         module = self.orchestration
-        module.create_scan = lambda: 42
+        module.create_scan = lambda identity=None: 42
         module.setup_logging = lambda path: None
-        module.run_step = lambda name, cmd: None
+        module.run_step = lambda name, cmd, attempt, maximum: 0
         module.mark_scan_terminal = mock.Mock(side_effect=RuntimeError("ambiguous commit"))
 
         with mock.patch.object(module.logging, "info") as info, \
@@ -206,9 +206,9 @@ class ScanLifecycleUnitTests(unittest.TestCase):
             for call in info.call_args_list
         ))
 
-    def test_keyboard_interrupt_does_not_assign_failed(self):
+    def test_keyboard_interrupt_assigns_failed_after_scan_creation(self):
         module = self.orchestration
-        module.create_scan = lambda: 42
+        module.create_scan = lambda identity=None: 42
         module.setup_logging = lambda path: None
         module.run_step = mock.Mock(side_effect=KeyboardInterrupt())
         module.mark_scan_terminal = mock.Mock()
@@ -216,11 +216,11 @@ class ScanLifecycleUnitTests(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             module.main()
 
-        module.mark_scan_terminal.assert_not_called()
+        module.mark_scan_terminal.assert_called_once_with(42, "FAILED")
 
     def test_system_exit_does_not_assign_failed(self):
         module = self.orchestration
-        module.create_scan = lambda: 42
+        module.create_scan = lambda identity=None: 42
         module.setup_logging = lambda path: None
         module.run_step = mock.Mock(side_effect=SystemExit(9))
         module.mark_scan_terminal = mock.Mock()
