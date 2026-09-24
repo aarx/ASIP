@@ -385,8 +385,19 @@ def resolve_ip(domain):
 def reverse_dns(ip):
     try:
         return socket.gethostbyaddr(ip)[0]
-    except:
-        return "N/A"
+    except socket.herror as e:
+        # h_errno 1 (HOST_NOT_FOUND) and 4 (NO_DATA) conclusively mean
+        # that no PTR name exists. Other resolver failures are operational.
+        if e.errno in (1, 4):
+            return "N/A"
+        debug(f"PTR lookup failed for {ip} | {type(e).__name__}")
+        return None
+    except (socket.timeout, socket.gaierror, OSError) as e:
+        debug(f"PTR lookup failed for {ip} | {type(e).__name__}")
+        return None
+    except Exception as e:
+        debug(f"PTR lookup failed for {ip} | {type(e).__name__}")
+        return None
 
 
 def load_known():
@@ -438,7 +449,7 @@ def main(seed_file, deep, expand, scan_id):
 
     def resolve_domain(domain):
         ip = resolve_ip(domain)
-        rdns = reverse_dns(ip) if ip else "N/A"
+        rdns = reverse_dns(ip) if ip else None
         return domain, ip, rdns
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as exe:
