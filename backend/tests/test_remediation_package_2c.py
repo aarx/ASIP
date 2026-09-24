@@ -132,24 +132,29 @@ class ShadowEndpointTests(unittest.TestCase):
         block = self.endpoint_block("shadow_assets")
         norm = normalized(block)
 
-        self.assertIn("D.IS_KNOWN = FALSE", norm)
-        self.assertIn("WHERE DS.SCAN_ID = %S", norm)
+        self.assertIn("RISK.IS_KNOWN IS FALSE", norm)
+        engine = normalized(source("risk_engine.py"))
+        self.assertIn("FROM SCAN_RESULTS SR", engine)
+        self.assertIn("WHERE SR.SCAN_ID = %S", engine)
 
     def test_shadow_summary_requires_is_known_false(self):
         block = self.endpoint_block("shadow_summary")
         norm = normalized(block)
 
-        self.assertIn("D.IS_KNOWN = FALSE", norm)
-        self.assertIn("DS.HAS_IP = TRUE", norm)
-        self.assertIn("DS.HTTP_LIVE = FALSE", norm)
+        self.assertIn("RISK.IS_KNOWN IS FALSE", norm)
+        self.assertIn("RISK.HAS_IP", norm)
+        self.assertIn('RISK.HTTP_OBSERVATION_STATUS == "NO_RESPONSE"', norm)
 
     def test_other_shadow_surfaces_already_use_is_known_false(self):
         for endpoint in ("shadow_by_provider", "unknown_high_risk"):
             with self.subTest(endpoint=endpoint):
-                self.assertIn(
-                    "D.IS_KNOWN = FALSE",
-                    normalized(self.endpoint_block(endpoint)),
+                block = normalized(self.endpoint_block(endpoint))
+                expected = (
+                    "RISK.IS_KNOWN IS FALSE"
+                    if endpoint == "unknown_high_risk"
+                    else "D.IS_KNOWN = FALSE"
                 )
+                self.assertIn(expected, block)
 
     def test_export_shadow_type_is_known_shadow_only(self):
         block = self.endpoint_block("export_enriched_csv")

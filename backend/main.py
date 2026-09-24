@@ -12,6 +12,7 @@ from datetime import datetime
 from llm_service import ask_llm
 from urllib.parse import urlparse
 from db import get_conn, get_latest_authoritative_scan_id, get_previous_authoritative_scan_id
+from risk_engine import calculate_scan_risks, get_asset_exposure_keywords
 
 os.makedirs("logs", exist_ok=True)
 
@@ -584,369 +585,36 @@ def volatile_domains():
         for r in rows
     ]
 
-ASSET_EXPOSURE_KEYWORDS = [
-    "dev",
-    "test",
-    "uat",
-    "qa",
-    "admin",
-    "mail",
-    "temp",
-    "stage",
-    "staging",
-    "sandbox",
-    "preprod",
-    "pre-prod",
-    "nonprod",
-    "non-prod",
-    "lab",
-    "demo"
-]
-
-
-def get_asset_exposure_keywords(domain):
-    """
-    Return Asset Exposure keywords found in the domain.
-
-    Broad substring matching is intentional for now.
-    STAGE and STAGING remain separate categories.
-    """
-
-    domain = (domain or "").lower()
-
-    matched = []
-
-    for keyword in ASSET_EXPOSURE_KEYWORDS:
-
-        if keyword == "stage":
-            if "stage" in domain and "staging" not in domain:
-                matched.append("STAGE")
-
-        else:
-            if keyword in domain:
-                matched.append(keyword.upper())
-
-    return matched
-
-
 @app.get("/risky-domains")
 def risky_domains():
-
     conn = get_conn()
     cur = conn.cursor()
-
-    # --------------------------------------------------
-    # Latest scan
-    # --------------------------------------------------
-
     scan_id = get_latest_authoritative_scan_id(cur)
 
     if scan_id is None:
         conn.close()
         return []
 
-
-    # --------------------------------------------------
-    # Historical volatility
-    # --------------------------------------------------
-
-    cur.execute("""
-        WITH authoritative_states AS (
-            SELECT
-                ds.domain_id,
-                ds.scan_id,
-                ds.has_ip
-            FROM domain_states ds
-            JOIN scans s
-              ON s.id = ds.scan_id
-            WHERE s.status = 'SUCCEEDED'
-        ),
-        ordered AS (
-            SELECT
-                domain_id,
-                has_ip,
-                LAG(has_ip) OVER (
-                    PARTITION BY domain_id
-                    ORDER BY scan_id
-                ) AS prev_state
-            FROM authoritative_states
-        )
-        SELECT
-            domain_id,
-            COUNT(*) AS flips
-        FROM ordered
-        WHERE prev_state IS NOT NULL
-          AND prev_state != has_ip
-        GROUP BY domain_id
-    """)
-
-    volatility_map = {
-        row[0]: row[1]
-        for row in cur.fetchall()
-    }
-
-    # --------------------------------------------------
-    # Latest domain state
-    # --------------------------------------------------
-
-    cur.execute("""
-        SELECT
-            d.id,
-            d.domain,
-            d.first_seen_scan,
-            d.is_known,
-            ds.has_ip,
-            ds.http_live,
-            ds.http_status,
-            ds.final_url
-        FROM domains d
-        JOIN domain_states ds
-            ON d.id = ds.domain_id
-        WHERE ds.scan_id = %s
-    """, (scan_id,))
-
-    domain_rows = cur.fetchall()
-
-    # --------------------------------------------------
-    # Sensitive ports / total ports
-    # --------------------------------------------------
-
-    cur.execute("""
-        SELECT
-            dp.domain_id,
-            COUNT(DISTINCT dp.port) AS port_count,
-            COUNT(DISTINCT sp.port) AS sensitive_port_count
-        FROM domain_ports dp
-        LEFT JOIN sensitive_ports sp
-            ON dp.port = sp.port
-        WHERE dp.scan_id = %s
-        GROUP BY dp.domain_id
-    """, (scan_id,))
-
-    port_map = {
-        row[0]: {
-            "port_count": row[1] or 0,
-            "sensitive_ports": row[2] or 0
-        }
-        for row in cur.fetchall()
-    }
-
-    # --------------------------------------------------
-    # Provider / cloud information
-    # --------------------------------------------------
-
-    cur.execute("""
-        SELECT
-            domain_id,
-            provider
-        FROM domain_provider
-        WHERE scan_id = %s
-    """, (scan_id,))
-
-    provider_map = {
-        row[0]: row[1]
-        for row in cur.fetchall()
-    }
-
-    # --------------------------------------------------
-    # Findings
-    # --------------------------------------------------
-
-    cur.execute("""
-        SELECT
-            domain_id,
-            COUNT(*) AS finding_count,
-            COUNT(*) FILTER (
-                WHERE UPPER(severity) = 'HIGH'
-            ) AS high_findings
-        FROM domain_findings
-        WHERE scan_id = %s
-        GROUP BY domain_id
-    """, (scan_id,))
-
-    finding_map = {
-        row[0]: {
-            "count": row[1] or 0,
-            "high": row[2] or 0
-        }
-        for row in cur.fetchall()
-    }
-
+    canonical_risks = calculate_scan_risks(cur, scan_id)
     conn.close()
 
-    # --------------------------------------------------
-    # Calculate deterministic risk
-    # --------------------------------------------------
-
-    results = []
-
-    for row in domain_rows:
-
-        (
-            domain_id,
-            domain,
-            first_seen_scan,
-            is_known,
-            has_ip,
-            http_live,
-            http_status,
-            final_url
-        ) = row
-
-        score = 0
-        reasons = []
-
-        # ----------------------------------------------
-        # New asset
-        # ----------------------------------------------
-
-        if first_seen_scan == scan_id:
-            score += 3
-            reasons.append("new_asset")
-
-        # ----------------------------------------------
-        # HTTP / IP exposure
-        # ----------------------------------------------
-
-        if http_live:
-            score += 1
-            reasons.append("http_exposed")
-
-        elif has_ip:
-            score += 1
-            reasons.append("resolves_no_http")
-
-        # ----------------------------------------------
-        # Ports
-        # ----------------------------------------------
-
-        port_info = port_map.get(
-            domain_id,
-            {
-                "port_count": 0,
-                "sensitive_ports": 0
-            }
-        )
-
-        port_count = port_info["port_count"]
-        sensitive_port_count = port_info["sensitive_ports"]
-
-        if sensitive_port_count > 0:
-            score += 3
-            reasons.append("sensitive_ports")
-
-        if port_count > 3:
-            score += 1
-            reasons.append("many_ports")
-
-        # ----------------------------------------------
-        # Shadow / unmanaged
-        # ----------------------------------------------
-
-        if is_known is False:
-            score += 2
-            reasons.append("shadow_asset")
-
-        # ----------------------------------------------
-        # Cloud
-        # ----------------------------------------------
-
-        provider = provider_map.get(domain_id)
-
-        if provider and any(
-            cloud in provider.lower()
-            for cloud in [
-                "amazon",
-                "aws",
-                "azure",
-                "gcp",
-                "google cloud"
-            ]
-        ):
-            score += 1
-            reasons.append("cloud")
-
-        # ----------------------------------------------
-        # Asset Exposure
-        # ----------------------------------------------
-
-        asset_keywords = get_asset_exposure_keywords(domain)
-
-        if asset_keywords:
-            score += 1
-
-            reasons.append(
-                "asset_exposure:" + ",".join(asset_keywords)
-            )
-
-        # ----------------------------------------------
-        # Historical volatility
-        # ----------------------------------------------
-
-        flips = volatility_map.get(domain_id, 0)
-
-        if flips >= 2:
-            score += 3
-            reasons.append("ip_state_volatility")
-
-        # ----------------------------------------------
-        # Findings
-        # ----------------------------------------------
-
-        finding_info = finding_map.get(
-            domain_id,
-            {
-                "count": 0,
-                "high": 0
-            }
-        )
-
-        if finding_info["count"] > 0:
-
-            score += 3
-            reasons.append("finding")
-
-        if finding_info["high"] > 0:
-
-            score += 2
-            reasons.append("high_finding")
-
-        # ----------------------------------------------
-        # Keep only meaningful risk
-        # ----------------------------------------------
-
-        if score > 0:
-      
-            if score >= 8:
-                priority = "High"
-            elif score >= 6:
-                priority = "Elevated"
-            elif score >= 4:
-                priority = "Review"
-            else:
-                priority = "Low"
-
-            results.append({
-                "domain": domain,
-                "risk_score": score,
-                "priority": priority,
-                "reasons": reasons
-            })
-
-    # --------------------------------------------------
-    # Highest risk first
-    # --------------------------------------------------
-
+    results = [
+        {
+            "domain": risk.domain,
+            "risk_score": risk.result.score,
+            "priority": risk.result.priority,
+            "reasons": list(risk.result.reasons),
+        }
+        for risk in canonical_risks
+        if risk.result.score > 0
+    ]
     results.sort(
-        key=lambda x: (
-            x["risk_score"],
-            x["domain"]
-        ),
-        reverse=True
+        key=lambda item: (item["risk_score"], item["domain"]),
+        reverse=True,
     )
-
     return results[:100]
-    
+
+
 @app.get("/sensitive-exposure")
 def sensitive_exposure():
 
@@ -1100,124 +768,60 @@ def provider_clusters():
     ]
 @app.get("/shadow-assets")
 def shadow_assets():
-
     conn = get_conn()
     cur = conn.cursor()
+    scan_id = get_latest_authoritative_scan_id(cur)
 
-    state_scan = get_latest_authoritative_scan_id(cur)
+    if scan_id is None:
+        conn.close()
+        return []
 
-    cur.execute("""
-        SELECT
-            d.domain,
-            ds.has_ip,
-            ds.http_live,
-            COUNT(dp2.port) as ports,
-            COUNT(sp.port) as sensitive,
-            dp.provider
-        FROM domains d
-    
-        JOIN domain_states ds
-            ON d.id = ds.domain_id
-    
-        LEFT JOIN domain_ports dp2
-            ON d.id = dp2.domain_id
-            AND dp2.scan_id = ds.scan_id
-    
-        LEFT JOIN sensitive_ports sp
-            ON dp2.port = sp.port
-    
-        LEFT JOIN domain_provider dp
-            ON d.id = dp.domain_id
-            AND dp.scan_id = ds.scan_id
-    
-        WHERE ds.scan_id = %s
-        AND d.is_known = FALSE
-    
-        GROUP BY d.domain, ds.has_ip, ds.http_live, dp.provider
-    """, (state_scan,))
-
-    rows = cur.fetchall()
-
+    canonical_risks = calculate_scan_risks(cur, scan_id)
     conn.close()
 
-    results = []
-    
-    for r in rows:
-    
-        domain, has_ip, http_live, ports, sensitive, provider = r
-    
-        score = 0
-        reasons = []
-    
-        if has_ip and not http_live:
-            score += 2
-            reasons.append("resolves_no_http")
-    
-        if sensitive > 0:
-            score += 3
-            reasons.append("sensitive_ports")
-    
-        if ports > 3:
-            score += 1
-            reasons.append("many_ports")
-    
-        if provider and any(x in provider.lower() for x in ["amazon", "aws", "azure", "gcp"]):
-            score += 1
-            reasons.append("cloud")
-    
-        # 🎯 Only keep meaningful ones
-        if score >= 3:
-            results.append({
-                "domain": domain,
-                "score": score,
-                "reasons": reasons
-            })
-    
-    # sort + limit
-    return sorted(results, key=lambda x: x["score"], reverse=True)[:50]
+    ranked = sorted(
+        (risk for risk in canonical_risks if risk.is_known is False),
+        key=lambda risk: (risk.result.score, risk.domain),
+        reverse=True,
+    )[:50]
+    return [
+        {
+            "domain": risk.domain,
+            "score": risk.result.score,
+            "priority": risk.result.priority,
+            "reasons": list(risk.result.reasons),
+        }
+        for risk in ranked
+    ]
 
-    return sorted(results, key=lambda x: x["score"], reverse=True)
 
 @app.get("/risk-leaderboard")
 def risk_leaderboard():
-
     conn = get_conn()
     cur = conn.cursor()
-
     scan_id = get_latest_authoritative_scan_id(cur)
 
-    query = """
-    SELECT d.domain, dr.risk_score, dr.reasons
-    FROM domain_risk dr
-    JOIN domains d ON dr.domain_id = d.id
-    JOIN domain_states ds
-      ON d.id = ds.domain_id
-      AND ds.scan_id = dr.scan_id
-    WHERE dr.scan_id = %s
-    AND ds.has_ip = TRUE
-    ORDER BY dr.risk_score DESC
-    LIMIT 50;
-    """
+    if scan_id is None:
+        conn.close()
+        return []
 
-    cur.execute(query, (scan_id,))
-    rows = cur.fetchall()
-
+    canonical_risks = calculate_scan_risks(cur, scan_id)
     conn.close()
 
-    result = []
-
-    for domain, score, reasons in rows:
-
-        if isinstance(reasons, str):
-            reasons = reasons.split(",")
-
-        result.append({
-            "domain": domain,
-            "risk": score,
-            "reasons": reasons
-        })
-
-    return result    
+    ranked = sorted(
+        (risk for risk in canonical_risks if risk.has_ip and risk.result.score > 0),
+        key=lambda risk: (risk.result.score, risk.domain),
+        reverse=True,
+    )[:50]
+    return [
+        {
+            "domain": risk.domain,
+            "risk": risk.result.score,
+            "priority": risk.result.priority,
+            "reasons": list(risk.result.reasons),
+        }
+        for risk in ranked
+    ]
 
 
 @app.get("/domain/{domain_name}")
@@ -1297,6 +901,15 @@ def domain_detail(domain_name: str):
 
     tech = cur.fetchone()
 
+    canonical_risk = next(
+        (
+            risk
+            for risk in calculate_scan_risks(cur, scan_id)
+            if risk.domain_id == domain_id
+        ),
+        None,
+    )
+
     conn.close()
 
     return {
@@ -1314,7 +927,10 @@ def domain_detail(domain_name: str):
         "provider": prov[0] if prov else "Unknown",
         "asn": asn[0] if asn else "Unknown",
         "org": asn[1] if asn else "Unknown",
-        "tech": tech[0] if tech else "Unknown"
+        "tech": tech[0] if tech else "Unknown",
+        "risk_score": canonical_risk.result.score if canonical_risk else 0,
+        "priority": canonical_risk.result.priority if canonical_risk else "Low",
+        "reasons": list(canonical_risk.result.reasons) if canonical_risk else [],
     }
     
     
@@ -1338,6 +954,9 @@ ASN: {domain_data.get("asn")}
 Organization: {domain_data.get("org")}
 Ports: {domain_data.get("ports")}
 Technology: {domain_data.get("tech")}
+Canonical Risk Score: {domain_data.get("risk_score")}
+Canonical Priority: {domain_data.get("priority")}
+Canonical Reasons: {domain_data.get("reasons")}
 
 Provide:
 
@@ -1348,6 +967,9 @@ Provide:
 3. Recommended Actions
 
 Keep the response concise and practical.
+
+Use only the supplied deterministic risk score, priority, and reasons.
+Do not recalculate or modify risk and do not invent unsupported evidence.
 """
 
     analysis = ask_llm(prompt)
@@ -1554,7 +1176,7 @@ def export_enriched_csv():
             "Domain", "Is Known", "First Seen", "Last Seen",
             "first_seen_at", "last_seen_at", "IP", "HTTP Status",
             "Reverse DNS", "Final URL", "Title", "Provider", "ASN",
-            "Risk Score", "Reasons", "Cert Status", "Days to Expiry",
+            "Risk Score", "Priority", "Reasons", "Cert Status", "Days to Expiry",
             "scannable", "confidence_score", "confidence_label",
             "confidence_reasons", "Open Ports", "Tech",
             "Redirect Category", "Sensitive Ports", "Shadow Type",
@@ -1573,6 +1195,11 @@ def export_enriched_csv():
             f"attachment; filename=asm_scan_none_{timestamp}.csv"
         return response
 
+    canonical_by_domain = {
+        risk.domain: risk
+        for risk in calculate_scan_risks(cur, scan_id)
+    }
+
     query = """
     SELECT 
         d.domain,
@@ -1589,10 +1216,7 @@ def export_enriched_csv():
     
         COALESCE(dp.provider, 'Unknown') as provider,
         COALESCE(da.asn, 'Unknown') as asn,
-    
-        COALESCE(dr.risk_score, 0) as risk_score,
-        COALESCE(dr.reasons, '') as reasons,
-    
+
         COALESCE(dc.cert_status, 'unknown') as cert_status,
         COALESCE(dc.days_to_expiry, -1) as days_to_expiry,
     
@@ -1615,14 +1239,11 @@ def export_enriched_csv():
     LEFT JOIN domain_asn da
         ON d.id = da.domain_id AND da.scan_id = %s
     
-    LEFT JOIN domain_risk dr
-        ON d.id = dr.domain_id AND dr.scan_id = %s
-    
     LEFT JOIN domain_cert dc
         ON d.id = dc.domain_id AND dc.scan_id = %s
     """
 
-    cur.execute(query, (scan_id, scan_id, scan_id, scan_id, scan_id))
+    cur.execute(query, (scan_id, scan_id, scan_id, scan_id))
     rows = cur.fetchall()
 
     columns = [
@@ -1639,8 +1260,6 @@ def export_enriched_csv():
         "title",
         "provider",
         "asn",
-        "risk_score",
-        "reasons",
         "cert_status",
         "days_to_expiry",
         "has_ip",
@@ -1652,6 +1271,18 @@ def export_enriched_csv():
     ]
 
     df = pd.DataFrame(rows, columns=columns)
+    df["risk_score"] = df["domain"].map(
+        lambda domain: canonical_by_domain[domain].result.score
+        if domain in canonical_by_domain else 0
+    )
+    df["priority"] = df["domain"].map(
+        lambda domain: canonical_by_domain[domain].result.priority
+        if domain in canonical_by_domain else "Low"
+    )
+    df["reasons"] = df["domain"].map(
+        lambda domain: ",".join(canonical_by_domain[domain].result.reasons)
+        if domain in canonical_by_domain else ""
+    )
     
     cur.execute("""
     SELECT LOWER(domain)
@@ -1779,6 +1410,7 @@ def export_enriched_csv():
         "asn": "ASN",
         "tech": "Tech",
         "risk_score": "Risk Score",
+        "priority": "Priority",
         "reasons": "Reasons",
         "ports": "Open Ports",
         "sensitive_ports": "Sensitive Ports",
@@ -1823,6 +1455,11 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
             "assets": []
         }
 
+    canonical_by_domain = {
+        risk.domain: risk
+        for risk in calculate_scan_risks(cur, scan_id)
+    }
+
     query = """
     SELECT 
         d.domain,
@@ -1834,8 +1471,7 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
         COALESCE(da.asn,'Unknown') as asn,
         COALESCE(dt.tech,'Unknown') as tech,
     
-        COALESCE(STRING_AGG(DISTINCT p.port::text, ','), '') as ports,
-        COALESCE(dr.risk_score, 0) as risk
+        COALESCE(STRING_AGG(DISTINCT p.port::text, ','), '') as ports
     
     FROM domains d
     
@@ -1859,10 +1495,6 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
         ON d.id = p.domain_id
         AND p.scan_id = %s
     
-    LEFT JOIN domain_risk dr
-        ON d.id = dr.domain_id
-        AND dr.scan_id = %s
-    
     WHERE ds.has_ip = TRUE
     AND dp.provider IS NOT NULL
     AND dp.provider != 'Unknown'
@@ -1871,14 +1503,13 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
     GROUP BY 
         d.domain, d.is_known,
         ds.ip, ds.has_ip, ds.http_status,
-        dp.provider, da.asn, dt.tech,
-        dr.risk_score
+        dp.provider, da.asn, dt.tech
     """
 
     cur.execute(
         query + " LIMIT %s OFFSET %s",
         (
-            scan_id, scan_id, scan_id, scan_id, scan_id, scan_id,
+            scan_id, scan_id, scan_id, scan_id, scan_id,
             provider, provider, provider,
             limit, offset
         )
@@ -1899,7 +1530,12 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
             "asn": r[6],
             "tech": r[7],
             "ports": r[8],
-            "risk": r[9]
+            "risk": canonical_by_domain[r[0]].result.score
+            if r[0] in canonical_by_domain else 0,
+            "priority": canonical_by_domain[r[0]].result.priority
+            if r[0] in canonical_by_domain else "Low",
+            "reasons": list(canonical_by_domain[r[0]].result.reasons)
+            if r[0] in canonical_by_domain else [],
         })
 
     conn.close()
@@ -1986,37 +1622,32 @@ def cert_expiry():
     
 @app.get("/shadow-summary")
 def shadow_summary():
-
     conn = get_conn()
     cur = conn.cursor()
-
     scan_id = get_latest_authoritative_scan_id(cur)
 
-    cur.execute("""
-        SELECT 
-            CASE
-                WHEN COUNT(sp.port) >= 3 THEN 'High'
-                WHEN COUNT(sp.port) >= 1 THEN 'Medium'
-                ELSE 'Low'
-            END as risk,
-            COUNT(*) as count
-        FROM domains d
-        JOIN domain_states ds ON d.id = ds.domain_id
-        LEFT JOIN domain_ports dp 
-            ON d.id = dp.domain_id AND dp.scan_id = ds.scan_id
-        LEFT JOIN sensitive_ports sp 
-            ON dp.port = sp.port
-        WHERE ds.scan_id = %s
-        AND d.is_known = FALSE
-        AND ds.has_ip = TRUE
-        AND ds.http_live = FALSE
-        GROUP BY risk
-    """, (scan_id,))
+    if scan_id is None:
+        conn.close()
+        return []
 
-    rows = cur.fetchall()
+    risks = calculate_scan_risks(cur, scan_id)
     conn.close()
 
-    return [{"risk": r[0], "count": r[1]} for r in rows]
+    counts = {}
+    for risk in risks:
+        if (
+            risk.is_known is False
+            and risk.has_ip
+            and risk.http_observation_status == "NO_RESPONSE"
+        ):
+            priority = risk.result.priority
+            counts[priority] = counts.get(priority, 0) + 1
+
+    return [
+        {"risk": priority, "count": counts[priority]}
+        for priority in ("High", "Elevated", "Review", "Low")
+        if priority in counts
+    ]
     
 @app.get("/shadow-by-provider")
 def shadow_by_provider():
@@ -2045,71 +1676,60 @@ def shadow_by_provider():
     
 @app.get("/non-web-summary")
 def non_web_summary():
-
     conn = get_conn()
     cur = conn.cursor()
-
     scan_id = get_latest_authoritative_scan_id(cur)
 
-    cur.execute("""
-        SELECT 
-            CASE
-                WHEN COUNT(sp.port) >= 3 THEN 'High'
-                WHEN COUNT(sp.port) >= 1 THEN 'Medium'
-                ELSE 'Low'
-            END as risk,
-            COUNT(*) as count
-        FROM domain_states ds
+    if scan_id is None:
+        conn.close()
+        return []
 
-        LEFT JOIN domain_ports dp
-            ON ds.domain_id = dp.domain_id
-            AND ds.scan_id = dp.scan_id
-
-        LEFT JOIN sensitive_ports sp
-            ON dp.port = sp.port
-
-        WHERE ds.scan_id = %s
-        AND ds.has_ip = TRUE
-        AND ds.http_live = FALSE
-
-        GROUP BY risk
-    """, (scan_id,))
-
-    rows = cur.fetchall()
+    risks = calculate_scan_risks(cur, scan_id)
     conn.close()
 
-    return [{"risk": r[0], "count": r[1]} for r in rows]    
+    counts = {}
+    for risk in risks:
+        if risk.has_ip and risk.http_observation_status == "NO_RESPONSE":
+            priority = risk.result.priority
+            counts[priority] = counts.get(priority, 0) + 1
+
+    return [
+        {"risk": priority, "count": counts[priority]}
+        for priority in ("High", "Elevated", "Review", "Low")
+        if priority in counts
+    ]
     
 @app.get("/unknown-high-risk")
 def unknown_high_risk():
-
     conn = get_conn()
     cur = conn.cursor()
-
     scan_id = get_latest_authoritative_scan_id(cur)
 
-    cur.execute("""
-        SELECT d.domain, dr.risk_score
-        FROM domain_risk dr
-        JOIN domains d ON d.id = dr.domain_id
-        JOIN domain_states ds ON ds.domain_id = d.id
+    if scan_id is None:
+        conn.close()
+        return []
 
-        WHERE dr.scan_id = %s
-        AND ds.scan_id = %s
-        AND d.is_known = FALSE
-        AND dr.risk_score >= 3
-
-        ORDER BY dr.risk_score DESC
-        LIMIT 20
-    """, (scan_id, scan_id))
-
-    rows = cur.fetchall()
+    canonical_risks = calculate_scan_risks(cur, scan_id)
     conn.close()
 
+    ranked = sorted(
+        (
+            risk for risk in canonical_risks
+            if risk.is_known is False and risk.result.priority == "High"
+        ),
+        key=lambda risk: (risk.result.score, risk.domain),
+        reverse=True,
+    )[:20]
     return [
-        {"domain": r[0], "risk": r[1]}
-        for r in rows
+        {
+            "domain": risk.domain,
+            "risk": risk.result.score,
+            "priority": risk.result.priority,
+            "reasons": list(risk.result.reasons),
+        }
+        for risk in ranked
     ]
+
 
 @app.get("/metrics/unvalidated-brand-footprint")
 def unvalidated_brand_footprint():

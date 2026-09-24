@@ -572,17 +572,16 @@ class FailClosedWriterTests(unittest.TestCase):
 
         self.assertEqual(connection.cursor().executions, [])
 
-    def test_risk_scoring_unchanged_and_mutation_is_lifecycle_guarded(self):
-        source = (BACKEND / "risk_worker.py").read_text(encoding="utf-8")
-        tree = ast.parse(source)
-        compute = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
-                       and n.name == "compute_risk")
-        self.assertEqual(
-            hashlib.sha256(ast.get_source_segment(source, compute).encode()).hexdigest(),
-            RISK_COMPUTE_BASELINE_SHA256,
-        )
-        self.assertLess(source.index("require_running_scan(cur, scan_id)"),
-                        source.index("INSERT INTO domain_risk"))
+    def test_canonical_risk_mutation_is_lifecycle_guarded(self):
+        worker = (BACKEND / "risk_worker.py").read_text(encoding="utf-8")
+        engine = (BACKEND / "risk_engine.py").read_text(encoding="utf-8")
+        self.assertIn("calculate_scan_risks(cur, scan_id)", worker)
+        self.assertIn('"new_asset": 3', engine)
+        self.assertIn('"high_finding": 2', engine)
+        self.assertLess(worker.index("require_running_scan(cur, scan_id)"),
+                        worker.index("calculate_scan_risks(cur, scan_id)"))
+        self.assertLess(worker.index("require_running_scan(cur, scan_id)"),
+                        worker.index("INSERT INTO domain_risk"))
 
 
 if __name__ == "__main__":

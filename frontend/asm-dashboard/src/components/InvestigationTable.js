@@ -7,6 +7,7 @@ export default function InvestigationTable({ filter, setFilter }) {
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState("all");
   const [page, setPage] = useState(1);
+  const priorityRank = { Low: 0, Review: 1, Elevated: 2, High: 3 };
 
   useEffect(() => {
     async function load() {
@@ -54,13 +55,11 @@ export default function InvestigationTable({ filter, setFilter }) {
       return false;
     }
   
-    // Risk
-    if (filter?.risk && Number(d.risk) < Number(filter.risk)) {
-      return false;
-    }
-  
-    // Risk dropdown
-    if (riskFilter !== "all" && Number(d.risk) < Number(riskFilter)) {
+    // Canonical priority dropdown. Thresholds remain backend-owned.
+    if (
+      riskFilter !== "all"
+      && (priorityRank[d.priority] ?? -1) < priorityRank[riskFilter]
+    ) {
       return false;
     }
   
@@ -100,9 +99,9 @@ export default function InvestigationTable({ filter, setFilter }) {
           onChange={e => setRiskFilter(e.target.value)}
         >
           <option value="all">All Risk</option>
-          <option value="1">Risk ≥ 1</option>
-          <option value="2">Risk ≥ 2</option>
-          <option value="3">Risk ≥ 3</option>
+          <option value="Review">Review or higher</option>
+          <option value="Elevated">Elevated or higher</option>
+          <option value="High">High</option>
         </select>
 
         <select
@@ -146,7 +145,7 @@ export default function InvestigationTable({ filter, setFilter }) {
           {filtered.map((d,i)=>(
             <tr key={i} style={{borderBottom:"1px solid #ddd"}}>
               <td>{d.domain}</td>
-              <td>{d.risk}</td>
+              <td>{d.risk} ({d.priority})</td>
               <td>{d.ip}</td>
               <td>{d.provider}</td>
               <td>{d.ports}</td>

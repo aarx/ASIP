@@ -254,19 +254,19 @@ class SanHttpOutcomePersistenceTests(unittest.TestCase):
 
 class ProtectedBehaviorTests(unittest.TestCase):
     def test_risky_domains_weights_thresholds_and_authorization_policy_are_unchanged(self):
-        main = source("main.py")
+        engine = source("risk_engine.py")
         for snippet in (
-            'reasons.append("new_asset")',
-            'reasons.append("http_exposed")',
-            'reasons.append("resolves_no_http")',
+            '"new_asset": 3',
+            '"http_exposed": 1',
+            '"resolves_no_http": 1',
             'score >= 8',
-            'priority = "High"',
+            'return "High"',
             'score >= 6',
-            'priority = "Elevated"',
+            'return "Elevated"',
             'score >= 4',
-            'priority = "Review"',
+            'return "Review"',
         ):
-            self.assertIn(snippet, main)
+            self.assertIn(snippet, engine)
 
         policy = source("authorization_policy.py")
         self.assertIn("scannable IS TRUE", policy)
@@ -274,7 +274,8 @@ class ProtectedBehaviorTests(unittest.TestCase):
 
     def test_known_shadow_and_risk_worker_are_not_modified_by_3a_contract(self):
         self.assertIn("d.is_known = FALSE", source("main.py"))
-        self.assertIn("def compute_risk(row):", source("risk_worker.py"))
+        self.assertIn("evidence.is_known is False", source("risk_engine.py"))
+        self.assertIn("calculate_scan_risks(cur, scan_id)", source("risk_worker.py"))
 
 
 if __name__ == "__main__":

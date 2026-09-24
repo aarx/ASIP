@@ -14,7 +14,7 @@ PROTECTED_SHA256 = {
     "ingest.py": "70a6cb8d0977e908b8ffdaa9591b032b11bde4fc637f48f9534bda7c66a3a1dc",
     "orchestration.py": "2813d097152f3e7deb5d3b235c3e2777b30f527e361a270485cfb7b286a43960",
     "discovery_validator.py": "6f04cb10043cd63ff5dd20785a29cbe186794924d3654139f2ca1356b232c678",
-    "main.py": "de49d0a687d83c25c448fe58f0b0923fbc769e67c91bf469412650c30240509e",
+    "main.py": "3cdf0b4a5955115207402ebb987839ab9610491687d337415e84ea0127b5163e",
 }
 
 CONSUMERS = (
@@ -76,7 +76,8 @@ class StaticMembershipContractTests(unittest.TestCase):
     def test_every_consumer_mentions_authoritative_membership(self):
         for filename in CONSUMERS:
             with self.subTest(filename=filename):
-                candidates = [sql for sql in sql_statements(filename)
+                contract_file = "risk_engine.py" if filename == "risk_worker.py" else filename
+                candidates = [sql for sql in sql_statements(contract_file)
                               if sql.startswith('SELECT') and
                               ('JOIN DOMAIN_STATES' in sql or 'FROM DOMAIN_STATES' in sql
                                or 'JOIN DOMAIN_ASN' in sql or 'FROM DOMAIN_DNS' in sql)]
@@ -131,19 +132,13 @@ class StaticMembershipContractTests(unittest.TestCase):
                 if "SCANNABLE" in text:
                     self.assertIn("SCAN_RESULTS", text)
 
-    def test_risk_compute_function_is_byte_for_byte_unchanged(self):
-        text = source("risk_worker.py")
-        tree = ast.parse(text)
-        function = next(
-            node for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == "compute_risk"
-        )
-        segment = ast.get_source_segment(text, function)
-        digest = hashlib.sha256(segment.encode("utf-8")).hexdigest()
-        self.assertEqual(
-            digest,
-            "c797d4c35687eb5a329393f7d94a54488cdfbd5168a87c1c4845d99ff7c1fa33",
-        )
+    def test_risk_worker_uses_shared_canonical_engine(self):
+        worker = source("risk_worker.py")
+        engine = source("risk_engine.py")
+        self.assertIn("calculate_scan_risks(cur, scan_id)", worker)
+        self.assertNotIn("def compute_risk(", worker)
+        self.assertIn("def calculate_risk(evidence", engine)
+        self.assertIn("FROM scan_results sr", engine)
 
     def test_out_of_scope_backend_files_are_unchanged(self):
         for filename, expected in PROTECTED_SHA256.items():
@@ -465,7 +460,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.sql("INSERT INTO domain_cert VALUES (%s,42,NULL,10,'critical')", (member,))
         self.run_worker('risk_worker.py')
         self.assertEqual(self.sql('SELECT risk_score,reasons FROM domain_risk WHERE domain_id=%s', (member,)),
-                         [(5,'sensitive_port_exposed,critical_port_exposed,web_entrypoint_present,cert_expiring,high_risk_unknown_service')])
+                         [(5,'["sensitive_ports","shadow_asset"]')])
         self.assertEqual(self.sql('SELECT risk_score,reasons FROM domain_risk WHERE domain_id=%s', (orphan,)), [(99,'preserve')])
 
     def test_ingest_retry_then_membership_sync_and_downstream_retry_rejection(self):

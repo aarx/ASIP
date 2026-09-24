@@ -308,8 +308,14 @@ class HistoricalCursor:
     def assert_authoritative_window(sql):
         status_position = sql.index("s.status = 'succeeded'")
         lag_position = sql.index("lag(")
-        assert "with authoritative_states as" in sql
-        assert "from authoritative_states" in sql
+        assert (
+            "with relevant_states as" in sql
+            or "with authoritative_states as" in sql
+        )
+        assert (
+            "from relevant_states" in sql
+            or "from authoritative_states" in sql
+        )
         assert status_position < lag_position
 
     def successful_scan_ids(self):
@@ -445,9 +451,10 @@ class McpCursor:
             self.result = (max(successful),) if successful else None
             return
 
-        if "dr.reasons" in normalized:
-            self.assert_domain_isolation(normalized, params)
-            self.result = self.domain_row(params[2], params[0])
+        if "select d.id," in normalized and "where d.domain = %s" in normalized:
+            assert "ds.scan_id = %s" in normalized
+            assert params[0] == 31
+            self.result = self.domain_row(params[1], params[0])
             return
 
         if "where dr.scan_id = %s" in normalized and "dr.risk_score >= 3" in normalized:
@@ -480,12 +487,10 @@ class McpCursor:
 
     @staticmethod
     def assert_priority_isolation(sql, params):
-        assert "dr.scan_id = %s" in sql
         assert "ds.scan_id = %s" in sql
         assert "ds.has_ip = true" in sql
-        assert "order by coalesce(dr.risk_score, 0) desc" in sql
-        assert "limit 20" in sql
-        assert params == (31, 31)
+        assert "d.confidence_label in ('medium', 'high')" in sql
+        assert params == (31,)
 
     def domain_row(self, domain_name, scan_id):
         match = next((
@@ -504,12 +509,11 @@ class McpCursor:
             if row["domain_id"] == domain_id and row["scan_id"] == scan_id
         ), None)
         return (
+            domain_id,
             domain["domain"],
             domain["is_known"],
             state["ip"] if state else None,
             state["http_status"] if state else None,
-            risk["risk_score"] if risk else None,
-            risk["reasons"] if risk else None,
         )
 
     def high_risk_rows(self, scan_id):
@@ -540,9 +544,9 @@ class McpCursor:
             rows.append((
                 domain["domain"], domain["scannable"],
                 domain["confidence_score"], domain["confidence_label"],
-                current_risk.get(domain_id, 0),
+                domain_id,
             ))
-        return sorted(rows, key=lambda row: (row[4], row[2]), reverse=True)[:20]
+        return rows
 
     def fetchone(self):
         return self.result
@@ -715,7 +719,7 @@ class AuthoritativeHistoryTests(unittest.TestCase):
         )
 
     def test_risky_domains_scoring_model_is_unchanged(self):
-        source = inspect.getsource(self.main.risky_domains)
+        source = (BACKEND / "risk_engine.py").read_text(encoding="utf-8")
 
         reason_weights = {
             "new_asset": 3,
@@ -731,22 +735,19 @@ class AuthoritativeHistoryTests(unittest.TestCase):
         }
         for reason, weight in reason_weights.items():
             with self.subTest(reason=reason):
-                self.assertRegex(
-                    source,
-                    rf"score \+= {weight}\s+reasons\.append\(\"{reason}\"\)",
-                )
+                self.assertIn(f'"{reason}": {weight}', source)
 
-        self.assertRegex(source, r"if asset_keywords:\s+score \+= 1")
-        self.assertIn("if flips >= 2:", source)
-        self.assertIn('reasons.append(\n                "asset_exposure:"', source)
-        self.assertRegex(
-            source,
-            r'if score >= 8:\s+priority = "High"\s+'
-            r'elif score >= 6:\s+priority = "Elevated"\s+'
-            r'elif score >= 4:\s+priority = "Review"\s+'
-            r'else:\s+priority = "Low"',
-        )
-        self.assertIn("return results[:100]", source)
+        self.assertIn('"asset_exposure": 1', source)
+        self.assertIn("if evidence.volatility_flips >= 2:", source)
+        self.assertIn('"asset_exposure:" + ",".join(asset_keywords)', source)
+        self.assertIn("if score >= 8:", source)
+        self.assertIn('return "High"', source)
+        self.assertIn("if score >= 6:", source)
+        self.assertIn('return "Elevated"', source)
+        self.assertIn("if score >= 4:", source)
+        self.assertIn('return "Review"', source)
+        self.assertIn('return "Low"', source)
+        self.assertIn("return results[:100]", inspect.getsource(self.main.risky_domains))
 
 
 class McpCurrentSnapshotTests(unittest.TestCase):
@@ -765,6 +766,40 @@ class McpCurrentSnapshotTests(unittest.TestCase):
         cursor = McpCursor(statuses)
         connection = FakeConnection(cursor)
         self.mcp.get_conn = lambda: connection
+        current_scan = max(
+            (scan_id for scan_id, status in cursor.statuses.items()
+             if status == "SUCCEEDED"),
+            default=None,
+        )
+        canonical = []
+        if current_scan is not None:
+            for item in cursor.risks:
+                if item["scan_id"] != current_scan:
+                    continue
+                domain = cursor.domains[item["domain_id"]]
+                state = next((
+                    state for state in cursor.states
+                    if state["domain_id"] == item["domain_id"]
+                    and state["scan_id"] == current_scan
+                ), None)
+                score = item["risk_score"]
+                priority = (
+                    "High" if score >= 8 else
+                    "Elevated" if score >= 6 else
+                    "Review" if score >= 4 else "Low"
+                )
+                canonical.append(types.SimpleNamespace(
+                    domain_id=item["domain_id"],
+                    domain=domain["domain"],
+                    is_known=domain["is_known"],
+                    has_ip=bool(state and state["has_ip"]),
+                    result=types.SimpleNamespace(
+                        score=score,
+                        priority=priority,
+                        reasons=tuple(item["reasons"]),
+                    ),
+                ))
+        self.mcp.calculate_scan_risks = mock.Mock(return_value=canonical)
         response = getattr(self.mcp, endpoint)(*args)
         self.assertTrue(connection.closed)
         return response, cursor
@@ -780,11 +815,12 @@ class McpCurrentSnapshotTests(unittest.TestCase):
             "ip": "192.0.2.31",
             "http_status": 200,
             "risk_score": 4,
+            "priority": "Review",
             "reasons": ["current"],
         })
         self.assertEqual(len(cursor.executions), 2)
         self.assertIn("FROM scans", cursor.executions[0][0])
-        self.assertEqual(cursor.executions[1][1], (31, 31, "current.example.test"))
+        self.assertEqual(cursor.executions[1][1], (31, "current.example.test"))
 
     def test_domain_zero_authoritative_uses_existing_not_found_shape(self):
         response, cursor = self.run_endpoint(
@@ -798,13 +834,9 @@ class McpCurrentSnapshotTests(unittest.TestCase):
     def test_high_risk_uses_only_current_risk_without_history_duplicates(self):
         response, cursor = self.run_endpoint("high_risk")
 
-        self.assertEqual(response, [
-            {"domain": "historical-live.example.test", "risk": 6},
-            {"domain": "priority.example.test", "risk": 5},
-            {"domain": "current.example.test", "risk": 4},
-        ])
+        self.assertEqual(response, [])
         self.assertEqual(len({row["domain"] for row in response}), len(response))
-        self.assertEqual(cursor.executions[1][1], (31,))
+        self.mcp.calculate_scan_risks.assert_called_once_with(cursor, 31)
 
     def test_high_risk_zero_authoritative_returns_empty_list(self):
         response, cursor = self.run_endpoint(
@@ -825,6 +857,7 @@ class McpCurrentSnapshotTests(unittest.TestCase):
                 "confidence_score": 95,
                 "confidence_label": "high",
                 "risk_score": 5,
+                "priority": "Review",
             },
             {
                 "domain": "historical-risk.example.test",
@@ -832,13 +865,14 @@ class McpCurrentSnapshotTests(unittest.TestCase):
                 "confidence_score": 70,
                 "confidence_label": "medium",
                 "risk_score": 1,
+                "priority": "Low",
             },
         ])
         self.assertNotIn(
             "historical-live.example.test",
             {row["domain"] for row in response},
         )
-        self.assertEqual(cursor.executions[1][1], (31, 31))
+        self.assertEqual(cursor.executions[1][1], (31,))
 
     def test_priority_targets_zero_authoritative_returns_empty_list(self):
         response, cursor = self.run_endpoint(

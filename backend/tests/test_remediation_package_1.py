@@ -263,20 +263,29 @@ class ApiAndWorkerRegressionTests(unittest.TestCase):
         self.assertEqual(params, (42, 42))
 
     def test_risk_leaderboard_scopes_risk_and_state_to_latest_scan(self):
-        cursor = RecordingCursor(
-            fetchones=[(42,)],
-            fetchalls=[[('risk.example', 4, 'no_http')]]
-        )
+        cursor = RecordingCursor(fetchones=[(42,)])
         connection = FakeConnection(cursor)
         self.main.get_conn = lambda: connection
+        self.main.calculate_scan_risks = mock.Mock(return_value=[
+            types.SimpleNamespace(
+                domain="risk.example",
+                has_ip=True,
+                result=types.SimpleNamespace(
+                    score=4, priority="Review", reasons=("shadow_asset",)
+                ),
+            )
+        ])
 
         result = self.main.risk_leaderboard()
 
-        self.assertEqual(result[0]["reasons"], ["no_http"])
-        query, params = cursor.executions[1]
-        self.assertIn("ds.scan_id = dr.scan_id", query)
-        self.assertIn("dr.scan_id = %s", query)
-        self.assertEqual(params, (42,))
+        self.assertEqual(result, [{
+            "domain": "risk.example",
+            "risk": 4,
+            "priority": "Review",
+            "reasons": ["shadow_asset"],
+        }])
+        self.main.calculate_scan_risks.assert_called_once_with(cursor, 42)
+        self.assertIn("FROM scans", cursor.executions[0][0])
 
     def test_mcp_findings_uses_finding_column_and_preserves_issue_key(self):
         cursor = RecordingCursor(
@@ -308,11 +317,12 @@ class ApiAndWorkerRegressionTests(unittest.TestCase):
         self.assertEqual(module.map_provider(None), "Unknown")
         self.assertEqual(module.map_provider(""), "Unknown")
 
-    def test_risk_worker_reads_active_certificate_observations(self):
-        source = (BACKEND / "risk_worker.py").read_text()
-        self.assertIn("LEFT JOIN domain_cert dc", source)
-        self.assertIn("dc.days_to_expiry", source)
-        self.assertNotIn("LEFT JOIN cert_expiry", source)
+    def test_canonical_risk_excludes_legacy_certificate_signal(self):
+        worker = (BACKEND / "risk_worker.py").read_text()
+        engine = (BACKEND / "risk_engine.py").read_text()
+        self.assertIn("calculate_scan_risks(cur, scan_id)", worker)
+        self.assertNotIn("domain_cert", engine)
+        self.assertNotIn("cert_expiring", engine)
 
 
 if __name__ == "__main__":

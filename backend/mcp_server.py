@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 import os
 from db import get_conn, get_latest_authoritative_scan_id
+from risk_engine import calculate_scan_risks
 
 app = FastAPI(title="ASM MCP Server")
 
@@ -86,36 +87,42 @@ def get_domain(domain: str):
 
     cur.execute("""
         SELECT 
+            d.id,
             d.domain,
             d.is_known,
             ds.ip,
-            ds.http_status,
-            dr.risk_score,
-            dr.reasons
+            ds.http_status
         FROM domains d
         LEFT JOIN domain_states ds
           ON d.id = ds.domain_id
          AND ds.scan_id = %s
-        LEFT JOIN domain_risk dr
-          ON d.id = dr.domain_id
-         AND dr.scan_id = %s
         WHERE d.domain = %s
         LIMIT 1
-    """, (scan_id, scan_id, domain))
+    """, (scan_id, domain))
 
     row = cur.fetchone()
-    conn.close()
 
     if not row:
+        conn.close()
         return {"error": "domain not found"}
 
+    canonical_risk = next(
+        (
+            risk for risk in calculate_scan_risks(cur, scan_id)
+            if risk.domain_id == row[0]
+        ),
+        None,
+    )
+    conn.close()
+
     return {
-        "domain": row[0],
-        "is_known": row[1],
-        "ip": row[2],
-        "http_status": row[3],
-        "risk_score": row[4],
-        "reasons": row[5]
+        "domain": row[1],
+        "is_known": row[2],
+        "ip": row[3],
+        "http_status": row[4],
+        "risk_score": canonical_risk.result.score if canonical_risk else 0,
+        "priority": canonical_risk.result.priority if canonical_risk else "Low",
+        "reasons": list(canonical_risk.result.reasons) if canonical_risk else [],
     }
 
 
@@ -158,22 +165,22 @@ def high_risk():
         conn.close()
         return []
 
-    cur.execute("""
-        SELECT d.domain, dr.risk_score
-        FROM domain_risk dr
-        JOIN domains d ON d.id = dr.domain_id
-        WHERE dr.scan_id = %s
-        AND dr.risk_score >= 3
-        ORDER BY dr.risk_score DESC
-        LIMIT 20
-    """, (scan_id,))
-
-    rows = cur.fetchall()
+    canonical_risks = calculate_scan_risks(cur, scan_id)
     conn.close()
 
+    ranked = sorted(
+        (risk for risk in canonical_risks if risk.result.priority == "High"),
+        key=lambda risk: (risk.result.score, risk.domain),
+        reverse=True,
+    )[:20]
     return [
-        {"domain": r[0], "risk": r[1]}
-        for r in rows
+        {
+            "domain": risk.domain,
+            "risk": risk.result.score,
+            "priority": risk.result.priority,
+            "reasons": list(risk.result.reasons),
+        }
+        for risk in ranked
     ]
    
    
@@ -199,12 +206,8 @@ def priority_targets():
             d.scannable,
             d.confidence_score,
             d.confidence_label,
-            COALESCE(dr.risk_score, 0) as risk_score
+            d.id
         FROM domains d
-
-        LEFT JOIN domain_risk dr
-            ON d.id = dr.domain_id
-           AND dr.scan_id = %s
 
         WHERE d.scannable = FALSE
         AND d.confidence_label IN ('medium', 'high')
@@ -217,26 +220,33 @@ def priority_targets():
             AND ds.has_ip = TRUE
         )
 
-        ORDER BY 
-            COALESCE(dr.risk_score, 0) DESC,
-            d.confidence_score DESC
-
-        LIMIT 20
-    """, (scan_id, scan_id))
+    """, (scan_id,))
 
     rows = cur.fetchall()
+    canonical_by_id = {
+        risk.domain_id: risk
+        for risk in calculate_scan_risks(cur, scan_id)
+    }
     conn.close()
 
-    return [
+    results = [
         {
             "domain": r[0],
             "scannable": r[1],
             "confidence_score": r[2],
             "confidence_label": r[3],
-            "risk_score": r[4]
+            "risk_score": canonical_by_id[r[4]].result.score
+            if r[4] in canonical_by_id else 0,
+            "priority": canonical_by_id[r[4]].result.priority
+            if r[4] in canonical_by_id else "Low",
         }
         for r in rows
     ]
+    results.sort(
+        key=lambda item: (item["risk_score"], item["confidence_score"]),
+        reverse=True,
+    )
+    return results[:20]
     
 # -------------------------
 # TOOL 6: INVESTIGATION GUIDE
