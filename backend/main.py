@@ -1131,6 +1131,7 @@ def shadow_assets():
             AND dp.scan_id = ds.scan_id
     
         WHERE ds.scan_id = %s
+        AND d.is_known = FALSE
     
         GROUP BY d.domain, ds.has_ip, ds.http_live, dp.provider
     """, (state_scan,))
@@ -1745,13 +1746,7 @@ def export_enriched_csv():
 
     # ⭐ SHADOW TYPE
     def get_shadow(row):
-        if not row["is_known"] and row["has_ip"]:
-            return "unknown"
-        elif row["has_ip"] and not row["http_live"]:
-            return "non_web"
-        elif not row["is_known"] and not row["http_live"]:
-            return "both"
-        return "none"
+        return "known" if row["is_known"] else "shadow"
 
     df["shadow_type"] = df.apply(get_shadow, axis=1)
 
@@ -2012,6 +2007,7 @@ def shadow_summary():
         LEFT JOIN sensitive_ports sp 
             ON dp.port = sp.port
         WHERE ds.scan_id = %s
+        AND d.is_known = FALSE
         AND ds.has_ip = TRUE
         AND ds.http_live = FALSE
         GROUP BY risk
