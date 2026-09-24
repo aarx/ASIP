@@ -20,7 +20,8 @@ def main():
         ip,
         has_ip,
         http_status,
-        http_live
+        http_live,
+        http_observation_status
     )
     SELECT
         sr.domain_id,
@@ -28,7 +29,8 @@ def main():
         '',
         FALSE,
         0,
-        FALSE
+        FALSE,
+        'UNKNOWN'
     FROM scan_results sr
 
     JOIN domains d

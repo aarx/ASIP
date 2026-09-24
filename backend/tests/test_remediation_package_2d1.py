@@ -330,7 +330,8 @@ class HandoffIntegrationTests(unittest.TestCase):
     def write_empty_recon_csv(path):
         pathlib.Path(path).write_text(
             "Domain,Source,Seed,IP,Reverse_DNS,HTTP_Status,HTTP_Reason,"
-            "Redirect_Location,Final_URL,Final_Status,Title,Domain_Status\n",
+            "Redirect_Location,Final_URL,Final_Status,Title,"
+            "HTTP_Observation_Status,Domain_Status\n",
             encoding="utf-8",
         )
 

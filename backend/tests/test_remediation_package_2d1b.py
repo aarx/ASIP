@@ -378,7 +378,8 @@ class FailClosedWriterTests(unittest.TestCase):
             source = root / "empty.csv"
             source.write_text(
                 "Domain,Source,Seed,IP,Reverse_DNS,HTTP_Status,HTTP_Reason,"
-                "Redirect_Location,Final_URL,Final_Status,Title,Domain_Status\n",
+                "Redirect_Location,Final_URL,Final_Status,Title,"
+                "HTTP_Observation_Status,Domain_Status\n",
                 encoding="utf-8",
             )
             artifact_module.publish_recon_artifact(

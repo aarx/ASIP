@@ -17,6 +17,21 @@ def normalize_artifact_text(value):
     return str(value).strip()
 
 
+HTTP_OBSERVATION_STATUSES = {
+    "RESPONDED",
+    "NO_RESPONSE",
+    "FAILED",
+    "UNKNOWN",
+}
+
+
+def normalize_http_observation_status(value):
+    status = normalize_artifact_text(value).upper()
+    if status in HTTP_OBSERVATION_STATUSES:
+        return status
+    return "UNKNOWN"
+
+
 DOWNSTREAM_EVIDENCE_TABLES = (
     "domain_san",
     "domain_dns",
@@ -162,6 +177,9 @@ try:
             final_status = 0
 
         title = normalize_artifact_text(row.get("Title", ""))[:500]
+        http_observation_status = normalize_http_observation_status(
+            row.get("HTTP_Observation_Status", "")
+        )
 
         # ----------------------------
         # Insert domain
@@ -244,9 +262,10 @@ try:
                 http_reason,
                 final_url,
                 final_status,
-                title
+                title,
+                http_observation_status
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (domain_id, scan_id)
             DO UPDATE SET
                 ip = EXCLUDED.ip,
@@ -257,7 +276,8 @@ try:
                 http_reason = EXCLUDED.http_reason,
                 final_url = EXCLUDED.final_url,
                 final_status = EXCLUDED.final_status,
-                title = EXCLUDED.title
+                title = EXCLUDED.title,
+                http_observation_status = EXCLUDED.http_observation_status
             """,
             (
                 scan_id,
@@ -270,7 +290,8 @@ try:
                 http_reason,
                 final_url,
                 final_status,
-                title
+                title,
+                http_observation_status
             )
         )
 

@@ -40,6 +40,28 @@ def main():
         if not result:
             continue
 
+        outcome = result.get("http_observation_status", "UNKNOWN")
+        if outcome != "RESPONDED":
+            cur.execute("""
+                UPDATE domain_states
+                SET http_observation_status = %s
+                WHERE domain_id = %s
+                AND scan_id = %s
+                AND COALESCE(http_status, 0) = 0
+                AND EXISTS (
+                    SELECT 1
+                    FROM scan_results sr
+                    WHERE sr.scan_id = domain_states.scan_id
+                    AND sr.domain_id = domain_states.domain_id
+                )
+            """, (
+                outcome,
+                domain_id,
+                scan_id
+            ))
+            observed += cur.rowcount
+            continue
+
         http_status = result["http_status"]
         cur.execute("""
             UPDATE domain_states
@@ -48,7 +70,8 @@ def main():
                 http_reason = %s,
                 final_url = %s,
                 final_status = %s,
-                title = %s
+                title = %s,
+                http_observation_status = %s
             WHERE domain_id = %s
             AND scan_id = %s
             AND COALESCE(http_status, 0) = 0
@@ -65,6 +88,7 @@ def main():
             result["final_url"],
             result["final_status"],
             result["title"][:500],
+            outcome,
             domain_id,
             scan_id
         ))

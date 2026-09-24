@@ -25,6 +25,7 @@ CSV_COLUMNS = (
     "Final_URL",
     "Final_Status",
     "Title",
+    "HTTP_Observation_Status",
     "Domain_Status",
 )
 
@@ -229,6 +230,7 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
                         final_url text,
                         final_status integer,
                         title text,
+                        http_observation_status text DEFAULT 'UNKNOWN' NOT NULL,
                         UNIQUE (domain_id, scan_id)
                     );
                     CREATE TABLE domain_sources (
@@ -502,6 +504,27 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
             "https://a.example/new", 200, "New Title",
         ))
 
+    def test_http_observation_outcome_is_persisted_and_legacy_input_is_unknown(self):
+        self.ingest(42, [self.row(
+            "a.example",
+            HTTP_Status="404",
+            HTTP_Observation_Status="RESPONDED",
+        )])
+        self.assertEqual(
+            self.fetchall(
+                "SELECT http_observation_status FROM domain_states WHERE scan_id = 42"
+            ),
+            [("RESPONDED",)],
+        )
+
+        self.ingest(42, [self.row("a.example", HTTP_Status="0")])
+        self.assertEqual(
+            self.fetchall(
+                "SELECT http_observation_status FROM domain_states WHERE scan_id = 42"
+            ),
+            [("UNKNOWN",)],
+        )
+
     def test_missing_artifact_text_normalizes_to_empty_strings(self):
         populated = self.row(
             "a.example",
@@ -609,7 +632,10 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
                     (child_id,),
                 )
                 cursor.execute(
-                    "INSERT INTO domain_states VALUES "
+                    "INSERT INTO domain_states("
+                    "scan_id, domain_id, ip, has_ip, http_status, http_live, "
+                    "reverse_dns, http_reason, final_url, final_status, title"
+                    ") VALUES "
                     "(42, %s, '203.0.113.8', TRUE, 200, TRUE, 'ptr.example', "
                     "'OK', 'https://san-child.example', 200, 'SAN Child')",
                     (child_id,),

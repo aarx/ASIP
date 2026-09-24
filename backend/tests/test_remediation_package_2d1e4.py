@@ -21,6 +21,7 @@ CANONICAL_COLUMNS = [
     "Final_URL",
     "Final_Status",
     "Title",
+    "HTTP_Observation_Status",
     "Domain_Status",
 ]
 

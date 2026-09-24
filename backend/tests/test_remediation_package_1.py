@@ -172,6 +172,7 @@ class SanPipelineTests(unittest.TestCase):
         connection = FakeConnection(cursor)
         module.get_conn = lambda: connection
         module.http_probe = lambda domain: {
+            "http_observation_status": "RESPONDED",
             "http_status": 301,
             "http_reason": "Moved Permanently",
             "final_url": "https://www.example/final",

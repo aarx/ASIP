@@ -223,7 +223,8 @@ CREATE TABLE public.domain_states (
     http_reason text,
     final_url text,
     final_status integer,
-    title text
+    title text,
+    http_observation_status text DEFAULT 'UNKNOWN'::text NOT NULL
 );
 
 
@@ -673,6 +674,14 @@ ALTER TABLE ONLY public.domain_provider
 
 ALTER TABLE ONLY public.domain_states
     ADD CONSTRAINT unique_domain_scan UNIQUE (domain_id, scan_id);
+
+
+--
+-- Name: domain_states domain_states_http_observation_status_check; Type: CONSTRAINT; Schema: public; Owner: asm
+--
+
+ALTER TABLE ONLY public.domain_states
+    ADD CONSTRAINT domain_states_http_observation_status_check CHECK ((http_observation_status = ANY (ARRAY['RESPONDED'::text, 'NO_RESPONSE'::text, 'FAILED'::text, 'UNKNOWN'::text])));
 
 
 --

@@ -79,6 +79,7 @@ def add_domain(domain, source, seed):
             "ip": "",
             "reverse_dns": "",
             "http_status": "",
+            "http_observation_status": "UNKNOWN",
             "http_reason": "",
             "redirect_location": "",
             "final_url": "",
@@ -478,7 +479,8 @@ def main(seed_file, deep, expand, scan_id):
         writer = csv.writer(f)
         writer.writerow(["Domain","Source","Seed","IP","Reverse_DNS",
                          "HTTP_Status","HTTP_Reason","Redirect_Location",
-                         "Final_URL","Final_Status","Title","Domain_Status"])
+                         "Final_URL","Final_Status","Title",
+                         "HTTP_Observation_Status","Domain_Status"])
 
         for d,data in sorted(domain_registry.items()):
             writer.writerow([
@@ -493,6 +495,7 @@ def main(seed_file, deep, expand, scan_id):
                 data["final_url"],
                 data["final_status"],
                 data["title"],
+                data["http_observation_status"],
                 "Known" if d in known else "New"
             ])
 

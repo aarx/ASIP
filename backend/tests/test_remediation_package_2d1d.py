@@ -11,7 +11,7 @@ from backend.tests import test_remediation_package_2d1c as convergence
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 
 PROTECTED_SHA256 = {
-    "ingest.py": "7f6bfba078db7b24b61ae0ab1d161b9629cfd2047be9ea4fcd4082189a4037a5",
+    "ingest.py": "70a6cb8d0977e908b8ffdaa9591b032b11bde4fc637f48f9534bda7c66a3a1dc",
     "orchestration.py": "2813d097152f3e7deb5d3b235c3e2777b30f527e361a270485cfb7b286a43960",
     "discovery_validator.py": "6f04cb10043cd63ff5dd20785a29cbe186794924d3654139f2ca1356b232c678",
     "main.py": "de49d0a687d83c25c448fe58f0b0923fbc769e67c91bf469412650c30240509e",

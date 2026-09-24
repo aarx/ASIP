@@ -34,6 +34,7 @@ class HttpProbeTests(unittest.TestCase):
         result = http_probe.http_probe("example.test")
 
         self.assertEqual(result, {
+            "http_observation_status": "RESPONDED",
             "http_status": 301,
             "http_reason": "Moved Permanently",
             "final_url": "https://www.example.test/final",
@@ -51,22 +52,39 @@ class HttpProbeTests(unittest.TestCase):
     @mock.patch("http_probe.requests.get")
     def test_falls_back_from_https_to_http(self, get):
         get.side_effect = [
-            RuntimeError("TLS failed"),
+            http_probe.requests.exceptions.SSLError("TLS failed"),
             Response(204, "No Content", "http://example.test")
         ]
 
         result = http_probe.http_probe("example.test")
 
+        self.assertEqual(result["http_observation_status"], "RESPONDED")
         self.assertEqual(result["http_status"], 204)
         self.assertEqual(
             [call.args[0] for call in get.call_args_list],
             ["https://example.test", "http://example.test"]
         )
 
-    @mock.patch("http_probe.requests.get", side_effect=RuntimeError("offline"))
-    def test_returns_none_when_neither_scheme_responds(self, get):
-        self.assertIsNone(http_probe.http_probe("example.test"))
+    @mock.patch("http_probe.requests.get")
+    def test_returns_no_response_when_neither_scheme_responds(self, get):
+        get.side_effect = [
+            http_probe.requests.exceptions.ConnectTimeout("offline"),
+            http_probe.requests.exceptions.ConnectionError("refused"),
+        ]
+
+        result = http_probe.http_probe("example.test")
+
+        self.assertEqual(result["http_observation_status"], "NO_RESPONSE")
+        self.assertEqual(result["http_status"], 0)
         self.assertEqual(get.call_count, 2)
+
+    @mock.patch("http_probe.requests.get", side_effect=RuntimeError("broken"))
+    def test_returns_failed_for_internal_observation_failure(self, get):
+        result = http_probe.http_probe("example.test")
+
+        self.assertEqual(result["http_observation_status"], "FAILED")
+        self.assertEqual(result["http_status"], 0)
+        self.assertEqual(get.call_count, 1)
 
 
 if __name__ == "__main__":
