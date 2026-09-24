@@ -185,7 +185,16 @@ try:
         )
         ON CONFLICT (domain)
         DO UPDATE SET
-            last_seen_scan = EXCLUDED.last_seen_scan,
+            first_seen_scan = CASE
+                WHEN domains.first_seen_scan IS NULL THEN EXCLUDED.first_seen_scan
+                WHEN EXCLUDED.first_seen_scan IS NULL THEN domains.first_seen_scan
+                ELSE LEAST(domains.first_seen_scan, EXCLUDED.first_seen_scan)
+            END,
+            last_seen_scan = CASE
+                WHEN domains.last_seen_scan IS NULL THEN EXCLUDED.last_seen_scan
+                WHEN EXCLUDED.last_seen_scan IS NULL THEN domains.last_seen_scan
+                ELSE GREATEST(domains.last_seen_scan, EXCLUDED.last_seen_scan)
+            END,
             is_known = (
                 SELECT EXISTS (
                     SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
