@@ -39,6 +39,21 @@ KNOWN_DOMAINS_FILE = "known_domains.csv"
 
 domain_registry = {}
 source_stats = {}
+source_outcomes = {}
+
+SOURCE_OK = "OK"
+SOURCE_ZERO = "ZERO"
+SOURCE_FAILED = "FAILED"
+SOURCE_SKIPPED = "SKIPPED"
+
+SOURCE_LABELS = {
+    "subfinder": "Subfinder",
+    "assetfinder": "Assetfinder",
+    "findomain": "Findomain",
+    "amass": "Amass",
+    "crt.sh": "crt.sh",
+    "certspotter": "CertSpotter",
+}
 
 
 def normalize_domain(d):
@@ -53,7 +68,7 @@ def add_domain(domain, source, seed):
     domain = normalize_domain(domain)
 
     if not domain or "." not in domain:
-        return
+        return False
 
     source_stats[source] = source_stats.get(source, 0) + 1
 
@@ -74,6 +89,61 @@ def add_domain(domain, source, seed):
 
     domain_registry[domain]["sources"].add(source)
     domain_registry[domain]["seeds"].add(seed)
+    return True
+
+
+def record_source_attempt(source, status, result_count=0, error=None):
+    entry = source_outcomes.setdefault(source, {
+        "status": SOURCE_ZERO,
+        "results": 0,
+        "attempts": 0,
+        "failed": False,
+        "errors": [],
+    })
+
+    if status == SOURCE_SKIPPED:
+        if entry["attempts"] == 0:
+            entry["status"] = SOURCE_SKIPPED
+        return entry
+
+    entry["attempts"] += 1
+    entry["results"] += result_count
+
+    if status == SOURCE_FAILED:
+        entry["failed"] = True
+        if error:
+            entry["errors"].append(error)
+
+    if entry["failed"]:
+        entry["status"] = SOURCE_FAILED
+    elif entry["results"]:
+        entry["status"] = SOURCE_OK
+    else:
+        entry["status"] = SOURCE_ZERO
+
+    return entry
+
+
+def print_source_summary():
+    print("\nASIP Recon Source Summary")
+    print("-------------------------")
+
+    for source, entry in source_outcomes.items():
+        label = SOURCE_LABELS.get(source, source)
+        status = entry["status"]
+        if status in {SOURCE_OK, SOURCE_ZERO}:
+            print(f"{label:<16} {status:<7} {entry['results']:>6} results")
+        elif status == SOURCE_FAILED:
+            detail = entry["errors"][-1] if entry["errors"] else "source failed"
+            print(f"{label:<16} {status:<7} {detail}")
+        else:
+            print(f"{label:<16} {status}")
+
+    warnings = sum(
+        entry["status"] in {SOURCE_ZERO, SOURCE_FAILED}
+        for entry in source_outcomes.values()
+    )
+    print(f"Warnings: {warnings}")
 
 
 def run_tool(cmd):
@@ -82,12 +152,19 @@ def run_tool(cmd):
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            debug(
+                f"Tool failed: {' '.join(cmd)} | exit={result.returncode}"
+            )
+            return False, [], f"exit {result.returncode}"
+
         lines = result.stdout.splitlines()
         debug(f"Tool finished: {' '.join(cmd)} | results: {len(lines)}")
-        return lines
+        return True, lines, None
     except Exception as e:
-        debug(f"Tool failed: {' '.join(cmd)} | error: {e}")
-        return []
+        error = f"{type(e).__name__}: tool launch failed"
+        debug(f"Tool failed: {' '.join(cmd)} | {error}")
+        return False, [], error
 
 
 def extract_brand(seed):
@@ -104,9 +181,20 @@ def run_subdomain_enum(seed, deep):
 
     for name, cmd in tools:
         print(f"[+] Running {name} on {seed}")
-        results = run_tool(cmd + [seed])
+        completed, results, error = run_tool(cmd + [seed])
+        if not completed:
+            record_source_attempt(name, SOURCE_FAILED, error=error)
+            continue
+
+        usable = 0
         for d in results:
-            add_domain(d, name, seed)
+            if add_domain(d, name, seed):
+                usable += 1
+        record_source_attempt(
+            name,
+            SOURCE_OK if usable else SOURCE_ZERO,
+            result_count=usable,
+        )
 
 
 def brand_expand(seed):
@@ -130,16 +218,10 @@ def certificate_expand(seed):
     print(f"[+] Certificate expansion for {seed}")
 
     crtsh_expand(seed)
-    
     certspotter_expand(seed)
 
 
 def crtsh_expand(seed):
-
-    if not CERTSPOTTER_API_KEY:
-        debug("CertSpotter API key not configured")
-        return
-
     brand = extract_brand(seed)
 
     try:
@@ -159,45 +241,60 @@ def crtsh_expand(seed):
                 f"crt.sh returned {r.status_code}"
             )
 
-            return
+            return record_source_attempt(
+                "crt.sh", SOURCE_FAILED, error=f"HTTP {r.status_code}"
+            )
 
         data = r.json()
+        if not isinstance(data, list):
+            raise ValueError("response was not a list")
 
-        discovered = 0
+        candidates = []
 
         for entry in data:
+            if not isinstance(entry, dict):
+                raise ValueError("response contained a malformed entry")
 
-            for d in entry.get(
-                "name_value",
-                ""
-            ).split("\n"):
+            name_value = entry.get("name_value", "")
+            if not isinstance(name_value, str):
+                raise ValueError("response contained malformed name_value")
+
+            for d in name_value.split("\n"):
 
                 d = normalize_domain(
                     d.lstrip("*.")
                 )
 
                 if brand in d:
+                    candidates.append(d)
 
-                    add_domain(
-                        d,
-                        "brand_ct",
-                        seed
-                    )
-
-                    discovered += 1
+        discovered = sum(
+            add_domain(d, "brand_ct", seed)
+            for d in candidates
+        )
 
         print(
             f"[+] crt.sh discovered {discovered} domains"
         )
+        return record_source_attempt(
+            "crt.sh",
+            SOURCE_OK if discovered else SOURCE_ZERO,
+            result_count=discovered,
+        )
 
     except Exception as e:
-
-        debug(
-            f"crt.sh failed for {seed} | {e}"
+        error = f"{type(e).__name__}: request/response failure"
+        debug(f"crt.sh failed for {seed} | {error}")
+        return record_source_attempt(
+            "crt.sh", SOURCE_FAILED, error=error
         )
 
 
 def certspotter_expand(seed):
+
+    if not CERTSPOTTER_API_KEY:
+        debug("CertSpotter API key not configured")
+        return record_source_attempt("certspotter", SOURCE_SKIPPED)
 
     brand = extract_brand(seed)
 
@@ -228,38 +325,54 @@ def certspotter_expand(seed):
                 f"CertSpotter returned {r.status_code}"
             )
 
-            return
+            return record_source_attempt(
+                "certspotter", SOURCE_FAILED, error=f"HTTP {r.status_code}"
+            )
 
         data = r.json()
+        if not isinstance(data, list):
+            raise ValueError("response was not a list")
 
-        discovered = 0
+        candidates = []
 
         for cert in data:
+            if not isinstance(cert, dict):
+                raise ValueError("response contained a malformed entry")
 
-            for d in cert.get("dns_names", []):
+            dns_names = cert.get("dns_names", [])
+            if not isinstance(dns_names, list):
+                raise ValueError("response contained malformed dns_names")
+
+            for d in dns_names:
+                if not isinstance(d, str):
+                    raise ValueError("response contained a malformed DNS name")
 
                 d = normalize_domain(
                     d.lstrip("*.")
                 )
 
                 if brand in d:
+                    candidates.append(d)
 
-                    add_domain(
-                        d,
-                        "certspotter",
-                        seed
-                    )
-
-                    discovered += 1
+        discovered = sum(
+            add_domain(d, "certspotter", seed)
+            for d in candidates
+        )
 
         print(
             f"[+] CertSpotter discovered {discovered} domains"
         )
+        return record_source_attempt(
+            "certspotter",
+            SOURCE_OK if discovered else SOURCE_ZERO,
+            result_count=discovered,
+        )
 
     except Exception as e:
-
-        debug(
-            f"CertSpotter failed for {seed} | {e}"
+        error = f"{type(e).__name__}: request/response failure"
+        debug(f"CertSpotter failed for {seed} | {error}")
+        return record_source_attempt(
+            "certspotter", SOURCE_FAILED, error=error
         )
 
 def resolve_ip(domain):
@@ -294,6 +407,8 @@ def load_known():
 
 
 def main(seed_file, deep, expand, scan_id):
+
+    source_outcomes.clear()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     outdir = f"recon_scan_{scan_id}_{timestamp}"
@@ -390,6 +505,7 @@ def main(seed_file, deep, expand, scan_id):
     finally:
         conn.close()
     print(f"[+] Scan {scan_id} artifact published → {backend_csv}")
+    print_source_summary()
 
 if __name__ == "__main__":
 
