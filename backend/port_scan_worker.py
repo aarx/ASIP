@@ -74,6 +74,10 @@ def scan_ports(domain):
             timeout=60
         )
 
+        if result.returncode != 0:
+            print(f"Scan failed for {domain} → nmap exit {result.returncode}")
+            return []
+
         ports = []
 
         for line in result.stdout.splitlines():

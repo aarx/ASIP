@@ -102,8 +102,9 @@ def detect_tech(domain):
 
         return list(techs)
 
-    except:
-        return ["unknown"]
+    except Exception as e:
+        print(f"Tech detection failed for {domain} → {e}")
+        return None
 
 def main():
 
@@ -140,6 +141,9 @@ def main():
         techs = detect_tech(domain)
 
         print("Tech detect →", domain, techs)
+
+        if techs is None:
+            continue
         
         if isinstance(techs, str):
             techs = [techs]

@@ -47,14 +47,23 @@ def enrich_asn(ip):
 
     try:
         r = requests.get(f"https://ipinfo.io/{ip}/json", timeout=5)
+        if not 200 <= r.status_code < 300:
+            print(f"ASN lookup failed for {ip} → HTTP {r.status_code}")
+            return None
+
         data = r.json()
+        if not isinstance(data, dict):
+            raise ValueError("unexpected response shape")
 
         org = data.get("org", "")
+        if not isinstance(org, str):
+            raise ValueError("unexpected organization value")
         asn = org.split()[0] if org else ""
         return asn, org
 
-    except:
-        return "", ""
+    except Exception as e:
+        print(f"ASN lookup failed for {ip} → {type(e).__name__}")
+        return None
 
 
 def main():
@@ -70,7 +79,11 @@ def main():
         print("ASN lookup →", domain)
         print("Trying insert →", domain_id, ip)
 
-        asn, org = enrich_asn(ip)
+        asn_result = enrich_asn(ip)
+        if asn_result is None:
+            continue
+
+        asn, org = asn_result
 
         cur.execute("""
         INSERT INTO domain_asn(domain_id, scan_id, ip, asn, org)

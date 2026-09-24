@@ -96,7 +96,7 @@ def fetch_cert_expiry(domain):
             print(f"[CERT ERROR] {host} → {e}")
             continue
 
-    return None, None, "no_cert"
+    return None
 
 
 def main():
@@ -126,9 +126,9 @@ def main():
             except:
                 pass
     
-        expiry, days, status = fetch_cert_expiry(host)
+        cert_result = fetch_cert_expiry(host)
     
-        return (domain_id, expiry, days, status)
+        return (domain_id, cert_result)
     
     
     total = len(domains)
@@ -142,12 +142,17 @@ def main():
     
         for f in as_completed(futures):
     
-            domain_id, expiry, days, status = f.result()
+            domain_id, cert_result = f.result()
     
             done += 1
     
             if done % 20 == 0:
                 print(f"[CERT PROGRESS] {done}/{total}")
+
+            if cert_result is None:
+                continue
+
+            expiry, days, status = cert_result
     
             cur.execute("""
                 INSERT INTO domain_cert(

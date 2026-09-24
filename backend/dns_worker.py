@@ -38,8 +38,16 @@ def resolve_dns(domain):
 def reverse_dns(ip):
     try:
         return socket.gethostbyaddr(ip)[0]
-    except Exception:
-        return "N/A"
+    except socket.herror as e:
+        # h_errno 1 (HOST_NOT_FOUND) and 4 (NO_DATA) conclusively mean
+        # that no PTR name exists. Other resolver failures are operational.
+        if e.errno in (1, 4):
+            return "N/A"
+        print(f"[PTR FAIL] {ip} → {e}")
+        return None
+    except (socket.timeout, socket.gaierror, OSError) as e:
+        print(f"[PTR FAIL] {ip} → {e}")
+        return None
 
 
 def main():
@@ -133,7 +141,7 @@ def main():
                 UPDATE domain_states
                 SET ip = %s,
                     has_ip = TRUE,
-                    reverse_dns = %s
+                    reverse_dns = COALESCE(%s, reverse_dns)
                 WHERE domain_id = %s
                 AND scan_id = %s
                 AND has_ip IS NOT TRUE

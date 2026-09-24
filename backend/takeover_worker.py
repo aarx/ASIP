@@ -94,11 +94,7 @@ def check_takeover(target):
         except:
             continue
 
-    return {
-        "body": "",
-        "status": 0,
-        "length": 0
-    }
+    return None
 
 
 def main():
@@ -145,6 +141,10 @@ def main():
         print(f"Checking {domain}")
 
         resp = check_takeover(domain)
+
+        if resp is None:
+            print(f"Skipping {domain} → HTTP observation failed")
+            continue
 
         body = resp["body"]
         status = resp["status"]

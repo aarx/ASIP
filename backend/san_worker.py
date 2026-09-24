@@ -31,7 +31,7 @@ def fetch_san_domains(domain):
 
     except Exception as e:
         print(f"[SAN ERROR] {domain} -> {e}")
-        return []
+        return None
 
 def is_scannable(domain, seeds):
     for seed in seeds:
@@ -132,7 +132,11 @@ def main():
         if i % 50 == 0:
             print(f"[{i}/{len(rows)}] Processing: {domain}")
     
-        san_domains = list(set(fetch_san_domains(domain)))
+        san_observation = fetch_san_domains(domain)
+        if san_observation is None:
+            continue
+
+        san_domains = list(set(san_observation))
 
         cur.execute("""
         INSERT INTO domain_san(domain_id, scan_id)
