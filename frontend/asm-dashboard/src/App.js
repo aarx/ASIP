@@ -6,6 +6,7 @@ import AssetDetailPage from "./pages/AssetDetailPage";
 import RiskExposurePage from "./pages/RiskExposurePage";
 import ShadowCentrePage from "./pages/ShadowCentrePage";
 import ScanCentrePage from "./pages/ScanCentrePage";
+import BrandPerimeterPage from "./pages/BrandPerimeterPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
 import "./App.css";
 
@@ -56,6 +57,7 @@ function App() {
   if (route === "risk") page = <RiskExposurePage />;
   if (route === "shadow") page = <ShadowCentrePage query={query} />;
   if (route === "scans") page = <ScanCentrePage />;
+  if (route === "brand") page = <BrandPerimeterPage query={query} />;
 
   return (
     <AppShell activeRoute={route} routeMeta={routeMeta}>

@@ -22,6 +22,11 @@ export const getV2Scans = async (limit = 100) => {
   return res.data;
 };
 
+export const getV2BrandAssets = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/brand-assets`, { params });
+  return res.data;
+};
+
 export const getRiskyDomains = async () => {
   const res = await axios.get(`${API_URL}/risky-domains`);
   return res.data;

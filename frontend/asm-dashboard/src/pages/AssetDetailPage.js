@@ -47,12 +47,12 @@ export default function AssetDetailPage({ domain, returnQuery }) {
 
   const returnParams = new URLSearchParams(returnQuery);
   const returnTo = returnParams.get("return");
-  const backRoute = returnTo === "risk" || returnTo === "shadow"
+  const backRoute = returnTo === "risk" || returnTo === "shadow" || returnTo === "brand"
     ? returnTo
     : "assets";
   const backLabel = returnTo === "risk"
     ? "Risk & Exposure"
-    : returnTo === "shadow" ? "Shadow" : "Assets";
+    : returnTo === "shadow" ? "Shadow" : returnTo === "brand" ? "Brand Perimeter" : "Assets";
   if (returnTo) returnParams.delete("return");
   const remainingQuery = returnParams.toString();
   const backHref = `#/${backRoute}${remainingQuery ? `?${remainingQuery}` : ""}`;
