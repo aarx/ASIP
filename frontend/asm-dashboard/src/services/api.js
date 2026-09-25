@@ -2,6 +2,11 @@ import axios from "axios";
 
 const API_URL = "http://localhost:8555";
 
+export const getV2Overview = async () => {
+  const res = await axios.get(`${API_URL}/v2/overview`);
+  return res.data;
+};
+
 export const getSummary = async () => {
   const res = await axios.get(`${API_URL}/summary`);
   return res.data;

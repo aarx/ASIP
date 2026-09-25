@@ -1,13 +1,49 @@
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+:root {
+  --asip-bg: #07111f;
+  --asip-surface: #101d2f;
+  --asip-border: rgba(116, 145, 174, .17);
+  --asip-text-primary: #e7eef6;
+  --asip-text-secondary: #a9bacb;
+  --asip-text-muted: #74869a;
+  --asip-accent: #168dcc;
+  --asip-accent-bright: #3dc4ff;
+  --asip-positive: #39cb91;
+  --asip-warning: #e7a84b;
+  --asip-critical: #f06467;
+  --asip-sidebar-width: 252px;
+  --asip-radius: 10px;
+  --asip-shadow: 0 12px 32px rgba(0, 0, 0, .16);
+  --asip-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --asip-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  color-scheme: dark;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+* { box-sizing: border-box; }
+html { min-width: 320px; background: var(--asip-bg); }
+body { margin: 0; background: var(--asip-bg); color: var(--asip-text-primary); font-family: var(--asip-font-sans); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+button, input, textarea, select { font: inherit; }
+code { font-family: var(--asip-font-mono); }
+::selection { background: rgba(61, 196, 255, .22); color: #fff; }
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid #405066;
+  border-radius: 4px;
+  background: rgba(64, 80, 102, .12);
+  color: #aebdca;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .08em;
+  text-transform: uppercase;
 }
+
+.status-high { border-color: rgba(240, 100, 103, .36); background: rgba(240, 100, 103, .1); color: #ff9a9c; }
+.status-elevated { border-color: rgba(231, 168, 75, .36); background: rgba(231, 168, 75, .09); color: #f0bf77; }
+.status-review { border-color: rgba(212, 194, 102, .3); background: rgba(212, 194, 102, .08); color: #dccf8d; }
+.status-low { border-color: rgba(78, 120, 155, .34); background: rgba(78, 120, 155, .1); color: #94afc6; }
+.status-succeeded, .status-responded, .status-known { border-color: rgba(57, 203, 145, .32); background: rgba(57, 203, 145, .08); color: #78ddb4; }
+.status-failed, .status-external { border-color: rgba(240, 100, 103, .3); background: rgba(240, 100, 103, .08); color: #ee979a; }
+.status-running, .status-candidate { border-color: rgba(61, 196, 255, .3); background: rgba(61, 196, 255, .08); color: #79d4fb; }
