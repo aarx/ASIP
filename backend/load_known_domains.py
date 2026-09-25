@@ -19,6 +19,15 @@ try:
                 """,
                 (domain, "initial_import")
             )
+            cur.execute(
+                """
+                UPDATE domains
+                SET is_known = TRUE,
+                    ownership_status = 'CONFIRMED'
+                WHERE domain = %s
+                """,
+                (domain,)
+            )
 
     conn.commit()
 except Exception:

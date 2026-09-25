@@ -209,7 +209,8 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
                         confidence_score integer DEFAULT 0,
                         confidence_label text DEFAULT 'low',
                         confidence_reasons text[],
-                        validation_source text
+                        validation_source text,
+                        ownership_status text DEFAULT 'CONFIRMED' NOT NULL
                     );
                     CREATE TABLE scan_results (
                         scan_id integer,

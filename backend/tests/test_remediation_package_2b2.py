@@ -389,21 +389,25 @@ class McpCursor:
         self.domains = {
             1: {
                 "domain": "current.example.test", "is_known": False,
+                "ownership_status": "CONFIRMED",
                 "scannable": True, "confidence_score": 90,
                 "confidence_label": "high",
             },
             2: {
                 "domain": "historical-live.example.test", "is_known": False,
+                "ownership_status": "CANDIDATE",
                 "scannable": False, "confidence_score": 85,
                 "confidence_label": "high",
             },
             3: {
                 "domain": "historical-risk.example.test", "is_known": False,
+                "ownership_status": "CANDIDATE",
                 "scannable": False, "confidence_score": 70,
                 "confidence_label": "medium",
             },
             4: {
                 "domain": "priority.example.test", "is_known": False,
+                "ownership_status": "CANDIDATE",
                 "scannable": False, "confidence_score": 95,
                 "confidence_label": "high",
             },
@@ -512,6 +516,7 @@ class McpCursor:
             domain_id,
             domain["domain"],
             domain["is_known"],
+            domain["ownership_status"],
             state["ip"] if state else None,
             state["http_status"] if state else None,
         )
@@ -777,6 +782,8 @@ class McpCurrentSnapshotTests(unittest.TestCase):
                 if item["scan_id"] != current_scan:
                     continue
                 domain = cursor.domains[item["domain_id"]]
+                if domain["ownership_status"] != "CONFIRMED":
+                    continue
                 state = next((
                     state for state in cursor.states
                     if state["domain_id"] == item["domain_id"]
@@ -812,6 +819,7 @@ class McpCurrentSnapshotTests(unittest.TestCase):
         self.assertEqual(response, {
             "domain": "current.example.test",
             "is_known": False,
+            "ownership_status": "CONFIRMED",
             "ip": "192.0.2.31",
             "http_status": 200,
             "risk_score": 4,
@@ -856,16 +864,16 @@ class McpCurrentSnapshotTests(unittest.TestCase):
                 "scannable": False,
                 "confidence_score": 95,
                 "confidence_label": "high",
-                "risk_score": 5,
-                "priority": "Review",
+                "risk_score": None,
+                "priority": None,
             },
             {
                 "domain": "historical-risk.example.test",
                 "scannable": False,
                 "confidence_score": 70,
                 "confidence_label": "medium",
-                "risk_score": 1,
-                "priority": "Low",
+                "risk_score": None,
+                "priority": None,
             },
         ])
         self.assertNotIn(

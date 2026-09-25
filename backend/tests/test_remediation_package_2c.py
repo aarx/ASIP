@@ -85,10 +85,21 @@ class KnownInventoryLoaderTests(unittest.TestCase):
         self.assertTrue(connection.closed)
         self.assertEqual(
             [params for _, params in connection.cursor_obj.executions],
-            [("known.example", "initial_import"), ("second.example", "initial_import")],
+            [
+                ("known.example", "initial_import"), ("known.example",),
+                ("second.example", "initial_import"), ("second.example",),
+            ],
         )
-        self.assertTrue(all("INSERT INTO known_domains" in sql
-                            for sql, _ in connection.cursor_obj.executions))
+        self.assertEqual(
+            sum("INSERT INTO known_domains" in sql
+                for sql, _ in connection.cursor_obj.executions),
+            2,
+        )
+        self.assertEqual(
+            sum("ownership_status = 'CONFIRMED'" in sql
+                for sql, _ in connection.cursor_obj.executions),
+            2,
+        )
 
 
 class KnownShadowSourceOfTruthTests(unittest.TestCase):
@@ -109,16 +120,17 @@ class KnownShadowSourceOfTruthTests(unittest.TestCase):
         self.assertNotIn("scannable", insert.lower())
         self.assertNotIn("validation_source", insert)
 
-    def test_independent_fields_do_not_define_known_shadow(self):
+    def test_independent_fields_do_not_define_inventory_membership(self):
         classification_sources = source("ingest.py") + source("san_worker.py")
         relevant = normalized(classification_sources)
 
         self.assertIn("KNOWN_DOMAINS", relevant)
+        self.assertIn("FROM SEED_DOMAINS", relevant)
+        self.assertIn("OWNERSHIP_STATUS", relevant)
         self.assertNotIn("CONFIDENCE_SCORE = (", relevant)
         self.assertNotIn("CONFIDENCE_LABEL = (", relevant)
         self.assertNotIn("SCANNABLE = (", relevant)
         self.assertNotIn("VALIDATION_SOURCE = (", relevant)
-        self.assertNotIn("FROM SEED_DOMAINS", relevant)
 
 
 class ShadowEndpointTests(unittest.TestCase):
@@ -156,7 +168,7 @@ class ShadowEndpointTests(unittest.TestCase):
                 )
                 self.assertIn(expected, block)
 
-    def test_export_shadow_type_is_known_shadow_only(self):
+    def test_export_shadow_type_uses_ownership_before_known_shadow(self):
         block = self.endpoint_block("export_enriched_csv")
         shadow_logic = block[
             block.index("def get_shadow(row):"):
@@ -164,6 +176,8 @@ class ShadowEndpointTests(unittest.TestCase):
         ]
 
         self.assertIn('"known" if row["is_known"] else "shadow"', shadow_logic)
+        self.assertIn('row["ownership_status"] == "CANDIDATE"', shadow_logic)
+        self.assertIn('row["ownership_status"] == "EXTERNAL"', shadow_logic)
         self.assertNotIn("http_live", shadow_logic)
         self.assertNotIn("has_ip", shadow_logic)
 

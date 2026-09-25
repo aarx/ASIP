@@ -285,7 +285,9 @@ class ApiContractTests(unittest.TestCase):
             "findings": 0,
             "shadow_assets": 0,
             "non_web_assets": 0,
-            "unverified_domains": 3
+            "unverified_domains": 3,
+            "candidate_domains": 0,
+            "external_domains": 0,
         })
 
     def test_zero_authoritative_exposure_summary_shape(self):
@@ -329,7 +331,7 @@ class ApiContractTests(unittest.TestCase):
             response = self.main.export_enriched_csv()
 
         body = "".join(response.content)
-        self.assertTrue(body.startswith("Domain,Is Known,First Seen"))
+        self.assertTrue(body.startswith("Domain,Is Known,Ownership Status,First Seen"))
         self.assertEqual(len(body.splitlines()), 1)
         self.assertEqual(response.media_type, "text/csv")
 

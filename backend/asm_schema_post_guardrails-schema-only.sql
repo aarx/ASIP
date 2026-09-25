@@ -280,7 +280,8 @@ CREATE TABLE public.domains (
     confidence_reasons text[],
     validation_source text,
     first_seen_at timestamp without time zone,
-    last_seen_at timestamp without time zone
+    last_seen_at timestamp without time zone,
+    ownership_status text DEFAULT 'CONFIRMED'::text NOT NULL
 );
 
 
@@ -682,6 +683,14 @@ ALTER TABLE ONLY public.domain_states
 
 ALTER TABLE ONLY public.domain_states
     ADD CONSTRAINT domain_states_http_observation_status_check CHECK ((http_observation_status = ANY (ARRAY['RESPONDED'::text, 'NO_RESPONSE'::text, 'FAILED'::text, 'UNKNOWN'::text])));
+
+
+--
+-- Name: domains domains_ownership_status_check; Type: CHECK CONSTRAINT; Schema: public; Owner: asm
+--
+
+ALTER TABLE ONLY public.domains
+    ADD CONSTRAINT domains_ownership_status_check CHECK ((ownership_status = ANY (ARRAY['CONFIRMED'::text, 'CANDIDATE'::text, 'EXTERNAL'::text])));
 
 
 --

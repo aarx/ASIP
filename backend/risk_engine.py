@@ -59,6 +59,7 @@ class RiskEvidence:
     volatility_flips: int = 0
     finding_count: int = 0
     high_finding_count: int = 0
+    ownership_status: str = "CONFIRMED"
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class DomainRisk:
     is_known: bool
     has_ip: bool
     http_observation_status: str
+    ownership_status: str
     result: RiskResult
 
 
@@ -103,6 +105,9 @@ def get_asset_exposure_keywords(domain):
 
 
 def calculate_risk(evidence):
+    if evidence.ownership_status != "CONFIRMED":
+        return RiskResult(score=0, priority="Low", reasons=())
+
     score = 0
     reasons = []
 
@@ -166,6 +171,7 @@ def calculate_scan_risks(cursor, scan_id):
             d.domain,
             d.first_seen_scan,
             d.is_known,
+            d.ownership_status,
             ds.has_ip,
             ds.http_observation_status
         FROM scan_results sr
@@ -175,6 +181,7 @@ def calculate_scan_risks(cursor, scan_id):
           ON ds.domain_id = sr.domain_id
          AND ds.scan_id = sr.scan_id
         WHERE sr.scan_id = %s
+          AND d.ownership_status = 'CONFIRMED'
         ORDER BY d.domain
     """, (scan_id,))
     base_rows = cursor.fetchall()
@@ -259,7 +266,10 @@ def calculate_scan_risks(cursor, scan_id):
     volatility_map = {row[0]: row[1] or 0 for row in cursor.fetchall()}
 
     risks = []
-    for domain_id, domain, first_seen_scan, is_known, has_ip, http_outcome in base_rows:
+    for (
+        domain_id, domain, first_seen_scan, is_known, ownership_status,
+        has_ip, http_outcome,
+    ) in base_rows:
         port_count, sensitive_port_count = port_map.get(domain_id, (0, 0))
         finding_count, high_finding_count = finding_map.get(domain_id, (0, 0))
         evidence = RiskEvidence(
@@ -268,6 +278,7 @@ def calculate_scan_risks(cursor, scan_id):
             domain=domain,
             first_seen_scan=first_seen_scan,
             is_known=is_known,
+            ownership_status=ownership_status,
             has_ip=bool(has_ip),
             http_observation_status=http_outcome or "UNKNOWN",
             port_count=port_count,
@@ -283,6 +294,7 @@ def calculate_scan_risks(cursor, scan_id):
             is_known=is_known,
             has_ip=bool(has_ip),
             http_observation_status=http_outcome or "UNKNOWN",
+            ownership_status=ownership_status,
             result=calculate_risk(evidence),
         ))
 

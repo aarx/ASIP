@@ -119,14 +119,15 @@ class AuthorizationPolicyTests(unittest.TestCase):
 
 
 class SanAuthorizationTests(unittest.TestCase):
-    def test_san_worker_no_longer_writes_scannable_or_seed_auth(self):
+    def test_san_worker_does_not_derive_authorization_from_seed_ownership(self):
         text = source("san_worker.py")
         norm = normalized(text)
 
         self.assertNotIn("SET SCANNABLE", norm)
         self.assertNotIn("EXCLUDED.SCANNABLE", norm)
         self.assertNotIn("IS_SCANNABLE", norm)
-        self.assertNotIn("FROM SEED_DOMAINS", norm)
+        self.assertNotIn("VALIDATION_SOURCE", norm)
+        self.assertIn("FROM SEED_DOMAINS", norm)
 
     def test_san_child_insert_relies_on_schema_default_for_authorization(self):
         text = source("san_worker.py")

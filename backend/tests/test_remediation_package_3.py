@@ -142,7 +142,7 @@ class CanonicalIntegrationContractTests(unittest.TestCase):
             def __init__(self):
                 self.executions = []
                 self.results = iter([
-                    [(1, "dev.example.com", 20, False, True, "NO_RESPONSE")],
+                    [(1, "dev.example.com", 20, False, "CONFIRMED", True, "NO_RESPONSE")],
                     [(1, 4, 1)],
                     [(1, "AWS")],
                     [(1, 1, 1)],
@@ -234,7 +234,11 @@ class CanonicalIntegrationContractTests(unittest.TestCase):
 
         guard.assert_called_once_with(connection.cur, 20)
         module.calculate_scan_risks.assert_called_once_with(connection.cur, 20)
-        sql, params = connection.cur.executions[0]
+        delete_sql, delete_params = connection.cur.executions[0]
+        self.assertIn("DELETE FROM domain_risk", delete_sql)
+        self.assertIn("ownership_status <> 'CONFIRMED'", delete_sql)
+        self.assertEqual(delete_params, (20,))
+        sql, params = connection.cur.executions[1]
         self.assertIn("ON CONFLICT(domain_id, scan_id)", sql)
         self.assertIn("FROM scan_results sr", sql)
         self.assertEqual(params, (1, 20, 8, '["new_asset","finding","shadow_asset"]', 20, 1))
@@ -309,7 +313,11 @@ class CanonicalIntegrationContractTests(unittest.TestCase):
         migrations = sorted(path.name for path in (BACKEND / "migrations").glob("*.sql"))
         self.assertEqual(
             migrations,
-            ["001_add_scan_lifecycle.sql", "002_add_http_observation_status.sql"],
+            [
+                "001_add_scan_lifecycle.sql",
+                "002_add_http_observation_status.sql",
+                "003_add_ownership_status.sql",
+            ],
         )
 
 

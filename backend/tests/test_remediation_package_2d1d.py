@@ -11,10 +11,10 @@ from backend.tests import test_remediation_package_2d1c as convergence
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 
 PROTECTED_SHA256 = {
-    "ingest.py": "70a6cb8d0977e908b8ffdaa9591b032b11bde4fc637f48f9534bda7c66a3a1dc",
+    "ingest.py": "b1180a94fb9bcd39313f7f8b5ddef8ebd007300562710088ff589b378c38d880",
     "orchestration.py": "2813d097152f3e7deb5d3b235c3e2777b30f527e361a270485cfb7b286a43960",
-    "discovery_validator.py": "6f04cb10043cd63ff5dd20785a29cbe186794924d3654139f2ca1356b232c678",
-    "main.py": "3cdf0b4a5955115207402ebb987839ab9610491687d337415e84ea0127b5163e",
+    "discovery_validator.py": "545dfad14226f1b2b1e2b609b49d7ae9f2738502e3dc68756c243f5d73e3ae81",
+    "main.py": "6c8544b75a4e799492c66a42fde282f99744f01dc817f1142f8e143970947a0b",
 }
 
 CONSUMERS = (

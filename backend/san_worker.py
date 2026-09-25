@@ -149,7 +149,8 @@ def main():
                 first_seen_at,
                 last_seen_at,
                 is_known,
-                source
+                source,
+                ownership_status
             )
             VALUES (
                 %s,
@@ -158,7 +159,18 @@ def main():
                 NOW(),
                 NOW(),
                 EXISTS (SELECT 1 FROM known_domains WHERE domain = %s),
-                %s
+                %s,
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM known_domains WHERE domain = %s
+                    ) THEN 'CONFIRMED'
+                    WHEN EXISTS (
+                        SELECT 1 FROM seed_domains root
+                        WHERE %s = LOWER(TRIM(TRAILING '.' FROM root.domain))
+                           OR %s LIKE '%%.' || LOWER(TRIM(TRAILING '.' FROM root.domain))
+                    ) THEN 'CONFIRMED'
+                    ELSE 'CANDIDATE'
+                END
             )
             ON CONFLICT (domain)
             DO UPDATE SET 
@@ -178,12 +190,21 @@ def main():
                         SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
                     )
                 ),
+                ownership_status = CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
+                    ) THEN 'CONFIRMED'
+                    WHEN domains.ownership_status = 'EXTERNAL' THEN 'EXTERNAL'
+                    WHEN domains.ownership_status = 'CONFIRMED' THEN 'CONFIRMED'
+                    WHEN EXCLUDED.ownership_status = 'CONFIRMED' THEN 'CONFIRMED'
+                    ELSE domains.ownership_status
+                END,
                 source = CASE
                     WHEN domains.source = 'seed' THEN 'san'
                     ELSE domains.source
                 END
             RETURNING id, (xmax = 0) AS inserted
-            """, (san, scan_id, scan_id, san, "san"))
+            """, (san, scan_id, scan_id, san, "san", san, san, san))
             
             new_domain_id, inserted = cur.fetchone()
 

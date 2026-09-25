@@ -103,7 +103,7 @@ def main():
             FROM domain_san ds
             JOIN domains d2 ON d2.id = ds.domain_id
             WHERE ds.domain_id = d.id
-            AND d2.scannable = TRUE
+            AND d2.ownership_status = 'CONFIRMED'
         ) as san_related,
 
         EXISTS(
@@ -112,7 +112,7 @@ def main():
               ON s1.ip = s2.ip
             JOIN domains d2 ON d2.id = s2.domain_id
             WHERE s1.domain_id = d.id
-            AND d2.scannable = TRUE
+            AND d2.ownership_status = 'CONFIRMED'
             AND s1.scan_id = %s
             AND s2.scan_id = %s
         ) as same_ip,
@@ -123,7 +123,7 @@ def main():
               ON p1.provider = p2.provider
             JOIN domains d2 ON d2.id = p2.domain_id
             WHERE p1.domain_id = d.id
-            AND d2.scannable = TRUE
+            AND d2.ownership_status = 'CONFIRMED'
             AND p1.scan_id = %s
             AND p2.scan_id = %s
         ) as same_provider,
@@ -134,7 +134,7 @@ def main():
               ON t1.tech = t2.tech
             JOIN domains d2 ON d2.id = t2.domain_id
             WHERE t1.domain_id = d.id
-            AND d2.scannable = TRUE
+            AND d2.ownership_status = 'CONFIRMED'
             AND t1.scan_id = %s
             AND t2.scan_id = %s
         ) as same_tech,
@@ -147,7 +147,7 @@ def main():
         ) as rdns_match
 
     FROM domains d
-    WHERE d.scannable = FALSE
+    WHERE d.ownership_status = 'CANDIDATE'
     """, (
         scan_id, scan_id,
         scan_id, scan_id,
@@ -173,13 +173,6 @@ def main():
             "rdns_match": r[6],
         }
         
-        cur.execute("SELECT validation_source FROM domains WHERE id = %s", (domain_id,))
-        source = cur.fetchone()[0]
-    
-        if source == "manual":
-            print(f"Skipping manual domain: {domain}")
-            continue        
-
         score, reasons = compute_score(domain, data, keywords)
         lbl = label(score)
 

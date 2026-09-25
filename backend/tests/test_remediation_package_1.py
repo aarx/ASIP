@@ -230,7 +230,7 @@ class ApiAndWorkerRegressionTests(unittest.TestCase):
     def test_summary_new_domains_uses_first_seen_current_scan_membership(self):
         cursor = RecordingCursor(fetchones=[
             (100,), (42,), (80,), (7,), (5,), (20,), (30,), (60,), (4,)
-        ])
+        ], fetchalls=[[]])
         connection = FakeConnection(cursor)
         self.main.get_conn = lambda: connection
 

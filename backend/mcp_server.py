@@ -19,7 +19,10 @@ def get_summary():
     cur.execute("""
         SELECT COUNT(*)
         FROM domain_states
-        WHERE scan_id = %s AND has_ip = TRUE
+        JOIN domains d ON d.id = domain_states.domain_id
+        WHERE scan_id = %s
+        AND has_ip = TRUE
+        AND d.ownership_status = 'CONFIRMED'
     """, (scan_id,))
     live = cur.fetchone()[0]
 
@@ -27,7 +30,10 @@ def get_summary():
         SELECT COUNT(*)
         FROM domain_states ds
         JOIN domains d ON d.id = ds.domain_id
-        WHERE ds.scan_id = %s AND d.is_known = FALSE AND ds.has_ip = TRUE
+        WHERE ds.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
+        AND d.is_known = FALSE
+        AND ds.has_ip = TRUE
     """, (scan_id,))
     shadow = cur.fetchone()[0]
 
@@ -57,6 +63,7 @@ def get_shadow_assets():
         JOIN domains d ON d.id = ds.domain_id
         WHERE ds.scan_id = %s
         AND ds.has_ip = TRUE
+        AND d.ownership_status = 'CONFIRMED'
         AND d.is_known = FALSE
         LIMIT 50
     """, (scan_id,))
@@ -90,6 +97,7 @@ def get_domain(domain: str):
             d.id,
             d.domain,
             d.is_known,
+            d.ownership_status,
             ds.ip,
             ds.http_status
         FROM domains d
@@ -118,10 +126,11 @@ def get_domain(domain: str):
     return {
         "domain": row[1],
         "is_known": row[2],
-        "ip": row[3],
-        "http_status": row[4],
-        "risk_score": canonical_risk.result.score if canonical_risk else 0,
-        "priority": canonical_risk.result.priority if canonical_risk else "Low",
+        "ownership_status": row[3],
+        "ip": row[4],
+        "http_status": row[5],
+        "risk_score": canonical_risk.result.score if canonical_risk else None,
+        "priority": canonical_risk.result.priority if canonical_risk else None,
         "reasons": list(canonical_risk.result.reasons) if canonical_risk else [],
     }
 
@@ -209,7 +218,7 @@ def priority_targets():
             d.id
         FROM domains d
 
-        WHERE d.scannable = FALSE
+        WHERE d.ownership_status = 'CANDIDATE'
         AND d.confidence_label IN ('medium', 'high')
         
         AND EXISTS (
@@ -236,14 +245,17 @@ def priority_targets():
             "confidence_score": r[2],
             "confidence_label": r[3],
             "risk_score": canonical_by_id[r[4]].result.score
-            if r[4] in canonical_by_id else 0,
+            if r[4] in canonical_by_id else None,
             "priority": canonical_by_id[r[4]].result.priority
-            if r[4] in canonical_by_id else "Low",
+            if r[4] in canonical_by_id else None,
         }
         for r in rows
     ]
     results.sort(
-        key=lambda item: (item["risk_score"], item["confidence_score"]),
+        key=lambda item: (
+            item["risk_score"] if item["risk_score"] is not None else -1,
+            item["confidence_score"],
+        ),
         reverse=True,
     )
     return results[:20]

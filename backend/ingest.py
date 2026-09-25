@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from db import get_conn, require_running_scan
+from ownership import OWNERSHIP_CONFIRMED, ownership_for_discovery
 from recon_artifact import ReconArtifactError, read_validated_recon_artifact
 
 
@@ -150,6 +151,12 @@ try:
             (domain,)
         )
         known = cur.fetchone() is not None
+        ownership_status = ownership_for_discovery(
+            domain,
+            sources,
+            seed,
+            is_known=known,
+        )
 
         # ----------------------------
         # Parse fields
@@ -190,7 +197,8 @@ try:
             first_seen_scan,
             last_seen_scan,
             is_known,
-            source
+            source,
+            ownership_status
         )
         VALUES (
             %s,
@@ -199,6 +207,7 @@ try:
             EXISTS (
                 SELECT 1 FROM known_domains WHERE domain = %s
             ),
+            %s,
             %s
         )
         ON CONFLICT (domain)
@@ -218,12 +227,24 @@ try:
                     SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
                 )
             ),
+            ownership_status = CASE
+                WHEN EXISTS (
+                    SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
+                ) THEN %s
+                WHEN domains.ownership_status = 'EXTERNAL' THEN 'EXTERNAL'
+                WHEN domains.ownership_status = 'CONFIRMED' THEN 'CONFIRMED'
+                WHEN EXCLUDED.ownership_status = 'CONFIRMED' THEN 'CONFIRMED'
+                ELSE domains.ownership_status
+            END,
             source = CASE
                 WHEN domains.source = 'seed' THEN EXCLUDED.source
                 ELSE domains.source
             END
         RETURNING id
-        """, (domain, scan_id, scan_id, domain, primary_source))
+        """, (
+            domain, scan_id, scan_id, domain, primary_source,
+            ownership_status, OWNERSHIP_CONFIRMED,
+        ))
 
         res = cur.fetchone()
 

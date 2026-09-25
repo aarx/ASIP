@@ -37,8 +37,12 @@ def summary():
     conn = get_conn()
     cur = conn.cursor()
 
-    # total unique domains ever discovered
-    cur.execute("SELECT COUNT(*) FROM domains")
+    # total confirmed organizational domains ever discovered
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM domains
+        WHERE ownership_status = 'CONFIRMED'
+    """)
     total_domains = cur.fetchone()[0]
 
     latest_scan = get_latest_authoritative_scan_id(cur)
@@ -46,9 +50,11 @@ def summary():
     # domains resolving in latest scan
     cur.execute("""
         SELECT COUNT(*)
-        FROM domain_states
-        WHERE scan_id=%s
-        AND has_ip = TRUE
+        FROM domain_states ds
+        JOIN domains d ON d.id = ds.domain_id
+        WHERE ds.scan_id=%s
+        AND ds.has_ip = TRUE
+        AND d.ownership_status = 'CONFIRMED'
     """, (latest_scan,))
     live_domains = cur.fetchone()[0]
 
@@ -59,13 +65,16 @@ def summary():
         JOIN scan_results sr ON sr.domain_id = d.id
         WHERE sr.scan_id = %s
         AND d.first_seen_scan = %s
+        AND d.ownership_status = 'CONFIRMED'
     """, (latest_scan, latest_scan))
     new_domains = cur.fetchone()[0]
 
     cur.execute("""
         SELECT COUNT(*) 
-        FROM domain_findings 
-        WHERE scan_id = %s
+        FROM domain_findings df
+        JOIN domains d ON d.id = df.domain_id
+        WHERE df.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
     """, (latest_scan,))
     
     findings_count = cur.fetchone()[0]
@@ -78,6 +87,7 @@ def summary():
         JOIN domains d ON d.id = ds.domain_id
         WHERE ds.scan_id = %s
         AND ds.has_ip = TRUE
+        AND d.ownership_status = 'CONFIRMED'
         AND d.is_known = FALSE
     """, (latest_scan,))
     shadow_assets = cur.fetchone()[0]
@@ -85,10 +95,12 @@ def summary():
     # Non-Web Assets
     cur.execute("""
         SELECT COUNT(*)
-        FROM domain_states
-        WHERE scan_id = %s
-        AND has_ip = TRUE
-        AND http_live = FALSE
+        FROM domain_states ds
+        JOIN domains d ON d.id = ds.domain_id
+        WHERE ds.scan_id = %s
+        AND ds.has_ip = TRUE
+        AND ds.http_live = FALSE
+        AND d.ownership_status = 'CONFIRMED'
     """, (latest_scan,))
     non_web_assets = cur.fetchone()[0]
     
@@ -99,6 +111,7 @@ def summary():
         JOIN domains d ON d.id = ds.domain_id
         WHERE ds.scan_id = %s
         AND ds.has_ip = TRUE
+        AND d.ownership_status = 'CONFIRMED'
         AND d.is_known = TRUE
     """, (latest_scan,))
     
@@ -108,9 +121,17 @@ def summary():
     cur.execute("""
         SELECT COUNT(*)
         FROM domains
-        WHERE scannable = False
+        WHERE ownership_status = 'CANDIDATE'
     """)
     needs_validation = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT ownership_status, COUNT(*)
+        FROM domains
+        WHERE ownership_status IN ('CANDIDATE', 'EXTERNAL')
+        GROUP BY ownership_status
+    """)
+    ownership_counts = dict(cur.fetchall())
     
  
     conn.close()
@@ -123,7 +144,9 @@ def summary():
         "findings": findings_count,
         "shadow_assets": shadow_assets,
         "non_web_assets": non_web_assets,
-        "unverified_domains": needs_validation
+        "unverified_domains": needs_validation,
+        "candidate_domains": ownership_counts.get("CANDIDATE", 0),
+        "external_domains": ownership_counts.get("EXTERNAL", 0)
     }
     
 
@@ -238,6 +261,7 @@ def assets():
         ON ds.domain_id = d.id
         AND ds.scan_id = sr.scan_id
         WHERE sr.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         LIMIT 5000
     """, (latest,))
 
@@ -838,7 +862,7 @@ def domain_detail(domain_name: str):
 
     # domain basic
     cur.execute("""
-        SELECT id, first_seen_scan, last_seen_scan, is_known
+        SELECT id, first_seen_scan, last_seen_scan, is_known, ownership_status
         FROM domains
         WHERE domain=%s
     """, (domain_name,))
@@ -849,7 +873,7 @@ def domain_detail(domain_name: str):
         conn.close()
         return {"error": "domain not found"}
 
-    domain_id, first_seen, last_seen, is_known = row
+    domain_id, first_seen, last_seen, is_known, ownership_status = row
 
     # state
     cur.execute("""
@@ -917,6 +941,7 @@ def domain_detail(domain_name: str):
         "first_seen": first_seen,
         "last_seen": last_seen,
         "is_known": is_known,
+        "ownership_status": ownership_status,
 
         "ip": state[0] if state else None,
         "has_ip": state[1] if state else False,
@@ -928,8 +953,8 @@ def domain_detail(domain_name: str):
         "asn": asn[0] if asn else "Unknown",
         "org": asn[1] if asn else "Unknown",
         "tech": tech[0] if tech else "Unknown",
-        "risk_score": canonical_risk.result.score if canonical_risk else 0,
-        "priority": canonical_risk.result.priority if canonical_risk else "Low",
+        "risk_score": canonical_risk.result.score if canonical_risk else None,
+        "priority": canonical_risk.result.priority if canonical_risk else None,
         "reasons": list(canonical_risk.result.reasons) if canonical_risk else [],
     }
     
@@ -1173,7 +1198,7 @@ def export_enriched_csv():
 
     if scan_id is None:
         columns = [
-            "Domain", "Is Known", "First Seen", "Last Seen",
+            "Domain", "Is Known", "Ownership Status", "First Seen", "Last Seen",
             "first_seen_at", "last_seen_at", "IP", "HTTP Status",
             "Reverse DNS", "Final URL", "Title", "Provider", "ASN",
             "Risk Score", "Priority", "Reasons", "Cert Status", "Days to Expiry",
@@ -1204,6 +1229,7 @@ def export_enriched_csv():
     SELECT 
         d.domain,
         d.is_known,
+        d.ownership_status,
         d.first_seen_scan,
         d.last_seen_scan,
         d.first_seen_at,
@@ -1249,6 +1275,7 @@ def export_enriched_csv():
     columns = [
         "domain",
         "is_known",
+        "ownership_status",
         "first_seen_scan",
         "last_seen_scan",
         "first_seen_at",
@@ -1273,11 +1300,11 @@ def export_enriched_csv():
     df = pd.DataFrame(rows, columns=columns)
     df["risk_score"] = df["domain"].map(
         lambda domain: canonical_by_domain[domain].result.score
-        if domain in canonical_by_domain else 0
+        if domain in canonical_by_domain else None
     )
     df["priority"] = df["domain"].map(
         lambda domain: canonical_by_domain[domain].result.priority
-        if domain in canonical_by_domain else "Low"
+        if domain in canonical_by_domain else None
     )
     df["reasons"] = df["domain"].map(
         lambda domain: ",".join(canonical_by_domain[domain].result.reasons)
@@ -1377,6 +1404,10 @@ def export_enriched_csv():
 
     # ⭐ SHADOW TYPE
     def get_shadow(row):
+        if row["ownership_status"] == "CANDIDATE":
+            return "candidate"
+        if row["ownership_status"] == "EXTERNAL":
+            return "external"
         return "known" if row["is_known"] else "shadow"
 
     df["shadow_type"] = df.apply(get_shadow, axis=1)
@@ -1399,6 +1430,7 @@ def export_enriched_csv():
     df.rename(columns={
         "domain": "Domain",
         "is_known": "Is Known",
+        "ownership_status": "Ownership Status",
         "first_seen_scan": "First Seen",
         "last_seen_scan": "Last Seen",
         "ip": "IP",
@@ -1464,6 +1496,7 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
     SELECT 
         d.domain,
         d.is_known,
+        d.ownership_status,
         ds.ip,
         ds.has_ip,
         ds.http_status,
@@ -1495,13 +1528,14 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
         ON d.id = p.domain_id
         AND p.scan_id = %s
     
-    WHERE ds.has_ip = TRUE
+    WHERE d.ownership_status = 'CONFIRMED'
+    AND ds.has_ip = TRUE
     AND dp.provider IS NOT NULL
     AND dp.provider != 'Unknown'
     AND (%s IS NULL OR %s = '' OR LOWER(dp.provider) = LOWER(%s))
     
     GROUP BY 
-        d.domain, d.is_known,
+        d.domain, d.is_known, d.ownership_status,
         ds.ip, ds.has_ip, ds.http_status,
         dp.provider, da.asn, dt.tech
     """
@@ -1523,13 +1557,14 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
         assets.append({
             "domain": r[0],
             "is_known": r[1],
-            "ip": r[2],
-            "has_ip": r[3],
-            "http_status": r[4],
-            "provider": r[5],
-            "asn": r[6],
-            "tech": r[7],
-            "ports": r[8],
+            "ownership_status": r[2],
+            "ip": r[3],
+            "has_ip": r[4],
+            "http_status": r[5],
+            "provider": r[6],
+            "asn": r[7],
+            "tech": r[8],
+            "ports": r[9],
             "risk": canonical_by_domain[r[0]].result.score
             if r[0] in canonical_by_domain else 0,
             "priority": canonical_by_domain[r[0]].result.priority
@@ -1664,6 +1699,7 @@ def shadow_by_provider():
         FROM domain_provider dp
         JOIN domains d ON d.id = dp.domain_id
         WHERE dp.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         AND d.is_known = FALSE
         GROUP BY provider
         ORDER BY COUNT(*) DESC
@@ -1739,13 +1775,7 @@ def unvalidated_brand_footprint():
     cur.execute("""
     SELECT 
         COUNT(*) FILTER (
-            WHERE d.scannable = FALSE
-            AND EXISTS (
-                SELECT 1 FROM seed_domains s
-                WHERE d.domain = s.domain
-                   OR d.domain LIKE '%.' || s.domain
-                   OR d.domain LIKE '%' || split_part(s.domain, '.', 1) || '%'
-            )
+            WHERE d.ownership_status = 'CANDIDATE'
         ) AS count,
         COUNT(*) AS total
     FROM domains d
@@ -1773,7 +1803,7 @@ def unvalidated_breakdown():
         confidence_label,
         COUNT(*)
     FROM domains
-    WHERE scannable = FALSE
+    WHERE ownership_status = 'CANDIDATE'
     GROUP BY confidence_label
     """)
 
@@ -2221,11 +2251,14 @@ def asset_growth():
         SELECT
             ds.scan_id,
 
-            COUNT(*) AS total_assets,
+            COUNT(*) FILTER (
+                WHERE d.ownership_status = 'CONFIRMED'
+            ) AS total_assets,
 
             SUM(
                 CASE
-                    WHEN ds.has_ip = TRUE THEN 1
+                    WHEN d.ownership_status = 'CONFIRMED'
+                    AND ds.has_ip = TRUE THEN 1
                     ELSE 0
                 END
             ) AS live_assets,
@@ -2233,6 +2266,7 @@ def asset_growth():
             SUM(
                 CASE
                     WHEN ds.has_ip = TRUE
+                    AND d.ownership_status = 'CONFIRMED'
                     AND d.is_known = FALSE
                     THEN 1
                     ELSE 0

@@ -26,6 +26,19 @@ def main():
     require_running_scan(cur, scan_id)
 
     print("Computing canonical risk for scan:", scan_id)
+    cur.execute("""
+        DELETE FROM domain_risk dr
+        USING domains d
+        WHERE dr.domain_id = d.id
+          AND dr.scan_id = %s
+          AND d.ownership_status <> 'CONFIRMED'
+          AND EXISTS (
+              SELECT 1
+              FROM scan_results sr
+              WHERE sr.scan_id = dr.scan_id
+                AND sr.domain_id = dr.domain_id
+          )
+    """, (scan_id,))
     risks = calculate_scan_risks(cur, scan_id)
 
     count = 0
