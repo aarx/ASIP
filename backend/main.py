@@ -1925,6 +1925,496 @@ def discovery_sources():
     return result
 
 
+def _frontend_asset_class(ownership_status, is_known):
+    if ownership_status == "CONFIRMED":
+        return "KNOWN" if is_known else "SHADOW"
+    return ownership_status
+
+
+def _frontend_risk_payload(risk):
+    if risk is None:
+        return None
+    return {
+        "score": risk.result.score,
+        "priority": risk.result.priority,
+        "reasons": list(risk.result.reasons),
+    }
+
+
+@app.get("/v2/overview")
+def frontend_v2_overview():
+    conn = get_conn()
+    cur = conn.cursor()
+    current = get_latest_authoritative_scan_id(cur)
+    previous = get_previous_authoritative_scan_id(cur, current)
+
+    if current is None:
+        conn.close()
+        return {
+            "current_scan_id": None,
+            "previous_scan_id": None,
+            "counts": {
+                "organizational": 0, "known": 0, "shadow": 0,
+                "candidate": 0, "external": 0,
+            },
+            "risk_distribution": {
+                "High": 0, "Elevated": 0, "Review": 0, "Low": 0,
+            },
+            "changes": {"new_assets": 0, "disappeared_assets": 0},
+            "needs_attention": [],
+        }
+
+    cur.execute("""
+        SELECT
+            COUNT(*) FILTER (WHERE d.ownership_status = 'CONFIRMED'),
+            COUNT(*) FILTER (
+                WHERE d.ownership_status = 'CONFIRMED' AND d.is_known = TRUE
+            ),
+            COUNT(*) FILTER (
+                WHERE d.ownership_status = 'CONFIRMED' AND d.is_known = FALSE
+            ),
+            COUNT(*) FILTER (WHERE d.ownership_status = 'CANDIDATE'),
+            COUNT(*) FILTER (WHERE d.ownership_status = 'EXTERNAL')
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        WHERE sr.scan_id = %s
+    """, (current,))
+    organizational, known, shadow, candidate, external = cur.fetchone()
+
+    new_assets = 0
+    disappeared_assets = 0
+    if previous is not None:
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM scan_results current_sr
+            JOIN domains d ON d.id = current_sr.domain_id
+            WHERE current_sr.scan_id = %s
+              AND d.ownership_status = 'CONFIRMED'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM scan_results previous_sr
+                  WHERE previous_sr.scan_id = %s
+                    AND previous_sr.domain_id = current_sr.domain_id
+              )
+        """, (current, previous))
+        new_assets = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM scan_results previous_sr
+            JOIN domains d ON d.id = previous_sr.domain_id
+            WHERE previous_sr.scan_id = %s
+              AND d.ownership_status = 'CONFIRMED'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM scan_results current_sr
+                  WHERE current_sr.scan_id = %s
+                    AND current_sr.domain_id = previous_sr.domain_id
+              )
+        """, (previous, current))
+        disappeared_assets = cur.fetchone()[0]
+
+    risks = calculate_scan_risks(cur, current)
+    conn.close()
+
+    risk_distribution = {
+        "High": 0, "Elevated": 0, "Review": 0, "Low": 0,
+    }
+    for risk in risks:
+        risk_distribution[risk.result.priority] += 1
+
+    ranked = sorted(
+        (risk for risk in risks if risk.result.score > 0),
+        key=lambda risk: (-risk.result.score, risk.domain),
+    )[:10]
+
+    return {
+        "current_scan_id": current,
+        "previous_scan_id": previous,
+        "counts": {
+            "organizational": organizational,
+            "known": known,
+            "shadow": shadow,
+            "candidate": candidate,
+            "external": external,
+        },
+        "risk_distribution": risk_distribution,
+        "changes": {
+            "new_assets": new_assets,
+            "disappeared_assets": disappeared_assets,
+        },
+        "needs_attention": [
+            {
+                "domain": risk.domain,
+                "score": risk.result.score,
+                "priority": risk.result.priority,
+                "reasons": list(risk.result.reasons),
+            }
+            for risk in ranked
+        ],
+    }
+
+
+@app.get("/v2/assets")
+def frontend_v2_assets(
+    page: int = 1,
+    limit: int = 50,
+    search: str = None,
+    ownership: str = None,
+    asset_class: str = None,
+    priority: str = None,
+    provider: str = None,
+    http_observation_status: str = None,
+):
+    page = max(page, 1)
+    limit = min(max(limit, 1), 200)
+
+    conn = get_conn()
+    cur = conn.cursor()
+    scan_id = get_latest_authoritative_scan_id(cur)
+    if scan_id is None:
+        conn.close()
+        return {"scan_id": None, "page": page, "limit": limit, "count": 0, "assets": []}
+
+    risk_by_domain = {
+        risk.domain_id: risk for risk in calculate_scan_risks(cur, scan_id)
+    }
+    cur.execute("""
+        SELECT
+            d.id, d.domain, d.is_known, d.ownership_status,
+            d.first_seen_scan, d.last_seen_scan,
+            ds.ip, ds.has_ip, ds.http_observation_status, ds.http_status,
+            ds.title, ds.final_url,
+            COALESCE(dp.provider, 'Unknown'),
+            da.asn
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        LEFT JOIN domain_states ds
+          ON ds.domain_id = sr.domain_id AND ds.scan_id = sr.scan_id
+        LEFT JOIN domain_provider dp
+          ON dp.domain_id = sr.domain_id AND dp.scan_id = sr.scan_id
+        LEFT JOIN domain_asn da
+          ON da.domain_id = sr.domain_id AND da.scan_id = sr.scan_id
+        WHERE sr.scan_id = %s
+        ORDER BY d.domain ASC, d.id ASC
+    """, (scan_id,))
+    rows = cur.fetchall()
+    conn.close()
+
+    search_value = (search or "").strip().lower()
+    ownership_value = (ownership or "").strip().upper()
+    class_value = (asset_class or "").strip().upper()
+    priority_value = (priority or "").strip().lower()
+    provider_value = (provider or "").strip().lower()
+    http_value = (http_observation_status or "").strip().upper()
+
+    assets = []
+    for row in rows:
+        (
+            domain_id, domain, is_known, ownership_status,
+            first_seen, last_seen, ip, has_ip, http_outcome, http_status,
+            title, final_url, asset_provider, asn,
+        ) = row
+        classification = _frontend_asset_class(ownership_status, is_known)
+        risk = risk_by_domain.get(domain_id)
+
+        if search_value and search_value not in domain.lower():
+            continue
+        if ownership_value and ownership_status != ownership_value:
+            continue
+        if class_value and classification != class_value:
+            continue
+        if priority_value and (
+            risk is None or risk.result.priority.lower() != priority_value
+        ):
+            continue
+        if provider_value and (asset_provider or "").lower() != provider_value:
+            continue
+        if http_value and (http_outcome or "UNKNOWN").upper() != http_value:
+            continue
+
+        assets.append({
+            "domain": domain,
+            "ownership_status": ownership_status,
+            "is_known": is_known,
+            "asset_class": classification,
+            "first_seen_scan": first_seen,
+            "last_seen_scan": last_seen,
+            "ip": ip,
+            "has_ip": bool(has_ip),
+            "http_observation_status": http_outcome or "UNKNOWN",
+            "http_status": http_status,
+            "title": title,
+            "final_url": final_url,
+            "provider": asset_provider,
+            "asn": asn,
+            "risk": _frontend_risk_payload(risk),
+        })
+
+    total = len(assets)
+    offset = (page - 1) * limit
+    return {
+        "scan_id": scan_id,
+        "page": page,
+        "limit": limit,
+        "count": total,
+        "assets": assets[offset:offset + limit],
+    }
+
+
+@app.get("/v2/assets/{domain_name}")
+def frontend_v2_asset_detail(domain_name: str):
+    conn = get_conn()
+    cur = conn.cursor()
+    scan_id = get_latest_authoritative_scan_id(cur)
+    if scan_id is None:
+        conn.close()
+        return {"error": "no authoritative scan yet"}
+
+    cur.execute("""
+        SELECT d.id, d.is_known, d.ownership_status,
+               d.first_seen_scan, d.last_seen_scan,
+               d.first_seen_at, d.last_seen_at, sr.seed
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        WHERE sr.scan_id = %s AND d.domain = %s
+    """, (scan_id, domain_name))
+    identity = cur.fetchone()
+    if identity is None:
+        conn.close()
+        return {"error": "domain not found in current authoritative scan"}
+
+    (
+        domain_id, is_known, ownership_status, first_seen_scan,
+        last_seen_scan, first_seen_at, last_seen_at, seed,
+    ) = identity
+
+    cur.execute("""
+        SELECT ip, has_ip, reverse_dns, http_observation_status,
+               http_live, http_status, http_reason,
+               final_url, final_status, title
+        FROM domain_states
+        WHERE domain_id = %s AND scan_id = %s
+    """, (domain_id, scan_id))
+    state = cur.fetchone()
+
+    cur.execute("""
+        SELECT port, service FROM domain_ports
+        WHERE domain_id = %s AND scan_id = %s
+        ORDER BY port
+    """, (domain_id, scan_id))
+    ports = [{"port": row[0], "service": row[1]} for row in cur.fetchall()]
+
+    cur.execute("""
+        SELECT asn, org, ip FROM domain_asn
+        WHERE domain_id = %s AND scan_id = %s
+    """, (domain_id, scan_id))
+    asn = cur.fetchone()
+
+    cur.execute("""
+        SELECT provider FROM domain_provider
+        WHERE domain_id = %s AND scan_id = %s
+    """, (domain_id, scan_id))
+    provider = cur.fetchone()
+
+    cur.execute("""
+        SELECT tech FROM domain_tech
+        WHERE domain_id = %s AND scan_id = %s
+        ORDER BY tech
+    """, (domain_id, scan_id))
+    technologies = [row[0] for row in cur.fetchall()]
+
+    cur.execute("""
+        SELECT expiry_date, days_to_expiry, cert_status
+        FROM domain_cert
+        WHERE domain_id = %s AND scan_id = %s
+    """, (domain_id, scan_id))
+    certificate = cur.fetchone()
+
+    cur.execute("""
+        SELECT source, seed FROM domain_sources
+        WHERE domain_id = %s AND scan_id = %s
+        ORDER BY source, seed
+    """, (domain_id, scan_id))
+    discovery_sources = [
+        {"source": row[0], "seed": row[1]} for row in cur.fetchall()
+    ]
+
+    cur.execute("""
+        SELECT finding, severity, evidence FROM domain_findings
+        WHERE domain_id = %s AND scan_id = %s
+        ORDER BY severity, finding
+    """, (domain_id, scan_id))
+    findings = [
+        {"finding": row[0], "severity": row[1], "evidence": row[2]}
+        for row in cur.fetchall()
+    ]
+
+    risk = next(
+        (
+            item for item in calculate_scan_risks(cur, scan_id)
+            if item.domain_id == domain_id
+        ),
+        None,
+    )
+    conn.close()
+
+    return {
+        "scan_id": scan_id,
+        "domain": domain_name,
+        "ownership_status": ownership_status,
+        "is_known": is_known,
+        "asset_class": _frontend_asset_class(ownership_status, is_known),
+        "first_seen_scan": first_seen_scan,
+        "last_seen_scan": last_seen_scan,
+        "first_seen_at": first_seen_at,
+        "last_seen_at": last_seen_at,
+        "seed": seed,
+        "risk": _frontend_risk_payload(risk),
+        "dns": {
+            "ip": state[0] if state else None,
+            "has_ip": bool(state[1]) if state else False,
+            "reverse_dns": state[2] if state else None,
+        },
+        "http": {
+            "observation_status": state[3] if state else "UNKNOWN",
+            "live": bool(state[4]) if state else False,
+            "status": state[5] if state else None,
+            "reason": state[6] if state else None,
+            "final_url": state[7] if state else None,
+            "final_status": state[8] if state else None,
+            "title": state[9] if state else None,
+        },
+        "ports": ports,
+        "asn": {
+            "asn": asn[0], "organization": asn[1], "ip": asn[2]
+        } if asn else None,
+        "provider": provider[0] if provider else None,
+        "technologies": technologies,
+        "certificate": {
+            "expiry_date": certificate[0],
+            "days_to_expiry": certificate[1],
+            "status": certificate[2],
+        } if certificate else None,
+        "discovery": {"sources": discovery_sources},
+        "findings": findings,
+    }
+
+
+@app.get("/v2/scans")
+def frontend_v2_scans(limit: int = 100):
+    limit = min(max(limit, 1), 500)
+    conn = get_conn()
+    cur = conn.cursor()
+    current = get_latest_authoritative_scan_id(cur)
+    previous = get_previous_authoritative_scan_id(cur, current)
+    cur.execute("""
+        SELECT s.id, s.status, s.scan_time, s.started_at, s.completed_at,
+               s.seed, COUNT(sr.domain_id),
+               EXTRACT(EPOCH FROM (s.completed_at - s.started_at))
+        FROM scans s
+        LEFT JOIN scan_results sr ON sr.scan_id = s.id
+        GROUP BY s.id, s.status, s.scan_time, s.started_at, s.completed_at, s.seed
+        ORDER BY s.id DESC
+        LIMIT %s
+    """, (limit,))
+    rows = cur.fetchall()
+    conn.close()
+
+    return {
+        "current_authoritative_scan_id": current,
+        "previous_authoritative_scan_id": previous,
+        "scans": [
+            {
+                "scan_id": row[0],
+                "status": row[1],
+                "scan_time": row[2],
+                "started_at": row[3],
+                "completed_at": row[4],
+                "seed": row[5],
+                "asset_count": row[6],
+                "duration_seconds": float(row[7]) if row[7] is not None else None,
+                "is_current_authoritative": row[0] == current,
+                "is_previous_authoritative": row[0] == previous,
+            }
+            for row in rows
+        ],
+    }
+
+
+@app.get("/v2/brand-assets")
+def frontend_v2_brand_assets(
+    page: int = 1,
+    limit: int = 50,
+    ownership: str = None,
+    search: str = None,
+):
+    page = max(page, 1)
+    limit = min(max(limit, 1), 200)
+    conn = get_conn()
+    cur = conn.cursor()
+    scan_id = get_latest_authoritative_scan_id(cur)
+    if scan_id is None:
+        conn.close()
+        return {"scan_id": None, "page": page, "limit": limit, "count": 0, "assets": []}
+
+    cur.execute("""
+        SELECT
+            d.domain, d.ownership_status,
+            ds.ip, ds.has_ip, ds.http_observation_status,
+            ds.http_status, ds.final_url, ds.final_status, ds.title,
+            STRING_AGG(DISTINCT src.source, ',' ORDER BY src.source),
+            STRING_AGG(DISTINCT src.seed, ',' ORDER BY src.seed)
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        LEFT JOIN domain_states ds
+          ON ds.domain_id = sr.domain_id AND ds.scan_id = sr.scan_id
+        LEFT JOIN domain_sources src
+          ON src.domain_id = sr.domain_id AND src.scan_id = sr.scan_id
+        WHERE sr.scan_id = %s
+          AND d.ownership_status IN ('CANDIDATE', 'EXTERNAL')
+        GROUP BY d.id, d.domain, d.ownership_status,
+                 ds.ip, ds.has_ip, ds.http_observation_status,
+                 ds.http_status, ds.final_url, ds.final_status, ds.title
+        ORDER BY d.domain ASC, d.id ASC
+    """, (scan_id,))
+    rows = cur.fetchall()
+    conn.close()
+
+    ownership_value = (ownership or "").strip().upper()
+    search_value = (search or "").strip().lower()
+    assets = []
+    for row in rows:
+        if ownership_value and row[1] != ownership_value:
+            continue
+        if search_value and search_value not in row[0].lower():
+            continue
+        assets.append({
+            "domain": row[0],
+            "ownership_status": row[1],
+            "ip": row[2],
+            "has_ip": bool(row[3]),
+            "http_observation_status": row[4] or "UNKNOWN",
+            "http_status": row[5],
+            "final_url": row[6],
+            "final_status": row[7],
+            "title": row[8],
+            "discovery_sources": row[9].split(",") if row[9] else [],
+            "seeds": row[10].split(",") if row[10] else [],
+            "risk": None,
+        })
+
+    total = len(assets)
+    offset = (page - 1) * limit
+    return {
+        "scan_id": scan_id,
+        "page": page,
+        "limit": limit,
+        "count": total,
+        "assets": assets[offset:offset + limit],
+    }
+
+
 @app.get("/chat")
 def chat(q: str):
 
