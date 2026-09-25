@@ -6,6 +6,11 @@ jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
   getV2Assets: jest.fn(),
   getV2AssetDetail: jest.fn(),
+  getV2Scans: jest.fn(),
+  getRiskyDomains: jest.fn(),
+  getFindings: jest.fn(),
+  getSensitiveExposure: jest.fn(),
+  getExposureSummary: jest.fn(),
 }));
 jest.mock("recharts", () => {
   const actual = jest.requireActual("recharts");

@@ -49,3 +49,4 @@ code { font-family: var(--asip-font-mono); }
 .status-running, .status-candidate { border-color: rgba(61, 196, 255, .3); background: rgba(61, 196, 255, .08); color: #79d4fb; }
 .status-confirmed, .status-shadow { border-color: rgba(126, 145, 168, .3); background: rgba(126, 145, 168, .08); color: #b1bfce; }
 .status-no_response, .status-unknown { border-color: rgba(126, 145, 168, .28); background: rgba(126, 145, 168, .07); color: #9cabbc; }
+.status-medium { border-color: rgba(231, 168, 75, .3); background: rgba(231, 168, 75, .08); color: #efbd73; }

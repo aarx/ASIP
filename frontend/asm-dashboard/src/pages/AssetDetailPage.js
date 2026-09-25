@@ -45,7 +45,17 @@ export default function AssetDetailPage({ domain, returnQuery }) {
     return () => { active = false; };
   }, [domain, requestVersion]);
 
-  const backHref = `#/assets${returnQuery ? `?${returnQuery}` : ""}`;
+  const returnParams = new URLSearchParams(returnQuery);
+  const returnTo = returnParams.get("return");
+  const backRoute = returnTo === "risk" || returnTo === "shadow"
+    ? returnTo
+    : "assets";
+  const backLabel = returnTo === "risk"
+    ? "Risk & Exposure"
+    : returnTo === "shadow" ? "Shadow" : "Assets";
+  if (returnTo) returnParams.delete("return");
+  const remainingQuery = returnParams.toString();
+  const backHref = `#/${backRoute}${remainingQuery ? `?${remainingQuery}` : ""}`;
 
   if (status === "loading") return <LoadingState title="Loading asset evidence" copy="Retrieving current scan evidence without inferring missing observations." />;
   if (status === "error") return <ErrorState title="Asset detail unavailable" copy="The current evidence contract could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
@@ -56,7 +66,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
           <div className="state-icon" aria-hidden="true">?</div>
           <h2 className="state-title">Asset is not in the current surface</h2>
           <p className="state-copy">{data?.error || "The asset was not found in the current authoritative scan."}</p>
-          <Button className="state-action" component="a" href={backHref} variant="outlined">Back to Assets</Button>
+          <Button className="state-action" component="a" href={backHref} variant="outlined">Back to {backLabel}</Button>
         </div>
       </div>
     );
@@ -66,7 +76,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   return (
     <div className="asset-detail">
       <div className="detail-toolbar">
-        <Button component="a" href={backHref} variant="text">← Back to Assets</Button>
+        <Button component="a" href={backHref} variant="text">← Back to {backLabel}</Button>
         <span>Authoritative scan #{data.scan_id}</span>
       </div>
 

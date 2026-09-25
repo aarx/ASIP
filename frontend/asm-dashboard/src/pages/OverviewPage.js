@@ -1,17 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import React, { useEffect, useState } from "react";
 import { getV2Overview } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
-
-const RISK_COLORS = {
-  High: "#f06467",
-  Elevated: "#e7a84b",
-  Review: "#d4c266",
-  Low: "#4e789b",
-};
+import RiskDistributionChart, { RISK_COLORS } from "../components/ui/RiskDistributionChart";
 
 const OWNERSHIP_COLORS = {
   Known: "#3dc4ff",
@@ -116,14 +109,6 @@ export default function OverviewPage() {
     return () => { active = false; };
   }, [requestVersion]);
 
-  const riskData = useMemo(() => {
-    if (!data) return [];
-    return ["High", "Elevated", "Review", "Low"].map((priority) => ({
-      priority,
-      count: data.risk_distribution?.[priority] ?? 0,
-    }));
-  }, [data]);
-
   if (status === "loading") return <LoadingState />;
   if (status === "error") return <ErrorState onRetry={() => setRequestVersion((value) => value + 1)} />;
   if (!data || data.current_scan_id == null) return <EmptyState />;
@@ -162,18 +147,7 @@ export default function OverviewPage() {
       </Panel>
 
       <Panel title="Risk distribution" subtitle="Canonical priorities across confirmed organizational assets" className="risk-panel">
-        <div className="risk-chart-wrap" aria-label="Risk distribution chart">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={riskData} layout="vertical" margin={{ top: 2, right: 22, bottom: 2, left: 6 }}>
-              <XAxis type="number" allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: "#708298", fontSize: 10 }} />
-              <YAxis type="category" dataKey="priority" axisLine={false} tickLine={false} width={62} tick={{ fill: "#a9bacb", fontSize: 10 }} />
-              <Tooltip cursor={{ fill: "rgba(61,196,255,.04)" }} contentStyle={{ background: "#0c1828", border: "1px solid #273b52", borderRadius: 6, fontSize: 11 }} />
-              <Bar dataKey="count" radius={[0, 3, 3, 0]} barSize={15}>
-                {riskData.map((entry) => <Cell key={entry.priority} fill={RISK_COLORS[entry.priority]} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        <RiskDistributionChart distribution={data.risk_distribution} />
       </Panel>
 
       <Panel title="Ownership & asset composition" subtitle="Organizational surface and adjacent Brand Perimeter" className="ownership-panel">

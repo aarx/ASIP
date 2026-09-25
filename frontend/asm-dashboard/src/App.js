@@ -3,6 +3,9 @@ import AppShell from "./components/AppShell";
 import OverviewPage from "./pages/OverviewPage";
 import AssetExplorerPage from "./pages/AssetExplorerPage";
 import AssetDetailPage from "./pages/AssetDetailPage";
+import RiskExposurePage from "./pages/RiskExposurePage";
+import ShadowCentrePage from "./pages/ShadowCentrePage";
+import ScanCentrePage from "./pages/ScanCentrePage";
 import PlaceholderPage from "./pages/PlaceholderPage";
 import "./App.css";
 
@@ -50,6 +53,9 @@ function App() {
       ? <AssetDetailPage domain={domain} returnQuery={query} />
       : <AssetExplorerPage query={query} />;
   }
+  if (route === "risk") page = <RiskExposurePage />;
+  if (route === "shadow") page = <ShadowCentrePage query={query} />;
+  if (route === "scans") page = <ScanCentrePage />;
 
   return (
     <AppShell activeRoute={route} routeMeta={routeMeta}>

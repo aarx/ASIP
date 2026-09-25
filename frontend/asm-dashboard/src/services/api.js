@@ -17,6 +17,31 @@ export const getV2AssetDetail = async (domain) => {
   return res.data;
 };
 
+export const getV2Scans = async (limit = 100) => {
+  const res = await axios.get(`${API_URL}/v2/scans`, { params: { limit } });
+  return res.data;
+};
+
+export const getRiskyDomains = async () => {
+  const res = await axios.get(`${API_URL}/risky-domains`);
+  return res.data;
+};
+
+export const getFindings = async () => {
+  const res = await axios.get(`${API_URL}/findings`);
+  return res.data;
+};
+
+export const getSensitiveExposure = async () => {
+  const res = await axios.get(`${API_URL}/sensitive-exposure`);
+  return res.data;
+};
+
+export const getExposureSummary = async () => {
+  const res = await axios.get(`${API_URL}/exposure-summary`);
+  return res.data;
+};
+
 export const getSummary = async () => {
   const res = await axios.get(`${API_URL}/summary`);
   return res.data;
