@@ -7,6 +7,16 @@ export const getV2Overview = async () => {
   return res.data;
 };
 
+export const getV2Assets = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/assets`, { params });
+  return res.data;
+};
+
+export const getV2AssetDetail = async (domain) => {
+  const res = await axios.get(`${API_URL}/v2/assets/${encodeURIComponent(domain)}`);
+  return res.data;
+};
+
 export const getSummary = async () => {
   const res = await axios.get(`${API_URL}/summary`);
   return res.data;

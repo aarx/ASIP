@@ -2,7 +2,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import { getV2Overview } from "./services/api";
 
-jest.mock("./services/api", () => ({ getV2Overview: jest.fn() }));
+jest.mock("./services/api", () => ({
+  getV2Overview: jest.fn(),
+  getV2Assets: jest.fn(),
+  getV2AssetDetail: jest.fn(),
+}));
 jest.mock("recharts", () => {
   const actual = jest.requireActual("recharts");
   return {
