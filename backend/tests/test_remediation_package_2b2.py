@@ -455,8 +455,9 @@ class McpCursor:
             self.result = (max(successful),) if successful else None
             return
 
-        if "select d.id," in normalized and "where d.domain = %s" in normalized:
-            assert "ds.scan_id = %s" in normalized
+        if "select d.id," in normalized and "d.domain = %s" in normalized:
+            assert "from scan_results sr" in normalized
+            assert "sr.scan_id = %s" in normalized
             assert params[0] == 31
             self.result = self.domain_row(params[1], params[0])
             return

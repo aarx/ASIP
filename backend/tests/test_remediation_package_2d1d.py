@@ -14,7 +14,7 @@ PROTECTED_SHA256 = {
     "ingest.py": "b1180a94fb9bcd39313f7f8b5ddef8ebd007300562710088ff589b378c38d880",
     "orchestration.py": "2813d097152f3e7deb5d3b235c3e2777b30f527e361a270485cfb7b286a43960",
     "discovery_validator.py": "545dfad14226f1b2b1e2b609b49d7ae9f2738502e3dc68756c243f5d73e3ae81",
-    "main.py": "6c8544b75a4e799492c66a42fde282f99744f01dc817f1142f8e143970947a0b",
+    "main.py": "86301c0d6e3412f58a8e9b991afafbd6e307f202ed72afeb56ca6f786c87e6a2",
 }
 
 CONSUMERS = (

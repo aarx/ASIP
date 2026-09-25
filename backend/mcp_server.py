@@ -100,11 +100,14 @@ def get_domain(domain: str):
             d.ownership_status,
             ds.ip,
             ds.http_status
-        FROM domains d
+        FROM scan_results sr
+        JOIN domains d
+          ON d.id = sr.domain_id
         LEFT JOIN domain_states ds
           ON d.id = ds.domain_id
-         AND ds.scan_id = %s
-        WHERE d.domain = %s
+         AND ds.scan_id = sr.scan_id
+        WHERE sr.scan_id = %s
+        AND d.domain = %s
         LIMIT 1
     """, (scan_id, domain))
 

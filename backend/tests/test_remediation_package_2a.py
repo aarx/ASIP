@@ -271,14 +271,14 @@ class ApiContractTests(unittest.TestCase):
             "new_domains": []
         })
 
-    def test_zero_authoritative_summary_preserves_lifetime_counts(self):
+    def test_zero_authoritative_summary_has_zero_current_asset_count(self):
         cursor = RecordingCursor(fetchones=[
-            (12,), (0,), (0,), (0,), (0,), (0,), (0,), (3,)
+            (0,), (0,), (0,), (0,), (0,), (0,), (0,), (3,)
         ])
         self.main.get_conn = lambda: FakeConnection(cursor)
 
         self.assertEqual(self.main.summary(), {
-            "total_domains": 12,
+            "total_domains": 0,
             "live_domains": 0,
             "known_domains": 0,
             "new_domains": 0,

@@ -37,15 +37,17 @@ def summary():
     conn = get_conn()
     cur = conn.cursor()
 
-    # total confirmed organizational domains ever discovered
+    latest_scan = get_latest_authoritative_scan_id(cur)
+
+    # total confirmed organizational domains in the authoritative scan
     cur.execute("""
         SELECT COUNT(*)
-        FROM domains
-        WHERE ownership_status = 'CONFIRMED'
-    """)
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        WHERE sr.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
+    """, (latest_scan,))
     total_domains = cur.fetchone()[0]
-
-    latest_scan = get_latest_authoritative_scan_id(cur)
 
     # domains resolving in latest scan
     cur.execute("""
@@ -99,7 +101,7 @@ def summary():
         JOIN domains d ON d.id = ds.domain_id
         WHERE ds.scan_id = %s
         AND ds.has_ip = TRUE
-        AND ds.http_live = FALSE
+        AND ds.http_observation_status = 'NO_RESPONSE'
         AND d.ownership_status = 'CONFIRMED'
     """, (latest_scan,))
     non_web_assets = cur.fetchone()[0]
@@ -169,7 +171,12 @@ def http_status():
         END AS status_group,
         COUNT(DISTINCT ds.domain_id)
     FROM domain_states ds
+    JOIN scan_results sr
+      ON sr.domain_id = ds.domain_id
+     AND sr.scan_id = ds.scan_id
+    JOIN domains d ON d.id = ds.domain_id
     WHERE ds.scan_id = %s
+    AND d.ownership_status = 'CONFIRMED'
     GROUP BY status_group
     """, (latest,))   # ✅ FIXED
 
@@ -305,6 +312,7 @@ def new_domains():
         ON d.id = sr.domain_id
         WHERE sr.scan_id = %s
         AND d.first_seen_scan = %s
+        AND d.ownership_status = 'CONFIRMED'
         ORDER BY d.first_seen_at DESC NULLS LAST, d.domain
         LIMIT 100
     """, (latest_scan, latest_scan))
@@ -341,6 +349,7 @@ def disappeared():
         JOIN scan_results sr
         ON d.id = sr.domain_id
         WHERE sr.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         AND d.id NOT IN (
             SELECT domain_id
             FROM scan_results
@@ -382,6 +391,7 @@ def new_domains_delta():
         JOIN scan_results sr
         ON d.id = sr.domain_id
         WHERE sr.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         AND d.id NOT IN (
             SELECT domain_id
             FROM scan_results
@@ -409,24 +419,39 @@ def exposure_summary():
 
     cur.execute("""
         SELECT COUNT(*)
-        FROM domain_states
-        WHERE scan_id = %s
+        FROM domain_states ds
+        JOIN scan_results sr
+          ON sr.domain_id = ds.domain_id
+         AND sr.scan_id = ds.scan_id
+        JOIN domains d ON d.id = ds.domain_id
+        WHERE ds.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
     """, (latest,))
     total = cur.fetchone()[0]
 
     cur.execute("""
         SELECT COUNT(*)
-        FROM domain_states
-        WHERE scan_id = %s
-        AND has_ip = TRUE
+        FROM domain_states ds
+        JOIN scan_results sr
+          ON sr.domain_id = ds.domain_id
+         AND sr.scan_id = ds.scan_id
+        JOIN domains d ON d.id = ds.domain_id
+        WHERE ds.scan_id = %s
+        AND ds.has_ip = TRUE
+        AND d.ownership_status = 'CONFIRMED'
     """, (latest,))
     resolving = cur.fetchone()[0]
 
     cur.execute("""
         SELECT COUNT(*)
-        FROM domain_states
-        WHERE scan_id = %s
-        AND http_live = TRUE
+        FROM domain_states ds
+        JOIN scan_results sr
+          ON sr.domain_id = ds.domain_id
+         AND sr.scan_id = ds.scan_id
+        JOIN domains d ON d.id = ds.domain_id
+        WHERE ds.scan_id = %s
+        AND ds.http_live = TRUE
+        AND d.ownership_status = 'CONFIRMED'
     """, (latest,))
     http_live = cur.fetchone()[0]
 
@@ -467,6 +492,7 @@ def newly_live():
         AND s2.scan_id = %s
         AND s1.has_ip = FALSE
         AND s2.has_ip = TRUE
+        AND d.ownership_status = 'CONFIRMED'
         LIMIT 100
     """, (previous, current))
 
@@ -508,6 +534,7 @@ def newly_dead():
         AND s2.scan_id = %s
         AND s1.has_ip = TRUE
         AND s2.has_ip = FALSE
+        AND d.ownership_status = 'CONFIRMED'
         LIMIT 100
     """, (previous, current))
 
@@ -534,9 +561,12 @@ def exposure_trend():
             SUM(CASE WHEN has_ip THEN 1 ELSE 0 END) AS resolving,
             SUM(CASE WHEN http_live THEN 1 ELSE 0 END) AS http_live
         FROM domain_states ds
+        JOIN domains d
+          ON d.id = ds.domain_id
         JOIN scans s
           ON s.id = ds.scan_id
         WHERE s.status = 'SUCCEEDED'
+        AND d.ownership_status = 'CONFIRMED'
         GROUP BY ds.scan_id
         ORDER BY ds.scan_id
     """)
@@ -591,6 +621,7 @@ def volatile_domains():
         ON d.id = o.domain_id
         WHERE prev_state IS NOT NULL
         AND prev_state != has_ip
+        AND d.ownership_status = 'CONFIRMED'
         GROUP BY d.domain
         HAVING COUNT(*) > 0
         ORDER BY volatility_score DESC
@@ -659,6 +690,7 @@ def sensitive_exposure():
         JOIN domains d
             ON dp.domain_id = d.id
         WHERE dp.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         ORDER BY sp.risk DESC
         LIMIT 20
     """, (scan_id,))
@@ -708,6 +740,7 @@ def hygiene_score():
             ON dp.port = sp.port
 
         WHERE ds.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
 
         GROUP BY d.id, d.domain, ds.has_ip, ds.http_live
 
@@ -773,8 +806,10 @@ def provider_clusters():
                 ELSE provider
             END AS provider,
             COUNT(*)
-        FROM domain_provider
-        WHERE scan_id = %s
+        FROM domain_provider dp
+        JOIN domains d ON d.id = dp.domain_id
+        WHERE dp.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         GROUP BY provider
         ORDER BY COUNT(*) DESC
     """, (scan_id,))
@@ -860,18 +895,21 @@ def domain_detail(domain_name: str):
         conn.close()
         return {"error": "no authoritative scan yet"}
 
-    # domain basic
+    # Current authoritative membership and domain basics.
     cur.execute("""
-        SELECT id, first_seen_scan, last_seen_scan, is_known, ownership_status
-        FROM domains
-        WHERE domain=%s
-    """, (domain_name,))
+        SELECT d.id, d.first_seen_scan, d.last_seen_scan,
+               d.is_known, d.ownership_status
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        WHERE sr.scan_id = %s
+        AND d.domain = %s
+    """, (scan_id, domain_name))
     
     row = cur.fetchone()
 
     if not row:
         conn.close()
-        return {"error": "domain not found"}
+        return {"error": "domain not found in current authoritative scan"}
 
     domain_id, first_seen, last_seen, is_known, ownership_status = row
 
@@ -1025,6 +1063,7 @@ def providers():
         WHERE ds.has_ip = TRUE
         AND ds.scan_id = %s
         AND dp.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         GROUP BY dp.provider
         ORDER BY COUNT(*) DESC
     """, (scan_id, scan_id))
@@ -1061,6 +1100,7 @@ def tech():
         WHERE ds.has_ip = TRUE
         AND ds.scan_id = %s
         AND dt.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         GROUP BY dt.tech
         ORDER BY COUNT(*) DESC;
     """, (scan_id, scan_id))
@@ -1091,7 +1131,9 @@ def exposure_drift():
     cur.execute("""
         SELECT COUNT(*)
         FROM domain_states ds
+        JOIN domains d ON d.id = ds.domain_id
         WHERE ds.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         AND ds.domain_id NOT IN (
             SELECT domain_id
             FROM domain_states
@@ -1105,7 +1147,9 @@ def exposure_drift():
     cur.execute("""
         SELECT COUNT(*)
         FROM domain_states ds
+        JOIN domains d ON d.id = ds.domain_id
         WHERE ds.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         AND ds.domain_id NOT IN (
             SELECT domain_id
             FROM domain_states
@@ -1157,6 +1201,7 @@ def export_targets():
             ON d.id = pr.domain_id
            AND pr.scan_id = ds.scan_id
         WHERE ds.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         GROUP BY d.domain, ds.ip, ds.http_live, da.asn, pr.provider
         ORDER BY open_ports DESC
         LIMIT 500
@@ -1254,7 +1299,10 @@ def export_enriched_csv():
         d.confidence_label,
         d.confidence_reasons
     
-    FROM domains d
+    FROM scan_results sr
+
+    JOIN domains d
+        ON d.id = sr.domain_id
     
     LEFT JOIN domain_states ds
         ON d.id = ds.domain_id AND ds.scan_id = %s
@@ -1267,9 +1315,11 @@ def export_enriched_csv():
     
     LEFT JOIN domain_cert dc
         ON d.id = dc.domain_id AND dc.scan_id = %s
+
+    WHERE sr.scan_id = %s
     """
 
-    cur.execute(query, (scan_id, scan_id, scan_id, scan_id))
+    cur.execute(query, (scan_id, scan_id, scan_id, scan_id, scan_id))
     rows = cur.fetchall()
 
     columns = [
@@ -1346,7 +1396,7 @@ def export_enriched_csv():
         port_map.setdefault(domain, []).append(str(port))
 
     df["ports"] = df["domain"].map(
-        lambda d: ",".join(port_map.get(d, [])) or "none"
+        lambda d: ",".join(port_map.get(d, []))
     )
 
     # TECH aggregation
@@ -1492,6 +1542,28 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
         for risk in calculate_scan_risks(cur, scan_id)
     }
 
+    population = """
+    FROM scan_results sr
+    JOIN domains d
+      ON d.id = sr.domain_id
+    JOIN domain_states ds
+      ON ds.domain_id = sr.domain_id
+     AND ds.scan_id = sr.scan_id
+    LEFT JOIN domain_provider dp
+      ON dp.domain_id = sr.domain_id
+     AND dp.scan_id = sr.scan_id
+    WHERE sr.scan_id = %s
+      AND d.ownership_status = 'CONFIRMED'
+      AND ds.has_ip = TRUE
+      AND (%s IS NULL OR %s = '' OR LOWER(dp.provider) = LOWER(%s))
+    """
+
+    cur.execute(
+        "SELECT COUNT(DISTINCT d.id) " + population,
+        (scan_id, provider, provider, provider),
+    )
+    total = cur.fetchone()[0]
+
     query = """
     SELECT 
         d.domain,
@@ -1502,48 +1574,54 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
         ds.http_status,
         COALESCE(dp.provider,'Unknown') as provider,
         COALESCE(da.asn,'Unknown') as asn,
-        COALESCE(dt.tech,'Unknown') as tech,
-    
-        COALESCE(STRING_AGG(DISTINCT p.port::text, ','), '') as ports
-    
-    FROM domains d
-    
-    LEFT JOIN domain_states ds
-        ON d.id = ds.domain_id
-        AND ds.scan_id = %s
-    
+        COALESCE(STRING_AGG(DISTINCT dt.tech, ',' ORDER BY dt.tech), '') as tech,
+        COALESCE(
+            STRING_AGG(DISTINCT p.port::text, ',' ORDER BY p.port::text),
+            ''
+        ) as ports
+
+    FROM scan_results sr
+
+    JOIN domains d
+        ON d.id = sr.domain_id
+
+    JOIN domain_states ds
+        ON ds.domain_id = sr.domain_id
+        AND ds.scan_id = sr.scan_id
+
     LEFT JOIN domain_provider dp
-        ON d.id = dp.domain_id
-        AND dp.scan_id = %s
+        ON dp.domain_id = sr.domain_id
+        AND dp.scan_id = sr.scan_id
     
     LEFT JOIN domain_asn da
-        ON d.id = da.domain_id
-        AND da.scan_id = %s
+        ON da.domain_id = sr.domain_id
+        AND da.scan_id = sr.scan_id
     
     LEFT JOIN domain_tech dt
-        ON d.id = dt.domain_id
-        AND dt.scan_id = %s
+        ON dt.domain_id = sr.domain_id
+        AND dt.scan_id = sr.scan_id
     
     LEFT JOIN domain_ports p
-        ON d.id = p.domain_id
-        AND p.scan_id = %s
+        ON p.domain_id = sr.domain_id
+        AND p.scan_id = sr.scan_id
     
-    WHERE d.ownership_status = 'CONFIRMED'
+    WHERE sr.scan_id = %s
+    AND d.ownership_status = 'CONFIRMED'
     AND ds.has_ip = TRUE
-    AND dp.provider IS NOT NULL
-    AND dp.provider != 'Unknown'
     AND (%s IS NULL OR %s = '' OR LOWER(dp.provider) = LOWER(%s))
     
     GROUP BY 
-        d.domain, d.is_known, d.ownership_status,
+        d.id, d.domain, d.is_known, d.ownership_status,
         ds.ip, ds.has_ip, ds.http_status,
-        dp.provider, da.asn, dt.tech
+        dp.provider, da.asn
+
+    ORDER BY d.domain ASC, d.id ASC
     """
 
     cur.execute(
         query + " LIMIT %s OFFSET %s",
         (
-            scan_id, scan_id, scan_id, scan_id, scan_id,
+            scan_id,
             provider, provider, provider,
             limit, offset
         )
@@ -1578,7 +1656,7 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
     return {
         "page": page,
         "limit": limit,
-        "count": len(assets),
+        "count": total,
         "assets": assets
     }
 
@@ -1600,6 +1678,7 @@ def findings():
         JOIN domains d 
             ON d.id = df.domain_id
         WHERE df.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         ORDER BY 
             CASE 
                 WHEN df.severity = 'HIGH' THEN 1
@@ -1638,6 +1717,7 @@ def cert_expiry():
         FROM domain_cert dc
         JOIN domains d ON d.id = dc.domain_id
         WHERE dc.scan_id = %s
+        AND d.ownership_status = 'CONFIRMED'
         ORDER BY dc.days_to_expiry ASC NULLS LAST
         LIMIT 50
     """, (scan_id,))
@@ -2363,6 +2443,17 @@ def redirect_summary():
     conn = get_conn()
     cur = conn.cursor()
 
+    scan_id = get_latest_authoritative_scan_id(cur)
+
+    if scan_id is None:
+        conn.close()
+        return {
+            "total": 0,
+            "internal": 0,
+            "trusted_external": 0,
+            "untrusted_external": 0,
+        }
+
     # trusted roots
     cur.execute("""
         SELECT LOWER(domain)
@@ -2378,12 +2469,17 @@ def redirect_summary():
         ds.http_status,
         ds.final_url
     FROM domain_states ds
+    JOIN scan_results sr
+        ON sr.domain_id = ds.domain_id
+       AND sr.scan_id = ds.scan_id
     JOIN domains d
         ON d.id = ds.domain_id
-    WHERE ds.http_status BETWEEN 300 AND 399
+    WHERE ds.scan_id = %s
+      AND d.ownership_status = 'CONFIRMED'
+      AND ds.http_status BETWEEN 300 AND 399
       AND ds.final_url <> ''
       AND ds.final_url <> 'nan'
-    """)
+    """, (scan_id,))
 
     rows = cur.fetchall()
 
@@ -2424,6 +2520,12 @@ def naming_asset_exposure():
     conn = get_conn()
     cur = conn.cursor()
 
+    scan_id = get_latest_authoritative_scan_id(cur)
+
+    if scan_id is None:
+        conn.close()
+        return []
+
     keywords = [
         "dev",
         "test",
@@ -2463,11 +2565,14 @@ def naming_asset_exposure():
 
         query = f"""
             SELECT COUNT(DISTINCT d.domain)
-            FROM domains d
-            WHERE {condition}
+            FROM scan_results sr
+            JOIN domains d ON d.id = sr.domain_id
+            WHERE sr.scan_id = %s
+            AND d.ownership_status = 'CONFIRMED'
+            AND {condition}
         """
 
-        cur.execute(query, params)
+        cur.execute(query, (scan_id, *params))
 
         count = cur.fetchone()[0]
 
