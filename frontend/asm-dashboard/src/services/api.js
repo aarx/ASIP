@@ -7,6 +7,16 @@ export const getV2Overview = async () => {
   return res.data;
 };
 
+export const getNewDomainsDelta = async () => {
+  const res = await axios.get(`${API_URL}/new-domains-delta`);
+  return res.data;
+};
+
+export const getDisappearedDomains = async () => {
+  const res = await axios.get(`${API_URL}/disappeared-domains`);
+  return res.data;
+};
+
 export const getV2Assets = async (params) => {
   const res = await axios.get(`${API_URL}/v2/assets`, { params });
   return res.data;

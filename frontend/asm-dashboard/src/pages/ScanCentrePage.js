@@ -46,8 +46,8 @@ export default function ScanCentrePage() {
       <section className="operations-kpis" aria-label="Scan status context">
         <MetricCard label="Current authoritative" value={scans.current_authoritative_scan_id ? `#${scans.current_authoritative_scan_id}` : "—"} support="Latest SUCCEEDED scan" accent="#39cb91" />
         <MetricCard label="Previous baseline" value={scans.previous_authoritative_scan_id ? `#${scans.previous_authoritative_scan_id}` : "—"} support="Previous SUCCEEDED scan" accent="#4e789b" />
-        <MetricCard label="New assets" value={overview.changes?.new_assets ?? 0} support="Successful-scan comparison" accent="#3dc4ff" />
-        <MetricCard label="Disappeared" value={overview.changes?.disappeared_assets ?? 0} support="Successful-scan comparison" accent="#7e91a8" />
+        <MetricCard label="New assets" value={overview.changes?.new_assets ?? 0} support="Successful-scan comparison" accent="#3dc4ff" href="#/changes?view=new" />
+        <MetricCard label="Disappeared" value={overview.changes?.disappeared_assets ?? 0} support="Successful-scan comparison" accent="#7e91a8" href="#/changes?view=disappeared" />
       </section>
 
       <Panel title="Scan history" subtitle="Lifecycle is explicit; only SUCCEEDED scans may be authoritative" meta={`${scans.scans.length} MOST RECENT`} className="scan-history-panel">

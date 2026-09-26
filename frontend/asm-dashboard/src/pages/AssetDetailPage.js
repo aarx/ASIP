@@ -47,15 +47,27 @@ export default function AssetDetailPage({ domain, returnQuery }) {
 
   const returnParams = new URLSearchParams(returnQuery);
   const returnTo = returnParams.get("return");
-  const backRoute = returnTo === "risk" || returnTo === "shadow" || returnTo === "brand"
+  const explicitReturnQuery = returnParams.get("return_query");
+  const backRoute = ["overview", "risk", "shadow", "brand", "changes", "investigate"].includes(returnTo)
     ? returnTo
     : "assets";
-  const backLabel = returnTo === "risk"
-    ? "Risk & Exposure"
-    : returnTo === "shadow" ? "Shadow" : returnTo === "brand" ? "Brand Perimeter" : "Assets";
+  const backLabels = {
+    overview: "Overview",
+    risk: "Risk & Exposure",
+    shadow: "Shadow",
+    brand: "Brand Perimeter",
+    changes: "Change Intelligence",
+    investigate: "Investigate",
+    assets: "Assets",
+  };
+  const backLabel = backLabels[backRoute];
   if (returnTo) returnParams.delete("return");
-  const remainingQuery = returnParams.toString();
-  const backHref = `#/${backRoute}${remainingQuery ? `?${remainingQuery}` : ""}`;
+  if (explicitReturnQuery !== null) returnParams.delete("return_query");
+  const backQuery = explicitReturnQuery !== null ? explicitReturnQuery : returnParams.toString();
+  const backHref = `#/${backRoute}${backQuery ? `?${backQuery}` : ""}`;
+  const investigationParams = new URLSearchParams({ domain });
+  if (returnQuery) investigationParams.set("detail_return", returnQuery);
+  const investigationHref = `#/investigate?${investigationParams}`;
 
   if (status === "loading") return <LoadingState title="Loading asset evidence" copy="Retrieving current scan evidence without inferring missing observations." />;
   if (status === "error") return <ErrorState title="Asset detail unavailable" copy="The current evidence contract could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
@@ -77,7 +89,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
     <div className="asset-detail">
       <div className="detail-toolbar">
         <Button component="a" href={backHref} variant="text">← Back to {backLabel}</Button>
-        <span>Authoritative scan #{data.scan_id}</span>
+        <div><span>Authoritative scan #{data.scan_id}</span><Button component="a" href={investigationHref} variant="outlined" size="small">Investigate asset</Button></div>
       </div>
 
       <section className="asset-identity-card">

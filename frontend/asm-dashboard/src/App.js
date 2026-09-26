@@ -8,6 +8,7 @@ import ShadowCentrePage from "./pages/ShadowCentrePage";
 import ScanCentrePage from "./pages/ScanCentrePage";
 import BrandPerimeterPage from "./pages/BrandPerimeterPage";
 import InvestigationPage from "./pages/InvestigationPage";
+import ChangeIntelligencePage from "./pages/ChangeIntelligencePage";
 import PlaceholderPage from "./pages/PlaceholderPage";
 import "./App.css";
 
@@ -19,6 +20,7 @@ const ROUTES = {
   brand: ["Brand Perimeter", "Ownership intelligence", "Review Candidate and External assets without assuming ownership."],
   scans: ["Scans", "Operations", "Monitor scan lifecycle and authoritative history."],
   investigate: ["Investigate", "Analyst workspace", "Move from deterministic evidence to focused investigation."],
+  changes: ["Change Intelligence", "Successful-scan comparison", "Inspect exact membership changes between authoritative scans."],
   settings: ["Settings", "Administration", "Application and operational configuration."],
 };
 
@@ -60,6 +62,7 @@ function App() {
   if (route === "scans") page = <ScanCentrePage />;
   if (route === "brand") page = <BrandPerimeterPage query={query} />;
   if (route === "investigate") page = <InvestigationPage query={query} />;
+  if (route === "changes") page = <ChangeIntelligencePage query={query} />;
 
   return (
     <AppShell activeRoute={route} routeMeta={routeMeta}>

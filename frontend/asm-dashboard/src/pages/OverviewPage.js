@@ -5,6 +5,7 @@ import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import RiskDistributionChart, { RISK_COLORS } from "../components/ui/RiskDistributionChart";
+import AssetLink from "../components/ui/AssetLink";
 
 const OWNERSHIP_COLORS = {
   Known: "#3dc4ff",
@@ -33,7 +34,7 @@ function AttentionTable({ assets }) {
         <tbody>
           {assets.map((asset) => (
             <tr key={asset.domain}>
-              <td>{asset.domain}</td>
+              <td><AssetLink domain={asset.domain} returnTo="overview" /></td>
               <td><StatusBadge value={asset.priority} /></td>
               <td><span className="risk-score">{asset.score}</span></td>
               <td>
@@ -129,16 +130,16 @@ export default function OverviewPage() {
   return (
     <div className="overview-grid">
       <section className="kpi-strip" aria-label="Overview metrics">
-        <MetricCard label="Organizational assets" value={counts.organizational} support="Current confirmed surface" accent="#3dc4ff" />
-        <MetricCard label="Shadow assets" value={counts.shadow} support="Confirmed, outside inventory" accent="#7e91a8" />
-        <MetricCard label="High risk" value={highRisk} support="Canonical priority" accent={RISK_COLORS.High} />
-        <MetricCard label="New assets" value={data.changes?.new_assets ?? 0} support="Since previous successful scan" accent="#51a8db" />
-        <MetricCard label="Brand perimeter" value={perimeter} support={`${counts.candidate} candidate · ${counts.external} external`} accent="#9a79d6" />
+        <MetricCard label="Organizational assets" value={counts.organizational} support="Current confirmed surface" accent="#3dc4ff" href="#/assets" />
+        <MetricCard label="Shadow assets" value={counts.shadow} support="Confirmed, outside inventory" accent="#7e91a8" href="#/shadow" />
+        <MetricCard label="High risk" value={highRisk} support="Canonical priority" accent={RISK_COLORS.High} href="#/risk" />
+        <MetricCard label="New assets" value={data.changes?.new_assets ?? 0} support="Since previous successful scan" accent="#51a8db" href="#/changes?view=new" />
+        <MetricCard label="Brand perimeter" value={perimeter} support={`${counts.candidate} candidate · ${counts.external} external`} accent="#9a79d6" href="#/brand" />
       </section>
 
       <Panel title="What changed" subtitle="Exact membership delta between successful scans" meta={scanContext} className="change-panel">
-        <div className="change-row"><span className="change-label">New organizational assets</span><span className="change-value">+{data.changes?.new_assets ?? 0}</span></div>
-        <div className="change-row"><span className="change-label">Disappeared assets</span><span className="change-value">−{data.changes?.disappeared_assets ?? 0}</span></div>
+        <a className="change-row change-row-link" href="#/changes?view=new"><span className="change-label">New organizational assets</span><span className="change-value">+{data.changes?.new_assets ?? 0}</span></a>
+        <a className="change-row change-row-link" href="#/changes?view=disappeared"><span className="change-label">Disappeared assets</span><span className="change-value">−{data.changes?.disappeared_assets ?? 0}</span></a>
         <div className="change-row"><span className="change-label">Current authoritative scan</span><span className="change-value">#{data.current_scan_id}</span></div>
       </Panel>
 

@@ -16,6 +16,10 @@ function selectedFromQuery(query) {
   return new URLSearchParams(query).get("domain") || "";
 }
 
+function detailReturnFromQuery(query) {
+  return new URLSearchParams(query).get("detail_return") || "";
+}
+
 function investigationHash(domain) {
   return domain ? `#/investigate?domain=${encodeURIComponent(domain)}` : "#/investigate";
 }
@@ -24,17 +28,26 @@ function value(value, fallback = "—") {
   return value === null || value === undefined || value === "" ? fallback : String(value);
 }
 
+function cleanAIResponse(response) {
+  return String(response || "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .trim();
+}
+
 function EvidenceItem({ label, children, mono = false }) {
   return <div className="investigation-evidence-item"><span>{label}</span><strong className={mono ? "technical-value" : ""}>{children}</strong></div>;
 }
 
-function AssetEvidence({ asset }) {
+function AssetEvidence({ asset, detailHref }) {
   const risk = asset.risk;
   return (
     <div className="investigation-evidence">
       <section className="investigation-identity">
         <div><span className="identity-kicker">Authoritative ASIP evidence</span><h2>{asset.domain}</h2></div>
-        <div className="identity-badges"><StatusBadge value={asset.asset_class} /><StatusBadge value={asset.ownership_status} /></div>
+        <div className="identity-badges"><StatusBadge value={asset.asset_class} /><StatusBadge value={asset.ownership_status} /><a className="context-link" href={detailHref}>Full Asset Detail</a></div>
         <div className="investigation-risk">
           {risk ? <><StatusBadge value={risk.priority} /><strong>{risk.score}</strong><div className="reason-list">{risk.reasons.map((reason) => <span className="reason-token" key={reason}>{reason.replaceAll("_", " ")}</span>)}</div></> : <span>No organizational canonical risk applies to {asset.ownership_status} assets.</span>}
         </div>
@@ -77,6 +90,7 @@ function AssetEvidence({ asset }) {
 
 export default function InvestigationPage({ query }) {
   const queryDomain = useMemo(() => selectedFromQuery(query), [query]);
+  const detailReturn = useMemo(() => detailReturnFromQuery(query), [query]);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [list, setList] = useState(null);
@@ -127,6 +141,13 @@ export default function InvestigationPage({ query }) {
 
   const filtered = (list?.assets || []).filter((item) => item.domain.toLowerCase().includes(search.trim().toLowerCase()));
   const pages = Math.max(Math.ceil((list?.count || 0) / LIMIT), 1);
+  const defaultDetailReturn = new URLSearchParams({
+    return: "investigate",
+    return_query: `domain=${encodeURIComponent(queryDomain)}`,
+  }).toString();
+  const assetDetailHref = queryDomain
+    ? `#/assets/${encodeURIComponent(queryDomain)}?${detailReturn || defaultDetailReturn}`
+    : "#/assets";
   const openExact = (event) => {
     event.preventDefault();
     const domain = search.trim();
@@ -157,16 +178,16 @@ export default function InvestigationPage({ query }) {
         {assetStatus === "loading" && <LoadingState title="Loading authoritative evidence" copy="Retrieving the selected asset from the latest successful scan." />}
         {assetStatus === "error" && <ErrorState title="Asset evidence unavailable" copy="The selected asset evidence could not be loaded." onRetry={() => setAssetVersion((value) => value + 1)} />}
         {assetStatus === "not-found" && <EmptyState title="Asset is not current" copy={asset?.error || "The domain is not in the latest authoritative scan."} />}
-        {assetStatus === "ready" && <AssetEvidence asset={asset} />}
+        {assetStatus === "ready" && <AssetEvidence asset={asset} detailHref={assetDetailHref} />}
 
         {assetStatus === "ready" && (
-          <Panel title="Grounded Gemma assistance" subtitle="Interpretive guidance generated only from the authoritative evidence above" meta="AI · NOT EVIDENCE" className="investigation-assistant">
-            <div className="assistant-boundary">Gemma may explain, summarize, or suggest passive review steps. Its prose is not an ASM observation and cannot change risk, ownership, findings, or authorization.</div>
+          <Panel title="Grounded AI Assistance" subtitle="Interpretive guidance generated only from the authoritative evidence above" meta="AI · NOT EVIDENCE" className="investigation-assistant">
+            <div className="assistant-boundary">AI may explain, summarize, or suggest passive review steps. Its prose is not an ASM observation and cannot change risk, ownership, findings, or authorization.</div>
             <div className="assistant-actions">{ACTIONS.map(([action, label]) => <Button key={action} variant={assistant?.action === action ? "contained" : "outlined"} disabled={assistantStatus === "loading"} onClick={() => runAction(action)}>{label}</Button>)}</div>
             {assistantStatus === "idle" && <div className="detail-empty">Choose an action to request a grounded response.</div>}
-            {assistantStatus === "loading" && <div className="assistant-progress" role="status">Gemma is reviewing supplied ASIP evidence…</div>}
+            {assistantStatus === "loading" && <div className="assistant-progress" role="status">AI is reviewing supplied ASIP evidence…</div>}
             {assistantStatus === "error" && <div className="assistant-error" role="alert">Grounded assistance is unavailable. Authoritative ASIP evidence remains unchanged.</div>}
-            {assistantStatus === "ready" && <div className="assistant-response"><div><span>Source</span><strong>{assistant.source}{assistant.model ? ` · ${assistant.model}` : ""}</strong></div><pre>{assistant.response}</pre></div>}
+            {assistantStatus === "ready" && <div className="assistant-response"><div><span>Source</span><strong>Grounded AI · authoritative ASIP context</strong></div><pre>{cleanAIResponse(assistant.response)}</pre></div>}
           </Panel>
         )}
       </div>

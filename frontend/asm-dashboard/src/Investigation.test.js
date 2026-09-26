@@ -14,6 +14,8 @@ jest.mock("./services/api", () => ({
   getSensitiveExposure: jest.fn(),
   getExposureSummary: jest.fn(),
   getInvestigationAssets: jest.fn(),
+  getNewDomainsDelta: jest.fn(),
+  getDisappearedDomains: jest.fn(),
 }));
 
 const selectedAsset = {
@@ -65,7 +67,7 @@ test("analyst selects an asset, reviews authoritative evidence, and runs all gro
   getV2AssetAssistant.mockImplementation((domain, action) => Promise.resolve({
     domain,
     action,
-    response: `${action} grounded response`,
+    response: `**${action}** grounded response`,
     source: "ASIP deterministic evidence + Gemma",
     model: "gemma3:4b",
   }));
@@ -80,7 +82,7 @@ test("analyst selects an asset, reviews authoritative evidence, and runs all gro
   expect(screen.getByText("nginx")).toBeInTheDocument();
   expect(screen.getByText("stored evidence")).toBeInTheDocument();
   expect(screen.getByText("subfinder")).toBeInTheDocument();
-  expect(screen.getByText("Grounded Gemma assistance")).toBeInTheDocument();
+  expect(screen.getByText("Grounded AI Assistance")).toBeInTheDocument();
   expect(screen.getByText("AI · NOT EVIDENCE")).toBeInTheDocument();
 
   for (const [label, action] of [
@@ -93,6 +95,8 @@ test("analyst selects an asset, reviews authoritative evidence, and runs all gro
     expect(getV2AssetAssistant).toHaveBeenLastCalledWith(selectedAsset.domain, action);
   }
   expect(screen.getByText(/Its prose is not an ASM observation/)).toBeInTheDocument();
+  expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Gemma|Ollama|Qwen|gemma3:4b/i)).not.toBeInTheDocument();
 });
 
 test("Candidate assets retain the no-organizational-risk boundary", async () => {
