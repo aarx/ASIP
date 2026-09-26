@@ -79,12 +79,13 @@ class FakeConnection:
 
 
 class AuthorizationPolicyTests(unittest.TestCase):
-    def test_explicit_t2_authorization_predicate_is_manual_only(self):
+    def test_explicit_t2_authorization_predicate_requires_confirmed_manual_approval(self):
         module = load_worker("authorization_policy.py")
 
         self.assertEqual(
             module.explicit_t2_authorization_sql("d"),
-            "d.scannable IS TRUE AND d.validation_source = 'manual'",
+            "d.ownership_status = 'CONFIRMED' AND d.scannable IS TRUE "
+            "AND d.validation_source = 'manual'",
         )
 
     def test_port_candidates_require_manual_t2_authorization_and_membership(self):
@@ -100,12 +101,17 @@ class AuthorizationPolicyTests(unittest.TestCase):
         self.assertIn("SR.SCAN_ID = S.SCAN_ID", norm)
         self.assertIn("D.SCANNABLE IS TRUE", norm)
         self.assertIn("D.VALIDATION_SOURCE = 'MANUAL'", norm)
+        self.assertIn("D.OWNERSHIP_STATUS = 'CONFIRMED'", norm)
         self.assertEqual(params, (42, 42))
 
     def test_manual_approval_is_the_only_t2_authorizing_shape(self):
-        def eligible(scannable, validation_source, confidence="low", is_known=False,
-                     seed_related=False, risk=0):
-            return bool(scannable) and validation_source == "manual"
+        def eligible(scannable, validation_source, ownership="CONFIRMED",
+                     confidence="low", is_known=False, seed_related=False, risk=0):
+            return (
+                ownership == "CONFIRMED"
+                and bool(scannable)
+                and validation_source == "manual"
+            )
 
         self.assertTrue(eligible(True, "manual"))
         self.assertFalse(eligible(True, None))
@@ -116,6 +122,8 @@ class AuthorizationPolicyTests(unittest.TestCase):
         self.assertFalse(eligible(False, None, is_known=True))
         self.assertFalse(eligible(False, None, seed_related=True))
         self.assertFalse(eligible(False, None, risk=100))
+        self.assertFalse(eligible(True, "manual", ownership="CANDIDATE"))
+        self.assertFalse(eligible(True, "manual", ownership="EXTERNAL"))
 
 
 class SanAuthorizationTests(unittest.TestCase):

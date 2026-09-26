@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Button } from "@mui/material";
-import { getV2AssetDetail } from "../services/api";
+import { getV2AssetDetail, updateV2AssetOwnership } from "../services/api";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { ErrorState, LoadingState } from "../components/ui/AsyncState";
@@ -20,6 +20,72 @@ function EvidenceRow({ label, value, mono = false, wide = false }) {
 
 function DetailEmpty({ children, compact = false }) {
   return <div className={compact ? "detail-empty compact" : "detail-empty"}>{children}</div>;
+}
+
+function redirectBoundary(domain, finalUrl) {
+  if (!finalUrl) return null;
+  try {
+    const finalHostname = new URL(finalUrl).hostname.toLowerCase().replace(/\.$/, "");
+    const reviewedHostname = String(domain || "").toLowerCase().replace(/\.$/, "");
+    return finalHostname && finalHostname !== reviewedHostname
+      ? { finalHostname, finalUrl }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function OwnershipReview({ asset, onChanged }) {
+  const [pending, setPending] = useState("");
+  const [status, setStatus] = useState("idle");
+  const [message, setMessage] = useState("");
+
+  const leaveCandidate = () => {
+    setPending("");
+    setStatus("idle");
+    setMessage("Candidate retained. No ownership decision was persisted.");
+  };
+
+  const persist = async () => {
+    setStatus("loading");
+    setMessage("");
+    try {
+      await updateV2AssetOwnership(asset.domain, pending);
+      setStatus("success");
+      setMessage(`Ownership updated to ${pending}.`);
+      setPending("");
+      onChanged();
+    } catch (error) {
+      setStatus("error");
+      setMessage(error?.response?.data?.detail || "Ownership decision could not be saved.");
+    }
+  };
+
+  const canMarkExternal = !asset.is_known && asset.ownership_status !== "EXTERNAL";
+  const canConfirm = asset.ownership_status !== "CONFIRMED";
+
+  return (
+    <Panel title="Ownership Review" subtitle="Analyst decision for this domain only" meta="OWNERSHIP · NOT AUTHORIZATION" className="ownership-review-panel">
+      <div className="ownership-review-summary">
+        <div><span>Current ownership</span><StatusBadge value={asset.ownership_status} /></div>
+        <p>Confirming ownership does not grant active-scanning authorization. Redirect destinations are never confirmed or authorized by association.</p>
+      </div>
+      <div className="ownership-review-actions">
+        {canConfirm && <Button variant="contained" onClick={() => { setPending("CONFIRMED"); setMessage(""); }}>Confirm Organizational Asset</Button>}
+        {canMarkExternal && <Button variant="outlined" color="warning" onClick={() => { setPending("EXTERNAL"); setMessage(""); }}>Mark External / Not Ours</Button>}
+        {asset.ownership_status === "CANDIDATE" && <Button variant="text" onClick={leaveCandidate}>Leave Candidate</Button>}
+      </div>
+      {asset.is_known && <div className="ownership-review-note">Approved inventory membership keeps this asset CONFIRMED and Known.</div>}
+      {pending && (
+        <div className="ownership-confirmation" role="alertdialog" aria-label="Confirm ownership decision">
+          <strong>{pending === "CONFIRMED" ? "Confirm this organizational asset?" : "Mark this asset External / Not Ours?"}</strong>
+          <p>This decision applies only to <span className="technical-value">{asset.domain}</span>. It does not change any redirect destination.</p>
+          <div><Button variant="text" disabled={status === "loading"} onClick={() => setPending("")}>Cancel</Button><Button variant="contained" disabled={status === "loading"} onClick={persist}>{status === "loading" ? "Saving…" : "Confirm decision"}</Button></div>
+        </div>
+      )}
+      {message && <div className={`ownership-review-message ${status}`} role={status === "error" ? "alert" : "status"}>{message}</div>}
+    </Panel>
+  );
 }
 
 export default function AssetDetailPage({ domain, returnQuery }) {
@@ -85,6 +151,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   }
 
   const risk = data.risk;
+  const redirect = redirectBoundary(data.domain, data.http?.final_url);
   return (
     <div className="asset-detail">
       <div className="detail-toolbar">
@@ -123,6 +190,13 @@ export default function AssetDetailPage({ domain, returnQuery }) {
         </div>
       </section>
 
+      <OwnershipReview
+        asset={data}
+        onChanged={() => getV2AssetDetail(domain).then((result) => {
+          if (!result?.error) setData(result);
+        })}
+      />
+
       <div className="detail-grid">
         <Panel title="Network" subtitle="Current DNS and infrastructure evidence" className="detail-panel">
           <div className="evidence-grid">
@@ -153,6 +227,13 @@ export default function AssetDetailPage({ domain, returnQuery }) {
             <EvidenceRow label="Title" value={data.http?.title} wide />
             <EvidenceRow label="Final URL" value={data.http?.final_url} mono wide />
           </div>
+          {redirect && (
+            <div className="redirect-boundary" role="note">
+              <strong>Final destination is outside the reviewed hostname.</strong>
+              <div><span className="technical-value">{data.domain}</span><span aria-hidden="true">↓</span><span className="technical-value">{redirect.finalUrl}</span></div>
+              <p>The redirect destination is observational evidence only and is not authorized for active testing by association. A different hostname does not establish external ownership, malicious activity, or a vulnerability.</p>
+            </div>
+          )}
         </Panel>
 
         <Panel title="Technology" subtitle="Detected current-scan technologies" className="detail-panel">

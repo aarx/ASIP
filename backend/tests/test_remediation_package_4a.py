@@ -146,10 +146,11 @@ class RiskAndAuthorizationSeparationTests(unittest.TestCase):
     def test_ownership_and_t2_authorization_are_independent(self):
         self.assertEqual(
             explicit_t2_authorization_sql("d"),
-            "d.scannable IS TRUE AND d.validation_source = 'manual'",
+            "d.ownership_status = 'CONFIRMED' AND d.scannable IS TRUE "
+            "AND d.validation_source = 'manual'",
         )
         policy = source("authorization_policy.py")
-        self.assertNotIn("ownership_status", policy)
+        self.assertIn("ownership_status", policy)
         self.assertNotIn("scannable", source("ownership.py"))
         self.assertNotIn("validation_source", source("ownership.py"))
 

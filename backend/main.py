@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, ConfigDict
 import logging
 import os
 from fastapi import APIRouter
@@ -14,6 +15,8 @@ from llm_service import ask_llm
 from urllib.parse import urlparse
 from db import get_conn, get_latest_authoritative_scan_id, get_previous_authoritative_scan_id
 from risk_engine import calculate_scan_risks, get_asset_exposure_keywords
+from ownership import OWNERSHIP_CONFIRMED, OWNERSHIP_EXTERNAL, normalize_ownership_status
+from ownership_ingest import apply_ownership
 
 os.makedirs("logs", exist_ok=True)
 
@@ -27,6 +30,12 @@ logging.basicConfig(
 )
 
 app = FastAPI(title="External Attack Surface API")
+
+
+class OwnershipReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ownership_status: str
 
 @app.get("/")
 def home():
@@ -2300,6 +2309,73 @@ def frontend_v2_asset_detail(domain_name: str):
         "discovery": {"sources": discovery_sources},
         "findings": findings,
     }
+
+
+@app.post("/v2/assets/{domain_name}/ownership")
+def frontend_v2_review_ownership(
+    domain_name: str,
+    review: OwnershipReviewRequest,
+):
+    try:
+        target_status = normalize_ownership_status(review.ownership_status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if target_status not in (OWNERSHIP_CONFIRMED, OWNERSHIP_EXTERNAL):
+        raise HTTPException(
+            status_code=400,
+            detail="Ownership review may only confirm an asset or mark it external",
+        )
+
+    domain = (domain_name or "").strip().lower().rstrip(".")
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        scan_id = get_latest_authoritative_scan_id(cur)
+        if scan_id is None:
+            raise HTTPException(status_code=409, detail="no authoritative scan yet")
+
+        cur.execute(
+            """
+            SELECT d.is_known, d.ownership_status
+            FROM scan_results sr
+            JOIN domains d ON d.id = sr.domain_id
+            WHERE sr.scan_id = %s AND d.domain = %s
+            """,
+            (scan_id, domain),
+        )
+        current = cur.fetchone()
+        if current is None:
+            raise HTTPException(
+                status_code=404,
+                detail="domain not found in current authoritative scan",
+            )
+
+        is_known, previous_status = current
+        try:
+            updated = apply_ownership(cur, domain, target_status)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not updated:
+            raise HTTPException(status_code=404, detail="domain not found")
+
+        conn.commit()
+        return {
+            "scan_id": scan_id,
+            "domain": domain,
+            "previous_ownership_status": previous_status,
+            "ownership_status": target_status,
+            "is_known": bool(is_known),
+            "asset_class": _frontend_asset_class(target_status, bool(is_known)),
+        }
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 FRONTEND_V2_ASSISTANT_ACTIONS = {

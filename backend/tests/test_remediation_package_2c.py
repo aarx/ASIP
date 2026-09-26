@@ -188,7 +188,8 @@ class AuthorizationSeparationTests(unittest.TestCase):
 
         self.assertEqual(
             policy.explicit_t2_authorization_sql("d"),
-            "d.scannable IS TRUE AND d.validation_source = 'manual'",
+            "d.ownership_status = 'CONFIRMED' AND d.scannable IS TRUE "
+            "AND d.validation_source = 'manual'",
         )
 
     def test_confidence_seed_known_and_risk_do_not_authorize_t2(self):

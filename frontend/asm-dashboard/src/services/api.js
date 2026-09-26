@@ -27,6 +27,14 @@ export const getV2AssetDetail = async (domain) => {
   return res.data;
 };
 
+export const updateV2AssetOwnership = async (domain, ownershipStatus) => {
+  const res = await axios.post(
+    `${API_URL}/v2/assets/${encodeURIComponent(domain)}/ownership`,
+    { ownership_status: ownershipStatus }
+  );
+  return res.data;
+};
+
 export const getV2AssetAssistant = async (domain, action) => {
   const res = await axios.get(
     `${API_URL}/v2/assets/${encodeURIComponent(domain)}/assistant`,
