@@ -4,16 +4,14 @@ import { getV2AssetDetail, updateV2AssetOwnership } from "../services/api";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { ErrorState, LoadingState } from "../components/ui/AsyncState";
-
-function valueOrDash(value) {
-  return value === null || value === undefined || value === "" ? "—" : String(value);
-}
+import { brandAcceptanceDetail, isBrandAcceptanceFixture } from "../fixtures/brandAcceptance";
+import { displayEvidence } from "../utils/presentation";
 
 function EvidenceRow({ label, value, mono = false, wide = false }) {
   return (
     <div className={`evidence-row${wide ? " evidence-wide" : ""}`}>
       <span className="evidence-label">{label}</span>
-      <span className={mono ? "evidence-value technical-value" : "evidence-value"}>{valueOrDash(value)}</span>
+      <span className={mono ? "evidence-value technical-value" : "evidence-value"}>{displayEvidence(value)}</span>
     </div>
   );
 }
@@ -35,7 +33,7 @@ function redirectBoundary(domain, finalUrl) {
   }
 }
 
-function OwnershipReview({ asset, onChanged }) {
+function OwnershipReview({ asset, onChanged, fixtureMode = false }) {
   const [pending, setPending] = useState("");
   const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState("");
@@ -50,11 +48,11 @@ function OwnershipReview({ asset, onChanged }) {
     setStatus("loading");
     setMessage("");
     try {
-      await updateV2AssetOwnership(asset.domain, pending);
+      if (!fixtureMode) await updateV2AssetOwnership(asset.domain, pending);
       setStatus("success");
-      setMessage(`Ownership updated to ${pending}.`);
+      setMessage(fixtureMode ? `Fixture preview only: ${pending} was not persisted.` : `Ownership updated to ${pending}.`);
       setPending("");
-      onChanged();
+      if (!fixtureMode) onChanged(pending);
     } catch (error) {
       setStatus("error");
       setMessage(error?.response?.data?.detail || "Ownership decision could not be saved.");
@@ -65,11 +63,12 @@ function OwnershipReview({ asset, onChanged }) {
   const canConfirm = asset.ownership_status !== "CONFIRMED";
 
   return (
-    <Panel title="Ownership Review" subtitle="Analyst decision for this domain only" meta="OWNERSHIP · NOT AUTHORIZATION" className="ownership-review-panel">
+    <Panel title="Ownership Review" subtitle="Analyst decision for this domain only" meta={fixtureMode ? "DEVELOPMENT FIXTURE · NO PERSISTENCE" : "OWNERSHIP · NOT AUTHORIZATION"} className="ownership-review-panel">
       <div className="ownership-review-summary">
         <div><span>Current ownership</span><StatusBadge value={asset.ownership_status} /></div>
         <p>Confirming ownership does not grant active-scanning authorization. Redirect destinations are never confirmed or authorized by association.</p>
       </div>
+      {fixtureMode && <div className="ownership-review-note">Acceptance fixture decisions remain in this browser view only and never reach ASIP APIs or data.</div>}
       <div className="ownership-review-actions">
         {canConfirm && <Button variant="contained" onClick={() => { setPending("CONFIRMED"); setMessage(""); }}>Confirm Organizational Asset</Button>}
         {canMarkExternal && <Button variant="outlined" color="warning" onClick={() => { setPending("EXTERNAL"); setMessage(""); }}>Mark External / Not Ours</Button>}
@@ -89,6 +88,7 @@ function OwnershipReview({ asset, onChanged }) {
 }
 
 export default function AssetDetailPage({ domain, returnQuery }) {
+  const fixtureMode = isBrandAcceptanceFixture(returnQuery);
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
   const [requestVersion, setRequestVersion] = useState(0);
@@ -96,7 +96,8 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   useEffect(() => {
     let active = true;
     setStatus("loading");
-    getV2AssetDetail(domain)
+    const request = fixtureMode ? Promise.resolve(brandAcceptanceDetail(domain)) : getV2AssetDetail(domain);
+    request
       .then((result) => {
         if (!active) return;
         if (result?.error) {
@@ -109,7 +110,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
       })
       .catch(() => { if (active) setStatus("error"); });
     return () => { active = false; };
-  }, [domain, requestVersion]);
+  }, [domain, fixtureMode, requestVersion]);
 
   const returnParams = new URLSearchParams(returnQuery);
   const returnTo = returnParams.get("return");
@@ -152,6 +153,11 @@ export default function AssetDetailPage({ domain, returnQuery }) {
 
   const risk = data.risk;
   const redirect = redirectBoundary(data.domain, data.http?.final_url);
+  const classificationContext = data.asset_class === "SHADOW"
+    ? { href: "#/shadow", label: "Open Shadow workflow" }
+    : ["CANDIDATE", "EXTERNAL"].includes(data.ownership_status)
+      ? { href: `#/brand?ownership=${data.ownership_status}`, label: "Open Brand Perimeter" }
+      : null;
   return (
     <div className="asset-detail">
       <div className="detail-toolbar">
@@ -168,12 +174,13 @@ export default function AssetDetailPage({ domain, returnQuery }) {
           <div className="identity-badges">
             <StatusBadge value={data.asset_class} />
             <StatusBadge value={data.ownership_status} />
+            {classificationContext && <a className="context-link" href={classificationContext.href}>{classificationContext.label}</a>}
           </div>
         </div>
         <div className="identity-meta">
-          <span>First seen <strong>scan #{data.first_seen_scan} · {valueOrDash(data.first_seen_at)}</strong></span>
-          <span>Last seen <strong>scan #{data.last_seen_scan} · {valueOrDash(data.last_seen_at)}</strong></span>
-          <span>Seed <strong>{valueOrDash(data.seed)}</strong></span>
+          <span>First seen <strong>scan #{data.first_seen_scan} · {displayEvidence(data.first_seen_at)}</strong></span>
+          <span>Last seen <strong>scan #{data.last_seen_scan} · {displayEvidence(data.last_seen_at)}</strong></span>
+          <span>Seed <strong>{displayEvidence(data.seed)}</strong></span>
         </div>
         <div className="risk-posture">
           {risk ? (
@@ -192,9 +199,10 @@ export default function AssetDetailPage({ domain, returnQuery }) {
 
       <OwnershipReview
         asset={data}
-        onChanged={() => getV2AssetDetail(domain).then((result) => {
-          if (!result?.error) setData(result);
-        })}
+        fixtureMode={fixtureMode}
+        onChanged={() => {
+          getV2AssetDetail(domain).then((result) => { if (!result?.error) setData(result); });
+        }}
       />
 
       <div className="detail-grid">
@@ -258,8 +266,8 @@ export default function AssetDetailPage({ domain, returnQuery }) {
               <div className="provenance-head"><span>Source</span><span>Associated seed</span></div>
               {data.discovery.sources.map((item, index) => (
                 <div className="provenance-row" key={`${item.source}-${item.seed}-${index}`}>
-                  <span className="technical-value">{valueOrDash(item.source)}</span>
-                  <span className="technical-value">{valueOrDash(item.seed)}</span>
+                  <span className="technical-value">{displayEvidence(item.source)}</span>
+                  <span className="technical-value">{displayEvidence(item.seed)}</span>
                 </div>
               ))}
             </div>
@@ -272,7 +280,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
               {data.findings.map((finding, index) => (
                 <div className="finding-row" key={`${finding.finding}-${index}`}>
                   <StatusBadge value={finding.severity} />
-                  <div><strong>{finding.finding}</strong><p>{valueOrDash(finding.evidence)}</p></div>
+                  <div><strong>{finding.finding}</strong><p>{displayEvidence(finding.evidence)}</p></div>
                 </div>
               ))}
             </div>

@@ -10,6 +10,7 @@ import {
 import { getV2Assets } from "../services/api";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
+import { displayEvidence, isMissingEvidence } from "../utils/presentation";
 
 const DEFAULT_LIMIT = 25;
 
@@ -72,14 +73,14 @@ function AssetTable({ assets, returnQuery }) {
               <tr key={asset.domain}>
                 <td>
                   <a className="asset-domain-link" href={detailHref}>{asset.domain}</a>
-                  {asset.title && <span className="asset-secondary asset-title-text">{asset.title}</span>}
+                  {!isMissingEvidence(asset.title) && <span className="asset-secondary asset-title-text">{asset.title}</span>}
                 </td>
                 <td>
                   <StatusBadge value={asset.asset_class} />
                   <span className="asset-secondary">{asset.ownership_status}</span>
                 </td>
                 <td>
-                  <span className="technical-value">{asset.ip || "—"}</span>
+                  <span className="technical-value">{displayEvidence(asset.ip)}</span>
                   <span className="asset-secondary">{asset.asn || "ASN unavailable"}</span>
                 </td>
                 <td>
@@ -87,7 +88,7 @@ function AssetTable({ assets, returnQuery }) {
                   <span className="asset-secondary">{asset.http_status || "No status"}</span>
                 </td>
                 <td>
-                  <span>{asset.provider || "Unknown"}</span>
+                  <span>{displayEvidence(asset.provider, "Unknown")}</span>
                   {asset.asn && <span className="asset-secondary">{asset.asn}</span>}
                 </td>
                 <td>

@@ -4,6 +4,7 @@ import { getInvestigationAssets, getV2AssetAssistant, getV2AssetDetail } from ".
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
+import { displayEvidence } from "../utils/presentation";
 
 const LIMIT = 20;
 const ACTIONS = [
@@ -22,10 +23,6 @@ function detailReturnFromQuery(query) {
 
 function investigationHash(domain) {
   return domain ? `#/investigate?domain=${encodeURIComponent(domain)}` : "#/investigate";
-}
-
-function value(value, fallback = "—") {
-  return value === null || value === undefined || value === "" ? fallback : String(value);
 }
 
 function cleanAIResponse(response) {
@@ -56,14 +53,14 @@ function AssetEvidence({ asset, detailHref }) {
       <div className="investigation-evidence-grid">
         <Panel title="Network & HTTP" subtitle="Current stored observations">
           <div className="investigation-facts">
-            <EvidenceItem label="IP" mono>{value(asset.dns?.ip, "No current IP evidence")}</EvidenceItem>
-            <EvidenceItem label="Reverse DNS" mono>{value(asset.dns?.reverse_dns, "Unknown")}</EvidenceItem>
-            <EvidenceItem label="Provider">{value(asset.provider, "Unknown")}</EvidenceItem>
-            <EvidenceItem label="ASN" mono>{value(asset.asn?.asn, "Unknown")}</EvidenceItem>
+            <EvidenceItem label="IP" mono>{displayEvidence(asset.dns?.ip, "No current IP evidence")}</EvidenceItem>
+            <EvidenceItem label="Reverse DNS" mono>{displayEvidence(asset.dns?.reverse_dns, "Unknown")}</EvidenceItem>
+            <EvidenceItem label="Provider">{displayEvidence(asset.provider, "Unknown")}</EvidenceItem>
+            <EvidenceItem label="ASN" mono>{displayEvidence(asset.asn?.asn, "Unknown")}</EvidenceItem>
             <EvidenceItem label="HTTP observation"><StatusBadge value={asset.http?.observation_status} /></EvidenceItem>
-            <EvidenceItem label="HTTP status" mono>{value(asset.http?.status, "No status")}</EvidenceItem>
-            <EvidenceItem label="Final destination" mono>{value(asset.http?.final_url, "Not observed")}</EvidenceItem>
-            <EvidenceItem label="Title">{value(asset.http?.title, "Not observed")}</EvidenceItem>
+            <EvidenceItem label="HTTP status" mono>{displayEvidence(asset.http?.status, "No status")}</EvidenceItem>
+            <EvidenceItem label="Final destination" mono>{displayEvidence(asset.http?.final_url, "Not observed")}</EvidenceItem>
+            <EvidenceItem label="Title">{displayEvidence(asset.http?.title, "Not observed")}</EvidenceItem>
           </div>
         </Panel>
 
@@ -73,15 +70,15 @@ function AssetEvidence({ asset, detailHref }) {
           <span className="evidence-label investigation-subheading">Technologies</span>
           {asset.technologies?.length ? <div className="technology-list">{asset.technologies.map((tech) => <span key={tech}>{tech}</span>)}</div> : <div className="detail-empty compact">No technology evidence.</div>}
           <span className="evidence-label investigation-subheading">Certificate</span>
-          <div className="technical-value investigation-inline-fact">{asset.certificate ? `${value(asset.certificate.status)} · expires ${value(asset.certificate.expiry_date)}` : "No certificate evidence"}</div>
+          <div className="technical-value investigation-inline-fact">{asset.certificate ? `${displayEvidence(asset.certificate.status)} · expires ${displayEvidence(asset.certificate.expiry_date)}` : "No certificate evidence"}</div>
         </Panel>
 
         <Panel title="Findings" subtitle="Recorded deterministic observations">
-          {asset.findings?.length ? <div className="finding-list">{asset.findings.map((finding, index) => <div className="finding-row" key={`${finding.finding}-${index}`}><StatusBadge value={finding.severity} /><div><strong>{finding.finding}</strong><p>{value(finding.evidence, "No supporting text recorded")}</p></div></div>)}</div> : <div className="detail-empty compact">No findings recorded for this scan.</div>}
+          {asset.findings?.length ? <div className="finding-list">{asset.findings.map((finding, index) => <div className="finding-row" key={`${finding.finding}-${index}`}><StatusBadge value={finding.severity} /><div><strong>{finding.finding}</strong><p>{displayEvidence(finding.evidence, "No supporting text recorded")}</p></div></div>)}</div> : <div className="detail-empty compact">No findings recorded for this scan.</div>}
         </Panel>
 
         <Panel title="Discovery provenance" subtitle="Why this asset entered the current scan">
-          {asset.discovery?.sources?.length ? <div className="provenance-table">{asset.discovery.sources.map((item, index) => <div className="provenance-row" key={`${item.source}-${item.seed}-${index}`}><span className="technical-value">{value(item.source)}</span><span className="technical-value">{value(item.seed)}</span></div>)}</div> : <div className="detail-empty compact">No current-scan provenance rows.</div>}
+          {asset.discovery?.sources?.length ? <div className="provenance-table">{asset.discovery.sources.map((item, index) => <div className="provenance-row" key={`${item.source}-${item.seed}-${index}`}><span className="technical-value">{displayEvidence(item.source)}</span><span className="technical-value">{displayEvidence(item.seed)}</span></div>)}</div> : <div className="detail-empty compact">No current-scan provenance rows.</div>}
         </Panel>
       </div>
     </div>

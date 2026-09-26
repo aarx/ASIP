@@ -57,7 +57,7 @@ function App() {
       ? <AssetDetailPage domain={domain} returnQuery={query} />
       : <AssetExplorerPage query={query} />;
   }
-  if (route === "risk") page = <RiskExposurePage />;
+  if (route === "risk") page = <RiskExposurePage query={query} />;
   if (route === "shadow") page = <ShadowCentrePage query={query} />;
   if (route === "scans") page = <ScanCentrePage />;
   if (route === "brand") page = <BrandPerimeterPage query={query} />;

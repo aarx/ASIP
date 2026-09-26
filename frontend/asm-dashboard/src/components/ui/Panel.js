@@ -1,8 +1,8 @@
 import React from "react";
 
-export default function Panel({ title, subtitle, meta, className = "", children }) {
+export default function Panel({ title, subtitle, meta, className = "", id, children }) {
   return (
-    <section className={`panel ${className}`}>
+    <section className={`panel ${className}`} id={id}>
       <header className="panel-header">
         <div>
           <h2 className="panel-title">{title}</h2>

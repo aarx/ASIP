@@ -15,6 +15,7 @@ jest.mock("./services/api", () => ({
   getV2AssetAssistant: jest.fn(),
   getV2Scans: jest.fn(),
   getV2BrandAssets: jest.fn(),
+  getV2ReviewIndicators: jest.fn(),
   getRiskyDomains: jest.fn(),
   getFindings: jest.fn(),
   getSensitiveExposure: jest.fn(),

@@ -7,6 +7,7 @@ import {
   getSensitiveExposure,
   getV2Assets,
   getV2Overview,
+  getV2ReviewIndicators,
   getV2Scans,
 } from "./services/api";
 
@@ -17,6 +18,7 @@ jest.mock("./services/api", () => ({
   updateV2AssetOwnership: jest.fn(),
   getV2Scans: jest.fn(),
   getV2BrandAssets: jest.fn(),
+  getV2ReviewIndicators: jest.fn(),
   getV2AssetAssistant: jest.fn(),
   getInvestigationAssets: jest.fn(),
   getNewDomainsDelta: jest.fn(),
@@ -51,12 +53,15 @@ beforeEach(() => {
     getSensitiveExposure,
     getV2Assets,
     getV2Overview,
+    getV2ReviewIndicators,
     getV2Scans,
   ].forEach((mockFunction) => mockFunction.mockReset());
 });
 
 test("risk workspace presents canonical risk and positive exposure evidence", async () => {
-  window.location.hash = "#/risk";
+  window.location.hash = "#/risk?section=review-indicators";
+  const scrollIntoView = jest.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
   getV2Overview.mockResolvedValue(overview);
   getRiskyDomains.mockResolvedValue([{
     domain: "critical.example.com",
@@ -76,6 +81,38 @@ test("risk workspace presents canonical risk and positive exposure evidence", as
   getExposureSummary.mockResolvedValue({
     scan_id: 42, total_domains: 10, resolving_domains: 8, http_responding_domains: 6,
   });
+  getV2ReviewIndicators.mockResolvedValue({
+    scan_id: 42,
+    count: 2,
+    indicators: [
+      {
+        type: "CROSS_HOST_HTTP_REDIRECT",
+        domain: "critical.example.com",
+        ownership_status: "CONFIRMED",
+        asset_class: "SHADOW",
+        http_observation_status: "RESPONDED",
+        http_status: 302,
+        final_url: "https://external.example/login",
+        final_status: 200,
+        final_hostname: "external.example",
+        destination_confirmed: false,
+        destination_asset_class: null,
+      },
+      {
+        type: "CROSS_HOST_HTTP_REDIRECT",
+        domain: "known.example.com",
+        ownership_status: "CONFIRMED",
+        asset_class: "KNOWN",
+        http_observation_status: "RESPONDED",
+        http_status: 301,
+        final_url: "https://portal.example.com/home",
+        final_status: 200,
+        final_hostname: "portal.example.com",
+        destination_confirmed: true,
+        destination_asset_class: "KNOWN",
+      },
+    ],
+  });
 
   render(<App />);
 
@@ -84,9 +121,48 @@ test("risk workspace presents canonical risk and positive exposure evidence", as
   expect(screen.getByText("deterministic fingerprint match")).toBeInTheDocument();
   expect(screen.getByText("SSH administration")).toBeInTheDocument();
   expect(screen.getByText("Sensitivity 4")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open critical.example.com" })).toHaveAttribute(
-    "href", "#/assets/critical.example.com?return=risk"
-  );
+  expect(screen.getAllByText("Review Indicators")).toHaveLength(2);
+  expect(screen.getByText("https://external.example/login")).toBeInTheDocument();
+  expect(screen.getByText("Not currently confirmed")).toBeInTheDocument();
+  expect(screen.getByText("Independently confirmed current asset")).toBeInTheDocument();
+  expect(screen.getAllByText("Review only · not a vulnerability conclusion")).toHaveLength(2);
+  expect(screen.getByText("No ownership or testing authorization by redirect")).toBeInTheDocument();
+  const actionable = screen.getByRole("region", { name: "Actionable evidence" });
+  expect(actionable.querySelector('a[href="#/risk?section=findings"]')).toBeInTheDocument();
+  expect(actionable.querySelector('a[href="#/risk?section=sensitive-ports"]')).toBeInTheDocument();
+  expect(actionable.querySelector('a[href="#/risk?section=review-indicators"]')).toBeInTheDocument();
+  expect(document.getElementById("findings")).toBeInTheDocument();
+  expect(document.getElementById("sensitive-ports")).toBeInTheDocument();
+  expect(document.getElementById("review-indicators")).toBeInTheDocument();
+  expect(scrollIntoView).toHaveBeenCalled();
+  screen.getAllByRole("link", { name: "Open critical.example.com" }).forEach((link) => {
+    expect(link).toHaveAttribute("href", "#/assets/critical.example.com?return=risk");
+  });
+});
+
+test("review indicators have truthful empty and isolated failure states", async () => {
+  const baseContracts = () => {
+    getV2Overview.mockResolvedValue(overview);
+    getRiskyDomains.mockResolvedValue([]);
+    getFindings.mockResolvedValue([]);
+    getSensitiveExposure.mockResolvedValue([]);
+    getExposureSummary.mockResolvedValue({
+      scan_id: 42, total_domains: 10, resolving_domains: 8, http_responding_domains: 6,
+    });
+  };
+
+  window.location.hash = "#/risk";
+  baseContracts();
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  const empty = render(<App />);
+  expect(await screen.findByText("No cross-host HTTP redirects were observed in the current authoritative scan.")).toBeInTheDocument();
+  empty.unmount();
+
+  baseContracts();
+  getV2ReviewIndicators.mockRejectedValue(new Error("offline"));
+  render(<App />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Redirect review evidence could not be loaded");
+  expect(screen.getByText("Canonical risk posture")).toBeInTheDocument();
 });
 
 test("Shadow Centre requests and displays only confirmed Shadow assets", async () => {
@@ -165,6 +241,7 @@ test("new workflows expose honest error and empty states", async () => {
   getFindings.mockResolvedValue([]);
   getSensitiveExposure.mockResolvedValue([]);
   getExposureSummary.mockResolvedValue({});
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
   const risk = render(<App />);
   expect(await screen.findByText("Risk workspace unavailable")).toBeInTheDocument();
   risk.unmount();

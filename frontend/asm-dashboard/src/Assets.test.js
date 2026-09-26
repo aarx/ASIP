@@ -9,6 +9,7 @@ jest.mock("./services/api", () => ({
   updateV2AssetOwnership: jest.fn(),
   getV2Scans: jest.fn(),
   getV2BrandAssets: jest.fn(),
+  getV2ReviewIndicators: jest.fn(),
   getV2AssetAssistant: jest.fn(),
   getInvestigationAssets: jest.fn(),
   getNewDomainsDelta: jest.fn(),
@@ -122,6 +123,17 @@ test("explorer pagination is server-backed and preserves deterministic ordering"
   expect(screen.getByText("Ordered by domain")).toBeInTheDocument();
 });
 
+test("overview drill-down filters are consumed by the asset explorer", async () => {
+  window.location.hash = "#/assets?asset_class=KNOWN&priority=High&limit=25";
+  getV2Assets.mockResolvedValue(assetPage);
+  render(<App />);
+
+  await screen.findByText("app.example.com");
+  expect(getV2Assets).toHaveBeenCalledWith({ page: 1, limit: 25, asset_class: "KNOWN", priority: "High" });
+  expect(screen.getByText("asset class: KNOWN")).toBeInTheDocument();
+  expect(screen.getByText("priority: High")).toBeInTheDocument();
+});
+
 test("asset detail renders exact evidence and no risk for a Candidate", async () => {
   window.location.hash = "#/assets/candidate.example?ownership=CANDIDATE&limit=25";
   getV2AssetDetail.mockResolvedValue(candidateDetail);
@@ -137,6 +149,9 @@ test("asset detail renders exact evidence and no risk for a Candidate", async ()
   expect(screen.getByText("Final destination is outside the reviewed hostname.")).toBeInTheDocument();
   expect(screen.getByText(/observational evidence only and is not authorized for active testing by association/i)).toBeInTheDocument();
   expect(screen.getByText(/does not establish external ownership, malicious activity, or a vulnerability/i)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open Brand Perimeter" })).toHaveAttribute(
+    "href", "#/brand?ownership=CANDIDATE"
+  );
   expect(screen.getByRole("link", { name: "← Back to Assets" })).toHaveAttribute(
     "href", "#/assets?ownership=CANDIDATE&limit=25"
   );
@@ -169,6 +184,7 @@ test("ownership review confirms only after confirmation and refreshes classifica
   expect(await screen.findByText("Ownership updated to CONFIRMED.")).toBeInTheDocument();
   await waitFor(() => expect(screen.getByText("SHADOW")).toBeInTheDocument());
   expect(screen.getByText("3")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open Shadow workflow" })).toHaveAttribute("href", "#/shadow");
   expect(screen.getByText(/does not grant active-scanning authorization/i)).toBeInTheDocument();
 });
 

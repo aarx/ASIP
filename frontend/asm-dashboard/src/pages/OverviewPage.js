@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getV2Overview } from "../services/api";
+import { getV2Overview, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
@@ -54,18 +54,18 @@ function AttentionTable({ assets }) {
 
 function OwnershipComposition({ counts }) {
   const values = [
-    ["Known", counts.known],
-    ["Shadow", counts.shadow],
-    ["Candidate", counts.candidate],
-    ["External", counts.external],
+    ["Known", counts.known, "#/assets?asset_class=KNOWN&limit=25"],
+    ["Shadow", counts.shadow, "#/shadow"],
+    ["Candidate", counts.candidate, "#/brand?ownership=CANDIDATE"],
+    ["External", counts.external, "#/brand?ownership=EXTERNAL"],
   ];
   const max = Math.max(...values.map(([, value]) => value), 1);
 
   return (
     <>
       <div className="ownership-list">
-        {values.map(([name, value]) => (
-          <div className="ownership-row" key={name}>
+        {values.map(([name, value, href]) => (
+          <a className="ownership-row ownership-row-link" href={href} key={name} aria-label={`Open ${name} assets`}>
             <span className="ownership-name">{name}</span>
             <div className="ownership-track">
               <div
@@ -77,7 +77,8 @@ function OwnershipComposition({ counts }) {
               />
             </div>
             <span className="ownership-count">{value}</span>
-          </div>
+            <span className="ownership-arrow" aria-hidden="true">→</span>
+          </a>
         ))}
       </div>
       <hr className="ownership-divider" />
@@ -89,6 +90,19 @@ function OwnershipComposition({ counts }) {
   );
 }
 
+function relativeCompletion(value) {
+  if (!value) return "completion time unavailable";
+  const completed = new Date(value);
+  if (Number.isNaN(completed.getTime())) return "completion time unavailable";
+  const elapsed = Math.max(Date.now() - completed.getTime(), 0);
+  const minutes = Math.floor(elapsed / 60000);
+  if (minutes < 1) return "completed just now";
+  if (minutes < 60) return `completed ${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `completed ${hours}h ago`;
+  return `completed ${Math.floor(hours / 24)}d ago`;
+}
+
 export default function OverviewPage() {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
@@ -97,10 +111,13 @@ export default function OverviewPage() {
   useEffect(() => {
     let active = true;
     setStatus("loading");
-    getV2Overview()
-      .then((result) => {
+    Promise.all([
+      getV2Overview(),
+      Promise.resolve(getV2Scans(100)).catch(() => null),
+    ])
+      .then(([result, scans]) => {
         if (active) {
-          setData(result);
+          setData({ ...result, scanHistory: scans });
           setStatus("ready");
         }
       })
@@ -126,9 +143,22 @@ export default function OverviewPage() {
   const scanContext = data.previous_scan_id == null
     ? `scan ${data.current_scan_id} · no prior baseline`
     : `scan ${data.previous_scan_id} → ${data.current_scan_id}`;
+  const authoritativeScan = data.scanHistory?.scans?.find((scan) => (
+    scan.status === "SUCCEEDED"
+    && (scan.is_current_authoritative || scan.scan_id === data.current_scan_id)
+  ));
+  const completedAt = authoritativeScan?.completed_at;
+  const exactCompleted = completedAt && !Number.isNaN(new Date(completedAt).getTime())
+    ? new Date(completedAt).toLocaleString()
+    : "Completion timestamp unavailable";
 
   return (
     <div className="overview-grid">
+      <a className="authoritative-freshness" href="#/scans" title={exactCompleted}>
+        <span>Authoritative scan #{data.current_scan_id}</span>
+        <strong>{relativeCompletion(completedAt)}</strong>
+        <span aria-hidden="true">View scans →</span>
+      </a>
       <section className="kpi-strip" aria-label="Overview metrics">
         <MetricCard label="Organizational assets" value={counts.organizational} support="Current confirmed surface" accent="#3dc4ff" href="#/assets" />
         <MetricCard label="Shadow assets" value={counts.shadow} support="Confirmed, outside inventory" accent="#7e91a8" href="#/shadow" />
@@ -148,7 +178,7 @@ export default function OverviewPage() {
       </Panel>
 
       <Panel title="Risk distribution" subtitle="Canonical priorities across confirmed organizational assets" className="risk-panel">
-        <RiskDistributionChart distribution={data.risk_distribution} />
+        <RiskDistributionChart distribution={data.risk_distribution} priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}&limit=25`} />
       </Panel>
 
       <Panel title="Ownership & asset composition" subtitle="Organizational surface and adjacent Brand Perimeter" className="ownership-panel">

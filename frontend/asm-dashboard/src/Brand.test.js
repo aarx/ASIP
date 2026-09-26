@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
-import { getV2AssetDetail, getV2BrandAssets } from "./services/api";
+import { getV2AssetDetail, getV2BrandAssets, updateV2AssetOwnership } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -9,6 +9,7 @@ jest.mock("./services/api", () => ({
   updateV2AssetOwnership: jest.fn(),
   getV2Scans: jest.fn(),
   getV2BrandAssets: jest.fn(),
+  getV2ReviewIndicators: jest.fn(),
   getV2AssetAssistant: jest.fn(),
   getInvestigationAssets: jest.fn(),
   getNewDomainsDelta: jest.fn(),
@@ -65,6 +66,7 @@ function mockBrandCounts(inventory = brandResponse()) {
 beforeEach(() => {
   getV2BrandAssets.mockReset();
   getV2AssetDetail.mockReset();
+  updateV2AssetOwnership.mockReset();
 });
 
 test("Brand Perimeter separates Candidate and External evidence from organizational risk", async () => {
@@ -143,4 +145,25 @@ test("Candidate detail keeps the Brand Perimeter return context and no canonical
   expect(await screen.findByRole("heading", { name: candidate.domain })).toBeInTheDocument();
   expect(screen.getByText("No organizational canonical risk applies to CANDIDATE assets.")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "← Back to Brand Perimeter" })).toHaveAttribute("href", "#/brand");
+});
+
+test("development acceptance fixture exercises Brand review without backend data or persistence", async () => {
+  window.location.hash = "#/brand?fixture=ownership-review";
+  const inventory = render(<App />);
+
+  expect(await screen.findByText("Development acceptance fixture")).toBeInTheDocument();
+  expect(screen.getByText("abc-login-test.invalid")).toBeInTheDocument();
+  expect(screen.getByText("outside-reference.invalid")).toBeInTheDocument();
+  expect(getV2BrandAssets).not.toHaveBeenCalled();
+  inventory.unmount();
+
+  window.location.hash = "#/assets/abc-login-test.invalid?return=brand&return_query=fixture%3Downership-review";
+  render(<App />);
+  expect(await screen.findByText("DEVELOPMENT FIXTURE · NO PERSISTENCE")).toBeInTheDocument();
+  expect(getV2AssetDetail).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Confirm Organizational Asset" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm decision" }));
+  expect(await screen.findByText("Fixture preview only: CONFIRMED was not persisted.")).toBeInTheDocument();
+  expect(updateV2AssetOwnership).not.toHaveBeenCalled();
+  expect(screen.getByText("No organizational canonical risk applies to CANDIDATE assets.")).toBeInTheDocument();
 });

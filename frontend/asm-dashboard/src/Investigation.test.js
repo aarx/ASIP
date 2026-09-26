@@ -10,6 +10,7 @@ jest.mock("./services/api", () => ({
   getV2AssetAssistant: jest.fn(),
   getV2Scans: jest.fn(),
   getV2BrandAssets: jest.fn(),
+  getV2ReviewIndicators: jest.fn(),
   getRiskyDomains: jest.fn(),
   getFindings: jest.fn(),
   getSensitiveExposure: jest.fn(),
@@ -154,4 +155,20 @@ test("assistant errors do not alter or hide authoritative evidence", async () =>
   fireEvent.click(screen.getByRole("button", { name: "Summarize Asset" }));
   expect(await screen.findByText("Grounded assistance is unavailable. Authoritative ASIP evidence remains unchanged.")).toBeInTheDocument();
   expect(screen.getByText("192.0.2.10")).toBeInTheDocument();
+});
+
+test("presentation treats null and NaN-like strings as missing without hiding semantic states", async () => {
+  window.location.hash = `#/investigate?domain=${selectedAsset.domain}`;
+  getInvestigationAssets.mockResolvedValue(investigationList);
+  getV2AssetDetail.mockResolvedValue({
+    ...selectedAsset,
+    http: { observation_status: "UNKNOWN", status: 0, final_url: "nan", title: "NaN" },
+  });
+  render(<App />);
+
+  expect(await screen.findByText("Authoritative ASIP evidence")).toBeInTheDocument();
+  expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
+  expect(screen.getByText("0")).toBeInTheDocument();
+  expect(screen.getAllByText("Not observed")).toHaveLength(2);
+  expect(screen.queryByText(/^nan$/i)).not.toBeInTheDocument();
 });

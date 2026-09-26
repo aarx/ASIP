@@ -53,6 +53,11 @@ export const getV2BrandAssets = async (params) => {
   return res.data;
 };
 
+export const getV2ReviewIndicators = async () => {
+  const res = await axios.get(`${API_URL}/v2/review-indicators`);
+  return res.data;
+};
+
 export const getRiskyDomains = async () => {
   const res = await axios.get(`${API_URL}/risky-domains`);
   return res.data;

@@ -1951,6 +1951,14 @@ def _frontend_risk_payload(risk):
     }
 
 
+def _url_hostname(value):
+    try:
+        hostname = urlparse(str(value or "").strip()).hostname
+    except (TypeError, ValueError):
+        return None
+    return hostname.lower().rstrip(".") if hostname else None
+
+
 @app.get("/v2/overview")
 def frontend_v2_overview():
     conn = get_conn()
@@ -2579,6 +2587,93 @@ def frontend_v2_brand_assets(
         "limit": limit,
         "count": total,
         "assets": assets[offset:offset + limit],
+    }
+
+
+@app.get("/v2/review-indicators")
+def frontend_v2_review_indicators():
+    conn = get_conn()
+    cur = conn.cursor()
+    scan_id = get_latest_authoritative_scan_id(cur)
+    if scan_id is None:
+        conn.close()
+        return {"scan_id": None, "count": 0, "indicators": []}
+
+    cur.execute(
+        """
+        SELECT d.domain, d.ownership_status, d.is_known,
+               ds.http_observation_status, ds.http_status,
+               ds.final_url, ds.final_status
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        JOIN domain_states ds
+          ON ds.domain_id = sr.domain_id AND ds.scan_id = sr.scan_id
+        WHERE sr.scan_id = %s
+          AND ds.http_observation_status = 'RESPONDED'
+          AND ds.http_status BETWEEN 300 AND 399
+          AND NULLIF(TRIM(ds.final_url), '') IS NOT NULL
+        ORDER BY d.domain ASC, d.id ASC
+        """,
+        (scan_id,),
+    )
+    redirect_rows = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT d.domain, d.ownership_status, d.is_known
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        WHERE sr.scan_id = %s
+        """,
+        (scan_id,),
+    )
+    current_assets = {
+        domain.lower().rstrip("."): (ownership_status, is_known)
+        for domain, ownership_status, is_known in cur.fetchall()
+    }
+    conn.close()
+
+    indicators = []
+    for (
+        domain, ownership_status, is_known, observation_status,
+        http_status, final_url, final_status,
+    ) in redirect_rows:
+        source_hostname = domain.lower().rstrip(".")
+        final_hostname = _url_hostname(final_url)
+        if observation_status != "RESPONDED" or not final_hostname:
+            continue
+        if not (300 <= int(http_status or 0) <= 399):
+            continue
+        if final_hostname == source_hostname:
+            continue
+
+        destination = current_assets.get(final_hostname)
+        destination_ownership = destination[0] if destination else None
+        destination_known = bool(destination[1]) if destination else False
+        destination_confirmed = destination_ownership == "CONFIRMED"
+        indicators.append({
+            "type": "CROSS_HOST_HTTP_REDIRECT",
+            "domain": domain,
+            "ownership_status": ownership_status,
+            "is_known": bool(is_known),
+            "asset_class": _frontend_asset_class(ownership_status, is_known),
+            "http_observation_status": observation_status,
+            "http_status": http_status,
+            "final_url": final_url,
+            "final_status": final_status,
+            "final_hostname": final_hostname,
+            "destination_confirmed": destination_confirmed,
+            "destination_ownership_status": destination_ownership,
+            "destination_asset_class": (
+                _frontend_asset_class(destination_ownership, destination_known)
+                if destination else None
+            ),
+        })
+
+    return {
+        "scan_id": scan_id,
+        "count": len(indicators),
+        "indicators": indicators,
     }
 
 

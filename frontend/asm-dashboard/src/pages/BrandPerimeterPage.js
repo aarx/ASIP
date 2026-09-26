@@ -4,6 +4,8 @@ import { getV2BrandAssets } from "../services/api";
 import AssetLink from "../components/ui/AssetLink";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
+import { brandAcceptanceInventory, isBrandAcceptanceFixture } from "../fixtures/brandAcceptance";
+import { displayEvidence } from "../utils/presentation";
 
 const LIMIT = 25;
 
@@ -13,14 +15,16 @@ function readQuery(query) {
     page: Math.max(Number(params.get("page")) || 1, 1),
     search: params.get("search") || "",
     ownership: params.get("ownership") || "",
+    fixture: params.get("fixture") || "",
   };
 }
 
-function brandHash({ page = 1, search = "", ownership = "" }) {
+function brandHash({ page = 1, search = "", ownership = "", fixture = "" }) {
   const params = new URLSearchParams();
   if (search) params.set("search", search);
   if (ownership) params.set("ownership", ownership);
   if (page > 1) params.set("page", String(page));
+  if (fixture) params.set("fixture", fixture);
   return `#/brand${params.toString() ? `?${params}` : ""}`;
 }
 
@@ -34,6 +38,7 @@ function EvidenceTokens({ values, empty }) {
 
 export default function BrandPerimeterPage({ query }) {
   const applied = useMemo(() => readQuery(query), [query]);
+  const fixtureMode = isBrandAcceptanceFixture(query);
   const [draft, setDraft] = useState({ search: applied.search, ownership: applied.ownership });
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
@@ -46,11 +51,14 @@ export default function BrandPerimeterPage({ query }) {
     const inventoryParams = { page: applied.page, limit: LIMIT };
     if (applied.search) inventoryParams.search = applied.search;
     if (applied.ownership) inventoryParams.ownership = applied.ownership;
+    const load = fixtureMode
+      ? (params) => Promise.resolve(brandAcceptanceInventory(params))
+      : getV2BrandAssets;
     Promise.all([
-      getV2BrandAssets(inventoryParams),
-      getV2BrandAssets({ page: 1, limit: 1 }),
-      getV2BrandAssets({ page: 1, limit: 1, ownership: "CANDIDATE" }),
-      getV2BrandAssets({ page: 1, limit: 1, ownership: "EXTERNAL" }),
+      load(inventoryParams),
+      load({ page: 1, limit: 1 }),
+      load({ page: 1, limit: 1, ownership: "CANDIDATE" }),
+      load({ page: 1, limit: 1, ownership: "EXTERNAL" }),
     ]).then(([inventory, all, candidate, external]) => {
       if (active) {
         setData({ inventory, total: all.count, candidate: candidate.count, external: external.count });
@@ -58,13 +66,13 @@ export default function BrandPerimeterPage({ query }) {
       }
     }).catch(() => { if (active) setStatus("error"); });
     return () => { active = false; };
-  }, [applied, requestVersion]);
+  }, [applied, fixtureMode, requestVersion]);
 
   const apply = (event) => {
     event.preventDefault();
     window.location.hash = brandHash({ ...draft, page: 1 });
   };
-  const clear = () => { window.location.hash = "#/brand"; };
+  const clear = () => { window.location.hash = fixtureMode ? "#/brand?fixture=ownership-review" : "#/brand"; };
   const movePage = (page) => { window.location.hash = brandHash({ ...applied, page }); };
 
   if (status === "loading") return <LoadingState title="Loading Brand Perimeter" copy="Retrieving current Candidate and External evidence without assuming ownership." />;
@@ -82,8 +90,8 @@ export default function BrandPerimeterPage({ query }) {
       </section>
 
       <div className="brand-boundary-notice">
-        <strong>Ownership unconfirmed or external</strong>
-        <p>These assets are excluded from the organizational attack surface and canonical risk unless ownership is confirmed.</p>
+        <strong>{fixtureMode ? "Development acceptance fixture" : "Ownership unconfirmed or external"}</strong>
+        <p>{fixtureMode ? "Synthetic .invalid assets are held entirely in the frontend. No database, scan history, worker, risk, or authorization state is used or changed." : "These assets are excluded from the organizational attack surface and canonical risk unless ownership is confirmed."}</p>
       </div>
 
       <form className="brand-filters" onSubmit={apply}>
@@ -103,13 +111,13 @@ export default function BrandPerimeterPage({ query }) {
             <thead><tr><th>Domain / classification</th><th>Why discovered</th><th>DNS / IP</th><th>HTTP evidence</th><th>Destination / title</th><th>Risk boundary</th><th /></tr></thead>
             <tbody>{data.inventory.assets.map((asset) => (
               <tr key={asset.domain}>
-                <td><AssetLink domain={asset.domain} returnTo="brand" /><StatusBadge value={asset.ownership_status} /></td>
+                <td><AssetLink domain={asset.domain} returnTo="brand" returnQuery={fixtureMode ? "fixture=ownership-review" : ""} /><StatusBadge value={asset.ownership_status} /></td>
                 <td><span className="evidence-label">Sources</span><EvidenceTokens values={asset.discovery_sources} empty="No source recorded" /><span className="evidence-label brand-seed-label">Associated seeds</span><EvidenceTokens values={asset.seeds} empty="No seed recorded" /></td>
-                <td><span className="technical-value">{asset.ip || "—"}</span><span className="asset-secondary">{asset.has_ip ? "Resolution observed" : "No current IP evidence"}</span></td>
+                <td><span className="technical-value">{displayEvidence(asset.ip)}</span><span className="asset-secondary">{asset.has_ip ? "Resolution observed" : "No current IP evidence"}</span></td>
                 <td><StatusBadge value={asset.http_observation_status} /><span className="asset-secondary">{asset.http_status ?? "No status"}</span></td>
-                <td><span className="brand-destination technical-value" title={asset.final_url || ""}>{asset.final_url || "No final destination"}</span><span className="asset-secondary">{asset.final_status ?? "No final status"} · {asset.title || "No title"}</span></td>
+                <td><span className="brand-destination technical-value" title={displayEvidence(asset.final_url, "")}>{displayEvidence(asset.final_url, "No final destination")}</span><span className="asset-secondary">{displayEvidence(asset.final_status, "No final status")} · {displayEvidence(asset.title, "No title")}</span></td>
                 <td><span className="not-applicable">No org. risk</span><span className="asset-secondary">Outside confirmed surface</span></td>
-                <td><AssetLink domain={asset.domain} returnTo="brand" className="row-action">→</AssetLink></td>
+                <td><AssetLink domain={asset.domain} returnTo="brand" returnQuery={fixtureMode ? "fixture=ownership-review" : ""} className="row-action">→</AssetLink></td>
               </tr>
             ))}</tbody>
           </table>
