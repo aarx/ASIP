@@ -1,4 +1,6 @@
+import csv
 import importlib.util
+import io
 import logging
 import pathlib
 import sys
@@ -63,6 +65,13 @@ class FakeConnection:
 
     def close(self):
         self.closed = True
+
+
+class CapturedStreamingResponse:
+    def __init__(self, content, media_type):
+        self.content = list(content)
+        self.media_type = media_type
+        self.headers = {}
 
 
 def risk(domain_id, domain, score, priority, reasons=()):
@@ -154,6 +163,83 @@ class FrontendV2ContractTests(unittest.TestCase):
         candidate = self.main.frontend_v2_assets(ownership="candidate")
         self.assertEqual(candidate["assets"][0]["asset_class"], "CANDIDATE")
         self.assertIsNone(candidate["assets"][0]["risk"])
+
+    def test_asset_export_is_authoritative_filtered_escaped_and_classified(self):
+        rows = [
+            (
+                1, "known.example", True, "CONFIRMED", 10, 42,
+                "192.0.2.1", True, "RESPONDED", 200,
+                'Title, "quoted"\nline', "https://known.example/path?a=1,2",
+                "Cloud", "AS64500", "80,443", "React,Vite",
+                'finding, HIGH: evidence "quoted"\nline',
+            ),
+            (
+                2, "shadow.example", False, "CONFIRMED", 40, 42,
+                "192.0.2.2", True, "NO_RESPONSE", None, None, None,
+                "Cloud", "AS64501", "22", "", "",
+            ),
+            (
+                3, "candidate.example", False, "CANDIDATE", 42, 42,
+                None, False, "UNKNOWN", None, None, None,
+                "Unknown", None, "", "", "",
+            ),
+            (
+                4, "external.example", False, "EXTERNAL", 42, 42,
+                None, False, "UNKNOWN", None, None, None,
+                "Unknown", None, "", "", "",
+            ),
+        ]
+        cursor = QueueCursor(fetchalls=[rows])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        self.main.calculate_scan_risks = mock.Mock(return_value=[
+            risk(1, "known.example", 4, "Review", ("finding",)),
+            risk(2, "shadow.example", 8, "High", ("shadow_asset",)),
+        ])
+
+        with mock.patch.object(
+            self.main, "StreamingResponse", CapturedStreamingResponse
+        ):
+            response = self.main.frontend_v2_assets_export(
+                search="example", http_observation_status="RESPONDED"
+            )
+
+        exported = list(csv.DictReader(io.StringIO("".join(response.content))))
+        self.assertEqual(response.media_type, "text/csv")
+        self.assertEqual(response.headers["Content-Disposition"],
+                         'attachment; filename="asip-assets-scan-42.csv"')
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(exported[0]["Inventory Status"], "Known")
+        self.assertEqual(exported[0]["Risk Reasons"], "finding")
+        self.assertEqual(exported[0]["Title"], 'Title, "quoted"\nline')
+        self.assertEqual(exported[0]["Technologies"], "React,Vite")
+        export_sql, params = cursor.executions[0]
+        self.assertIn("FROM scan_results sr", export_sql)
+        self.assertIn("WHERE sr.scan_id = %s", export_sql)
+        self.assertEqual(params, (42,))
+
+        cursor = QueueCursor(fetchalls=[rows])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        self.main.calculate_scan_risks = mock.Mock(return_value=[])
+        with mock.patch.object(
+            self.main, "StreamingResponse", CapturedStreamingResponse
+        ):
+            response = self.main.frontend_v2_assets_export()
+        exported = list(csv.DictReader(io.StringIO("".join(response.content))))
+        self.assertEqual(
+            [row["Inventory Status"] for row in exported],
+            ["Known", "Shadow", "Candidate", "External"],
+        )
+
+    def test_asset_export_requires_an_authoritative_scan(self):
+        cursor = QueueCursor()
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        self.main.get_latest_authoritative_scan_id = lambda current: None
+
+        with self.assertRaisesRegex(self.main.HTTPException, "no authoritative scan"):
+            self.main.frontend_v2_assets_export()
+
+        self.assertEqual(cursor.executions, [])
+        self.main.get_latest_authoritative_scan_id = lambda current: 42
 
     def test_asset_detail_consolidates_current_scan_evidence(self):
         now = datetime(2026, 9, 25, 12, 0, 0)
@@ -248,7 +334,8 @@ class FrontendV2ContractTests(unittest.TestCase):
         self.assertTrue({
             "/summary", "/new-domains-delta", "/disappeared-domains",
             "/risk-leaderboard", "/findings", "/cert-expiry",
-            "/v2/overview", "/v2/assets", "/v2/assets/{domain_name}",
+            "/v2/overview", "/v2/assets", "/v2/assets/export",
+            "/v2/assets/{domain_name}",
             "/v2/scans", "/v2/brand-assets",
         }.issubset(paths))
 

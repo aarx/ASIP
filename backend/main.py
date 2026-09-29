@@ -1951,6 +1951,57 @@ def _frontend_risk_payload(risk):
     }
 
 
+def _frontend_asset_matches(
+    domain,
+    ownership_status,
+    current_asset_class,
+    provider,
+    http_observation_status,
+    risk,
+    search=None,
+    ownership=None,
+    requested_class=None,
+    priority=None,
+    requested_provider=None,
+    requested_http_status=None,
+):
+    search_value = (search or "").strip().lower()
+    ownership_value = (ownership or "").strip().upper()
+    class_value = (requested_class or "").strip().upper()
+    priority_value = (priority or "").strip().lower()
+    provider_value = (requested_provider or "").strip().lower()
+    http_value = (requested_http_status or "").strip().upper()
+
+    if search_value and search_value not in (domain or "").lower():
+        return False
+    if ownership_value and ownership_status != ownership_value:
+        return False
+    if class_value and current_asset_class != class_value:
+        return False
+    if priority_value and (
+        risk is None or risk.result.priority.lower() != priority_value
+    ):
+        return False
+    if provider_value and (provider or "").lower() != provider_value:
+        return False
+    if http_value and (http_observation_status or "UNKNOWN").upper() != http_value:
+        return False
+    return True
+
+
+def _frontend_inventory_status(ownership_status, is_known):
+    if ownership_status == "CONFIRMED":
+        if is_known is True:
+            return "Known"
+        if is_known is False:
+            return "Shadow"
+    if ownership_status == "CANDIDATE":
+        return "Candidate"
+    if ownership_status == "EXTERNAL":
+        return "External"
+    return ""
+
+
 def _url_hostname(value):
     try:
         hostname = urlparse(str(value or "").strip()).hostname
@@ -2119,13 +2170,6 @@ def frontend_v2_assets(
     rows = cur.fetchall()
     conn.close()
 
-    search_value = (search or "").strip().lower()
-    ownership_value = (ownership or "").strip().upper()
-    class_value = (asset_class or "").strip().upper()
-    priority_value = (priority or "").strip().lower()
-    provider_value = (provider or "").strip().lower()
-    http_value = (http_observation_status or "").strip().upper()
-
     assets = []
     for row in rows:
         (
@@ -2136,19 +2180,11 @@ def frontend_v2_assets(
         classification = _frontend_asset_class(ownership_status, is_known)
         risk = risk_by_domain.get(domain_id)
 
-        if search_value and search_value not in domain.lower():
-            continue
-        if ownership_value and ownership_status != ownership_value:
-            continue
-        if class_value and classification != class_value:
-            continue
-        if priority_value and (
-            risk is None or risk.result.priority.lower() != priority_value
+        if not _frontend_asset_matches(
+            domain, ownership_status, classification, asset_provider,
+            http_outcome, risk, search, ownership, asset_class, priority,
+            provider, http_observation_status,
         ):
-            continue
-        if provider_value and (asset_provider or "").lower() != provider_value:
-            continue
-        if http_value and (http_outcome or "UNKNOWN").upper() != http_value:
             continue
 
         assets.append({
@@ -2178,6 +2214,122 @@ def frontend_v2_assets(
         "count": total,
         "assets": assets[offset:offset + limit],
     }
+
+
+@app.get("/v2/assets/export")
+def frontend_v2_assets_export(
+    search: str = None,
+    ownership: str = None,
+    asset_class: str = None,
+    priority: str = None,
+    provider: str = None,
+    http_observation_status: str = None,
+):
+    conn = get_conn()
+    cur = conn.cursor()
+    scan_id = get_latest_authoritative_scan_id(cur)
+    if scan_id is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="no authoritative scan yet")
+
+    risk_by_domain = {
+        risk.domain_id: risk for risk in calculate_scan_risks(cur, scan_id)
+    }
+    cur.execute("""
+        SELECT
+            d.id, d.domain, d.is_known, d.ownership_status,
+            d.first_seen_scan, d.last_seen_scan,
+            ds.ip, ds.has_ip, ds.http_observation_status, ds.http_status,
+            ds.title, ds.final_url,
+            COALESCE(dp.provider, 'Unknown'),
+            da.asn,
+            COALESCE((
+                SELECT STRING_AGG(DISTINCT p.port::text, ',' ORDER BY p.port::text)
+                FROM domain_ports p
+                WHERE p.domain_id = sr.domain_id AND p.scan_id = sr.scan_id
+            ), ''),
+            COALESCE((
+                SELECT STRING_AGG(DISTINCT t.tech, ',' ORDER BY t.tech)
+                FROM domain_tech t
+                WHERE t.domain_id = sr.domain_id AND t.scan_id = sr.scan_id
+            ), ''),
+            COALESCE((
+                SELECT STRING_AGG(
+                    DISTINCT CONCAT_WS(': ', f.finding, f.severity, f.evidence),
+                    ' | '
+                    ORDER BY CONCAT_WS(': ', f.finding, f.severity, f.evidence)
+                )
+                FROM domain_findings f
+                WHERE f.domain_id = sr.domain_id AND f.scan_id = sr.scan_id
+            ), '')
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        LEFT JOIN domain_states ds
+          ON ds.domain_id = sr.domain_id AND ds.scan_id = sr.scan_id
+        LEFT JOIN domain_provider dp
+          ON dp.domain_id = sr.domain_id AND dp.scan_id = sr.scan_id
+        LEFT JOIN domain_asn da
+          ON da.domain_id = sr.domain_id AND da.scan_id = sr.scan_id
+        WHERE sr.scan_id = %s
+        ORDER BY d.domain ASC, d.id ASC
+    """, (scan_id,))
+    rows = cur.fetchall()
+    conn.close()
+
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\r\n")
+    writer.writerow([
+        "Domain", "Ownership Status", "Inventory Status", "IP",
+        "HTTP Status", "Final URL", "Title", "Provider", "ASN", "Ports",
+        "Technologies", "Findings", "Risk Score", "Priority",
+        "Risk Reasons", "First Seen", "Last Seen", "Authoritative Scan",
+    ])
+
+    for row in rows:
+        (
+            domain_id, domain, is_known, ownership_status,
+            first_seen, last_seen, ip, _has_ip, http_outcome, http_status,
+            title, final_url, asset_provider, asn, ports, technologies,
+            findings,
+        ) = row
+        classification = _frontend_asset_class(ownership_status, is_known)
+        risk = risk_by_domain.get(domain_id)
+        if not _frontend_asset_matches(
+            domain, ownership_status, classification, asset_provider,
+            http_outcome, risk, search, ownership, asset_class, priority,
+            provider, http_observation_status,
+        ):
+            continue
+
+        writer.writerow([
+            domain,
+            ownership_status,
+            _frontend_inventory_status(ownership_status, is_known),
+            ip,
+            http_status,
+            final_url,
+            title,
+            asset_provider,
+            asn,
+            ports,
+            technologies,
+            findings,
+            risk.result.score if risk else "",
+            risk.result.priority if risk else "",
+            "; ".join(risk.result.reasons) if risk else "",
+            first_seen,
+            last_seen,
+            scan_id,
+        ])
+
+    response = StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+    )
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="asip-assets-scan-{scan_id}.csv"'
+    )
+    return response
 
 
 @app.get("/v2/assets/{domain_name}")

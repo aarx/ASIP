@@ -1,10 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
-import { getV2AssetDetail, getV2Assets, updateV2AssetOwnership } from "./services/api";
+import {
+  exportV2AssetsCsv,
+  getV2AssetDetail,
+  getV2Assets,
+  updateV2AssetOwnership,
+} from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
   getV2Assets: jest.fn(),
+  exportV2AssetsCsv: jest.fn(),
   getV2AssetDetail: jest.fn(),
   updateV2AssetOwnership: jest.fn(),
   getV2Scans: jest.fn(),
@@ -79,6 +85,7 @@ const candidateDetail = {
 
 beforeEach(() => {
   getV2Assets.mockReset();
+  exportV2AssetsCsv.mockReset();
   getV2AssetDetail.mockReset();
   updateV2AssetOwnership.mockReset();
 });
@@ -132,6 +139,28 @@ test("overview drill-down filters are consumed by the asset explorer", async () 
   expect(getV2Assets).toHaveBeenCalledWith({ page: 1, limit: 25, asset_class: "KNOWN", priority: "High" });
   expect(screen.getByText("asset class: KNOWN")).toBeInTheDocument();
   expect(screen.getByText("priority: High")).toBeInTheDocument();
+});
+
+test("asset explorer exports the complete filtered authoritative dataset", async () => {
+  window.location.hash = "#/assets?asset_class=SHADOW&provider=Example%20Cloud&limit=25";
+  getV2Assets.mockResolvedValue(assetPage);
+  exportV2AssetsCsv.mockResolvedValue({ data: new Blob(["Domain\r\napp.example.com\r\n"]) });
+  const createObjectURL = jest.fn(() => "blob:assets");
+  const revokeObjectURL = jest.fn();
+  const anchorClick = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  Object.defineProperty(window.URL, "createObjectURL", { configurable: true, value: createObjectURL });
+  Object.defineProperty(window.URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+  render(<App />);
+
+  await screen.findByText("app.example.com");
+  fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+
+  await waitFor(() => expect(exportV2AssetsCsv).toHaveBeenCalledWith({
+    asset_class: "SHADOW", provider: "Example Cloud",
+  }));
+  expect(createObjectURL).toHaveBeenCalled();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled());
+  anchorClick.mockRestore();
 });
 
 test("asset detail renders exact evidence and no risk for a Candidate", async () => {

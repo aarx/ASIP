@@ -5,7 +5,6 @@ tests/
 logs/
 data/
 recon_scan_*/
-recon_*/
 myenv/
 *.dump
 *.backup

@@ -7,7 +7,7 @@ import {
   Select,
   TextField,
 } from "@mui/material";
-import { getV2Assets } from "../services/api";
+import { exportV2AssetsCsv, getV2Assets } from "../services/api";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { displayEvidence, isMissingEvidence } from "../utils/presentation";
@@ -118,6 +118,7 @@ export default function AssetExplorerPage({ query }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
   const [requestVersion, setRequestVersion] = useState(0);
+  const [exportStatus, setExportStatus] = useState("idle");
 
   useEffect(() => setDraft(appliedFilters), [appliedFilters]);
 
@@ -145,6 +146,28 @@ export default function AssetExplorerPage({ query }) {
   };
   const clearFilters = () => { window.location.hash = explorerHash(readFilters(""), 1); };
   const movePage = (nextPage) => { window.location.hash = explorerHash(appliedFilters, nextPage); };
+  const exportAssets = async () => {
+    setExportStatus("loading");
+    const params = {};
+    Object.entries(appliedFilters).forEach(([key, value]) => {
+      if (value) params[key] = value;
+    });
+
+    try {
+      const response = await exportV2AssetsCsv(params);
+      const url = window.URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `asip-assets-scan-${data.scan_id}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setExportStatus("ready");
+    } catch {
+      setExportStatus("error");
+    }
+  };
 
   const activeFilters = Object.entries(appliedFilters).filter(([, value]) => value);
   const totalPages = Math.max(Math.ceil((data?.count || 0) / limit), 1);
@@ -192,8 +215,19 @@ export default function AssetExplorerPage({ query }) {
           <strong>{status === "ready" ? (data?.count ?? 0) : "—"}</strong> current assets
           {status === "ready" && data?.scan_id != null && <span> · authoritative scan #{data.scan_id}</span>}
         </div>
-        <span>Ordered by domain</span>
+        <div className="asset-results-actions">
+          <span>Ordered by domain</span>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={exportAssets}
+            disabled={status !== "ready" || data?.scan_id == null || data?.count === 0 || exportStatus === "loading"}
+          >
+            {exportStatus === "loading" ? "Exporting…" : "Export CSV"}
+          </Button>
+        </div>
       </div>
+      {exportStatus === "error" && <span role="alert">Export unavailable. Try again.</span>}
 
       {status === "loading" && <LoadingState title="Loading current assets" copy="Applying filters to exact authoritative scan membership." />}
       {status === "error" && <ErrorState title="Asset inventory unavailable" copy="The current asset contract could not be loaded. No results have been inferred." onRetry={() => setRequestVersion((value) => value + 1)} />}

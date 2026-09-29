@@ -159,6 +159,7 @@
 
 .asset-results-bar, .pagination-bar, .detail-toolbar { display: flex; align-items: center; justify-content: space-between; min-height: 42px; color: var(--asip-text-muted); font-size: 11px; }
 .asset-results-bar strong { color: var(--asip-text-primary); font-family: var(--asip-font-mono); font-size: 15px; }
+.asset-results-actions { display: flex; gap: 12px; align-items: center; }
 .pagination-bar { padding: 5px 2px 0; }
 .pagination-bar > div { display: flex; gap: 8px; }
 

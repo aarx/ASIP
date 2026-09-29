@@ -22,6 +22,13 @@ export const getV2Assets = async (params) => {
   return res.data;
 };
 
+export const exportV2AssetsCsv = async (params) => {
+  return axios.get(`${API_URL}/v2/assets/export`, {
+    params,
+    responseType: "blob",
+  });
+};
+
 export const getV2AssetDetail = async (domain) => {
   const res = await axios.get(`${API_URL}/v2/assets/${encodeURIComponent(domain)}`);
   return res.data;

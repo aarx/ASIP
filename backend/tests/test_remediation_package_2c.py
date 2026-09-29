@@ -72,7 +72,7 @@ class KnownInventoryLoaderTests(unittest.TestCase):
         connection = FakeConnection()
         fake_db = types.ModuleType("db")
         fake_db.get_conn = mock.Mock(return_value=connection)
-        csv_data = "Domains\nKnown.Example\nSecond.Example\n"
+        csv_data = "domain\nKnown.Example\n \nSecond.Example\n"
 
         with mock.patch.object(
             builtins, "open", mock.mock_open(read_data=csv_data)
@@ -100,6 +100,21 @@ class KnownInventoryLoaderTests(unittest.TestCase):
                 for sql, _ in connection.cursor_obj.executions),
             2,
         )
+
+    def test_loader_rejects_missing_canonical_domain_header(self):
+        connection = FakeConnection()
+        fake_db = types.ModuleType("db")
+        fake_db.get_conn = mock.Mock(return_value=connection)
+
+        with mock.patch.object(
+            builtins, "open", mock.mock_open(read_data="Domains\nknown.example\n")
+        ):
+            with self.assertRaisesRegex(ValueError, "must contain a 'domain' column"):
+                load_module("load_known_domains.py", {"db": fake_db})
+
+        self.assertEqual(connection.commits, 0)
+        self.assertEqual(connection.rollbacks, 1)
+        self.assertTrue(connection.closed)
 
 
 class KnownShadowSourceOfTruthTests(unittest.TestCase):
