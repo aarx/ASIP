@@ -7,6 +7,12 @@ backend/logs/
 
 # env
 .env
+.env.*
+!.env.example
+
+# operator backups
+backups/
+*.backup
 
 # python
 __pycache__/

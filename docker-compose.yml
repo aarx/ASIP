@@ -1,19 +1,23 @@
-version: "3.9"
-
 services:
-
   db:
     image: postgres:15
     restart: unless-stopped
     container_name: asm_db
 
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${DB_USER:?Set DB_USER in .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_NAME:?Set DB_NAME in .env}
 
     volumes:
       - asm_pgdata:/var/lib/postgresql/data
+      - ./backend/asm_schema_post_guardrails-schema-only.sql:/docker-entrypoint-initdb.d/001-asip-schema.sql:ro
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   mcp:
     build: ./backend
@@ -21,19 +25,27 @@ services:
     restart: unless-stopped
 
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
     ports:
       - "8666:8000"
 
     command: uvicorn mcp_server:app --host 0.0.0.0 --port 8000
 
+    environment:
+      DB_HOST: ${DB_HOST:-db}
+      DB_NAME: ${DB_NAME:?Set DB_NAME in .env}
+      DB_USER: ${DB_USER:?Set DB_USER in .env}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+
   backend:
     build: ./backend
     container_name: asm_backend
 
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
     ports:
       - "8555:8000"
@@ -43,42 +55,22 @@ services:
     volumes:
       - ./backend/data:/app/data
       - ./backend/logs:/app/logs
+      - ./backend/seeds.txt:/app/seeds.txt:ro
 
     environment:
-      - DB_HOST=${DB_HOST}
-      - DB_NAME=${DB_NAME}
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
+      DB_HOST: ${DB_HOST:-db}
+      DB_NAME: ${DB_NAME:?Set DB_NAME in .env}
+      DB_USER: ${DB_USER:?Set DB_USER in .env}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      LLM_URL: ${LLM_URL:-http://host.docker.internal:11434/api/generate}
+      LLM_MODEL: ${LLM_MODEL:-gemma3:4b}
+      CERTSPOTTER_API_KEY: ${CERTSPOTTER_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      CENSYS_API_ID: ${CENSYS_API_ID:-}
+      CENSYS_API_SECRET: ${CENSYS_API_SECRET:-}
 
-      # ==========================================
-      # LLM CONFIGURATION
-      #
-      # Current:
-      # Windows Host running Ollama
-      #
-      # Example:
-      # http://192.168.29.222:11434/api/generate
-      #
-      # Future Options:
-      #
-      # Same Server:
-      # http://localhost:11434/api/generate
-      #
-      # Docker Ollama Service:
-      # http://ollama:11434/api/generate
-      #
-      # vLLM:
-      # http://localhost:8000/v1/chat/completions
-      #
-      # CHANGE ONLY THESE VARIABLES
-      # ==========================================
-
-      - LLM_URL=${LLM_URL}
-      - LLM_MODEL=${LLM_MODEL}
-      - CERTSPOTTER_API_KEY=${CERTSPOTTER_API_KEY}
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - CENSYS_API_ID=${CENSYS_API_ID}
-      - CENSYS_API_SECRET=${CENSYS_API_SECRET}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   frontend:
     build: ./frontend
@@ -88,6 +80,9 @@ services:
       - "3555:3000"
 
     restart: unless-stopped
+
+    depends_on:
+      - backend
 
 volumes:
   asm_pgdata:

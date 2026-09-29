@@ -1,6 +1,9 @@
 import requests
+import os
 
-TOKEN = "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"
+TOKEN = os.getenv("GITHUB_TOKEN")
+if not TOKEN:
+    raise SystemExit("GITHUB_TOKEN is required")
 
 headers = {
     "Authorization": f"Bearer {TOKEN}",

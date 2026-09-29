@@ -7,7 +7,7 @@ import os
 DB_HOST = os.getenv("DB_HOST", "db")
 DB_NAME = os.getenv("DB_NAME", "asm_db")
 DB_USER = os.getenv("DB_USER", "asm")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "asm123")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
 
 # ==========================
 # LLM

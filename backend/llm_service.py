@@ -1,30 +1,7 @@
-import os
 import requests
+from config import LLM_MODEL, LLM_URL
 
-# ==========================================
-# LLM CONFIGURATION
-#
-# Current:
-# Windows Host running Ollama
-#
-# Future:
-# localhost
-# docker service
-# remote Ollama
-# vLLM
-#
-# CHANGE ONLY THESE VARIABLES
-# ==========================================
-
-LLM_URL = os.getenv(
-    "LLM_URL",
-    "http://192.168.29.222:11434/api/generate"
-)
-
-MODEL = os.getenv(
-    "LLM_MODEL",
-    "gemma3:4b"
-)
+MODEL = LLM_MODEL
 
 print("=" * 60)
 print(f"[LLM] Using model: {MODEL}")

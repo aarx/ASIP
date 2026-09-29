@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+tests/
+logs/
+data/
+recon_scan_*/
+recon_*/
+myenv/
+*.dump
+*.backup
