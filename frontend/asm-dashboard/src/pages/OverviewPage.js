@@ -8,7 +8,7 @@ import RiskDistributionChart, { RISK_COLORS } from "../components/ui/RiskDistrib
 import AssetLink from "../components/ui/AssetLink";
 
 const OWNERSHIP_COLORS = {
-  Known: "#3dc4ff",
+  Known: "#4655a6",
   Shadow: "#7e91a8",
   Candidate: "#9a79d6",
   External: "#546579",
@@ -160,10 +160,10 @@ export default function OverviewPage() {
         <span aria-hidden="true">View scans →</span>
       </a>
       <section className="kpi-strip" aria-label="Overview metrics">
-        <MetricCard label="Organizational assets" value={counts.organizational} support="Current confirmed surface" accent="#3dc4ff" href="#/assets" />
+        <MetricCard label="Organizational assets" value={counts.organizational} support="Current confirmed surface" accent="#4655a6" href="#/assets" />
         <MetricCard label="Shadow assets" value={counts.shadow} support="Confirmed, outside inventory" accent="#7e91a8" href="#/shadow" />
         <MetricCard label="High risk" value={highRisk} support="Canonical priority" accent={RISK_COLORS.High} href="#/risk" />
-        <MetricCard label="New assets" value={data.changes?.new_assets ?? 0} support="Since previous successful scan" accent="#51a8db" href="#/changes?view=new" />
+        <MetricCard label="New assets" value={data.changes?.new_assets ?? 0} support="Since previous successful scan" accent="#327d80" href="#/changes?view=new" />
         <MetricCard label="Brand perimeter" value={perimeter} support={`${counts.candidate} candidate · ${counts.external} external`} accent="#9a79d6" href="#/brand" />
       </section>
 

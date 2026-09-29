@@ -22,16 +22,18 @@ export default function EnvironmentExposureChart({ data }) {
       <XAxis
         type="number"
         domain={[0, "dataMax + 3"]}
+        tick={{ fill: "#526174", fontSize: 10 }}
       />
       <YAxis
         type="category"
         dataKey="keyword"
         width={80}
+        tick={{ fill: "#526174", fontSize: 10 }}
       />
-      <Tooltip />
+      <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", color: "#172130" }} />
       <Bar
           dataKey="count"
-          fill="#ff9800"
+          fill="#a96f1f"
       >
           <LabelList
               dataKey="count"

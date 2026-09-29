@@ -1,21 +1,26 @@
 :root {
-  --asip-bg: #07111f;
-  --asip-surface: #101d2f;
-  --asip-border: rgba(116, 145, 174, .17);
-  --asip-text-primary: #e7eef6;
-  --asip-text-secondary: #a9bacb;
-  --asip-text-muted: #74869a;
-  --asip-accent: #168dcc;
-  --asip-accent-bright: #3dc4ff;
-  --asip-positive: #39cb91;
-  --asip-warning: #e7a84b;
-  --asip-critical: #f06467;
+  --asip-bg: #eef2f6;
+  --asip-surface: #fbfcfe;
+  --asip-surface-raised: #ffffff;
+  --asip-surface-muted: #e7edf3;
+  --asip-border: #d4dde7;
+  --asip-border-strong: #bbc8d6;
+  --asip-text-primary: #172130;
+  --asip-text-secondary: #334155;
+  --asip-text-muted: #64748b;
+  --asip-text-faint: #8794a5;
+  --asip-accent: #4655a6;
+  --asip-accent-bright: #354593;
+  --asip-teal: #327d80;
+  --asip-positive: #2f7d5b;
+  --asip-warning: #a96f1f;
+  --asip-critical: #b43d4a;
   --asip-sidebar-width: 252px;
-  --asip-radius: 10px;
-  --asip-shadow: 0 12px 32px rgba(0, 0, 0, .16);
+  --asip-radius: 7px;
+  --asip-shadow: 0 8px 24px rgba(31, 45, 61, .08);
   --asip-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --asip-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -23,30 +28,30 @@ html { min-width: 320px; background: var(--asip-bg); }
 body { margin: 0; background: var(--asip-bg); color: var(--asip-text-primary); font-family: var(--asip-font-sans); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
 button, input, textarea, select { font: inherit; }
 code { font-family: var(--asip-font-mono); }
-::selection { background: rgba(61, 196, 255, .22); color: #fff; }
+::selection { background: rgba(70, 85, 166, .18); color: #172130; }
 
 .status-badge {
   display: inline-flex;
   align-items: center;
   min-height: 22px;
   padding: 2px 7px;
-  border: 1px solid #405066;
+  border: 1px solid #b8c4d1;
   border-radius: 4px;
-  background: rgba(64, 80, 102, .12);
-  color: #aebdca;
+  background: #f1f4f8;
+  color: #526174;
   font-size: 9px;
   font-weight: 750;
   letter-spacing: .08em;
   text-transform: uppercase;
 }
 
-.status-high { border-color: rgba(240, 100, 103, .36); background: rgba(240, 100, 103, .1); color: #ff9a9c; }
-.status-elevated { border-color: rgba(231, 168, 75, .36); background: rgba(231, 168, 75, .09); color: #f0bf77; }
-.status-review { border-color: rgba(212, 194, 102, .3); background: rgba(212, 194, 102, .08); color: #dccf8d; }
-.status-low { border-color: rgba(78, 120, 155, .34); background: rgba(78, 120, 155, .1); color: #94afc6; }
-.status-succeeded, .status-responded, .status-known { border-color: rgba(57, 203, 145, .32); background: rgba(57, 203, 145, .08); color: #78ddb4; }
-.status-failed, .status-external { border-color: rgba(240, 100, 103, .3); background: rgba(240, 100, 103, .08); color: #ee979a; }
-.status-running, .status-candidate { border-color: rgba(61, 196, 255, .3); background: rgba(61, 196, 255, .08); color: #79d4fb; }
-.status-confirmed, .status-shadow { border-color: rgba(126, 145, 168, .3); background: rgba(126, 145, 168, .08); color: #b1bfce; }
-.status-no_response, .status-unknown { border-color: rgba(126, 145, 168, .28); background: rgba(126, 145, 168, .07); color: #9cabbc; }
-.status-medium { border-color: rgba(231, 168, 75, .3); background: rgba(231, 168, 75, .08); color: #efbd73; }
+.status-high { border-color: #d9959c; background: #fbecef; color: #9c2f3d; }
+.status-elevated { border-color: #dfbd82; background: #fff6e4; color: #875514; }
+.status-review { border-color: #ada6d4; background: #f1effa; color: #50448e; }
+.status-low { border-color: #9abdaf; background: #edf7f0; color: #286947; }
+.status-succeeded, .status-responded, .status-known { border-color: #91c6ad; background: #edf8f2; color: #286947; }
+.status-failed, .status-external { border-color: #d9959c; background: #fbecef; color: #9c2f3d; }
+.status-running, .status-candidate { border-color: #a6b1db; background: #eff1fb; color: #3d4d97; }
+.status-confirmed, .status-shadow { border-color: #b2bfcd; background: #f0f3f7; color: #526174; }
+.status-no_response, .status-unknown { border-color: #b9c4d1; background: #f1f4f7; color: #64748b; }
+.status-medium { border-color: #dfbd82; background: #fff6e4; color: #875514; }

@@ -1,7 +1,7 @@
 import React from "react";
 import { PieChart, Pie, Cell, Tooltip } from "recharts";
 
-const COLORS = ["#1976d2", "#ef5350", "#ffa726", "#66bb6a"];
+const COLORS = ["#4655a6", "#b43d4a", "#a96f1f", "#398261"];
 
 export default function HttpStatusChart({ data }) {
 
@@ -22,7 +22,7 @@ export default function HttpStatusChart({ data }) {
           <Cell key={index} fill={COLORS[index % COLORS.length]} />
         ))}
       </Pie>
-      <Tooltip />
+      <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", color: "#172130" }} />
     </PieChart>
   );
 }

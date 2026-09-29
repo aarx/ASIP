@@ -64,14 +64,14 @@ export default function RiskExposurePage({ query }) {
     <div className="operations-grid">
       <section className="operations-kpis" aria-label="Risk and exposure metrics">
         <MetricCard label="High priority" value={overview.risk_distribution?.High ?? 0} support="Canonical current risk" accent={RISK_COLORS.High} />
-        <MetricCard label="Scored assets" value={riskyAssets.length} support="Positive canonical score" accent="#e7a84b" />
-        <MetricCard label="Resolving assets" value={exposure.resolving_domains ?? 0} support="Positive DNS evidence" accent="#3dc4ff" />
-        <MetricCard label="HTTP responses" value={exposure.http_responding_domains ?? 0} support="Observed responding assets" accent="#39cb91" />
+        <MetricCard label="Scored assets" value={riskyAssets.length} support="Positive canonical score" accent="#a96f1f" />
+        <MetricCard label="Resolving assets" value={exposure.resolving_domains ?? 0} support="Positive DNS evidence" accent="#327d80" />
+        <MetricCard label="HTTP responses" value={exposure.http_responding_domains ?? 0} support="Observed responding assets" accent="#2f7d5b" />
       </section>
 
       <section className="actionable-kpis" aria-label="Actionable evidence">
-        <MetricCard label="Findings" value={findings.length} support="Current deterministic observations" accent="#f06467" href="#/risk?section=findings" />
-        <MetricCard label="Sensitive port exposure" value={sensitivePorts.length} support="Positive configured-port evidence" accent="#e7a84b" href="#/risk?section=sensitive-ports" />
+        <MetricCard label="Findings" value={findings.length} support="Current deterministic observations" accent="#b43d4a" href="#/risk?section=findings" />
+        <MetricCard label="Sensitive port exposure" value={sensitivePorts.length} support="Positive configured-port evidence" accent="#a96f1f" href="#/risk?section=sensitive-ports" />
         <MetricCard label="Review Indicators" value={reviewIndicators.count ?? 0} support="Context required · not findings" accent="#9a79d6" href="#/risk?section=review-indicators" />
       </section>
 

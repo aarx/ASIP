@@ -17,22 +17,22 @@ export default function HttpStatusChart({ data }) {
     {
       name: "2xx",
       value: data["2xx"] || 0,
-      fill: "#4caf50"
+      fill: "#398261"
     },
     {
       name: "3xx",
       value: data["3xx"] || 0,
-      fill: "#2196f3"
+      fill: "#4655a6"
     },
     {
       name: "4xx",
       value: data["4xx"] || 0,
-      fill: "#ff9800"
+      fill: "#a96f1f"
     },
     {
       name: "5xx",
       value: data["5xx"] || 0,
-      fill: "#f44336"
+      fill: "#b43d4a"
     }
   ];
 
@@ -44,9 +44,9 @@ export default function HttpStatusChart({ data }) {
       layout="vertical"
       margin={{ top: 10, right: 20, left: 20, bottom: 10 }}
     >
-      <XAxis type="number" />
-      <YAxis dataKey="name" type="category" />
-      <Tooltip />
+      <XAxis type="number" tick={{ fill: "#526174", fontSize: 10 }} />
+      <YAxis dataKey="name" type="category" tick={{ fill: "#526174", fontSize: 10 }} />
+      <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", color: "#172130" }} />
 
       <Bar dataKey="value">
         <LabelList
@@ -54,7 +54,8 @@ export default function HttpStatusChart({ data }) {
           position="right"
           style={{
             fontSize: 12,
-            fontWeight: "bold"
+            fontWeight: "bold",
+            fill: "#334155"
           }}
         />
       

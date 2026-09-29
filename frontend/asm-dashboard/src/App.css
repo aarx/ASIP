@@ -439,3 +439,86 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* ASIP visual refresh: graphite navigation with a calm, light analyst canvas. */
+.app-shell {
+  background: radial-gradient(circle at 78% -10%, rgba(70, 85, 166, .08), transparent 32rem), var(--asip-bg);
+}
+
+.app-sidebar {
+  border-right-color: #3b424e;
+  background: #20242d;
+  box-shadow: 5px 0 18px rgba(22, 29, 40, .08);
+}
+.brand-lockup { border-bottom-color: #3b424e; }
+.brand-mark { border-color: rgba(126, 143, 214, .55); background: linear-gradient(145deg, #36416f, #252b39); color: #b8c2f2; }
+.brand-name { color: #f2f4f7; }
+.brand-subtitle, .sidebar-status { color: #aeb7c4; }
+.nav-section-label { color: #8f99a8; }
+.nav-link { color: #c0c8d4; }
+.nav-link:hover { border-color: #414a58; background: #2a303b; color: #f2f4f7; }
+.nav-link.active { border-color: #505c95; background: linear-gradient(90deg, #343b68, #2c324e); color: #f4f6ff; }
+.nav-link.active::before { background: #8c99e2; }
+.nav-symbol { color: #9ba7b7; }
+.nav-link.active .nav-symbol { color: #b8c2f2; }
+.sidebar-admin { border-top-color: #3b424e; }
+
+.page-context { border-bottom-color: var(--asip-border); background: rgba(251, 252, 254, .92); }
+.page-eyebrow { color: var(--asip-accent-bright); }
+
+.metric-card, .panel, .state-card, .asset-filter-panel, .asset-table-wrap,
+.asset-identity-card, .shadow-summary-bar, .shadow-filters, .brand-command-bar > div,
+.brand-filters, .investigation-identity, .change-context-bar {
+  background: var(--asip-surface);
+}
+.metric-card, .panel, .state-card, .asset-filter-panel, .asset-table-wrap,
+.asset-identity-card, .shadow-summary-bar, .shadow-filters, .brand-command-bar,
+.brand-filters, .investigation-identity, .change-context-bar { box-shadow: var(--asip-shadow); }
+.metric-card { background: linear-gradient(145deg, #ffffff, #f5f8fb); }
+.metric-card-link:hover { border-color: #9ea9d4; }
+.panel-header, .identity-meta, .risk-posture, .investigation-risk { border-color: var(--asip-border); }
+.risk-posture, .investigation-risk { background: var(--asip-surface-muted); }
+.reason-token, .port-token { border-color: #cbd6e1; background: #f1f4f8; color: #526174; }
+.ownership-track { background: #dce4ec; }
+.state-icon { border-color: #b5bfe0; }
+.asset-table th, .dense-table th, .attention-table th { background: #f1f4f8; color: #526174; }
+.asset-table td, .dense-table td, .attention-table td { border-color: #e1e7ed; }
+.asset-table tbody tr:hover, .dense-table tbody tr:hover { background: #f5f7fb; }
+.asset-domain-link { color: #273653; }
+.asset-domain-link:hover, .change-row-link:hover .change-label { color: var(--asip-accent-bright); }
+.filter-chip { border-color: #bcc7e7; background: #f0f2fb; color: #4655a6; }
+.row-action, .context-link { border-color: #b6c1e0; color: var(--asip-accent-bright); }
+.row-action:hover, .context-link:hover { background: #eef0fb; }
+.technology-list span { border-color: #b9d5d6; background: #eff7f7; color: #28696c; }
+.port-token strong, .port-number { color: var(--asip-accent-bright); }
+.not-applicable { color: #7a8798; }
+.detail-empty { color: var(--asip-text-muted); }
+
+.ownership-review-panel, .investigation-assistant { border-color: #b9c3e4; }
+.assistant-boundary, .brand-boundary-notice, .authoritative-freshness { border-color: #c0c9e3; background: #f1f3fb; }
+.brand-boundary-notice { border-left-color: var(--asip-accent); }
+.brand-boundary-notice strong { color: #34427f; }
+.ownership-confirmation, .redirect-boundary { border-color: #dfc58f; background: #fff9ed; }
+.redirect-boundary { border-left-color: #b78125; }
+.redirect-boundary strong { color: #875514; }
+.assistant-response strong { color: var(--asip-accent-bright); }
+.assistant-error, .review-indicator-error { border-color: #e5b9bd; background: #fff4f5; color: #9c2f3d; }
+.review-indicator-table strong { color: var(--asip-text-primary); }
+.authority-marker.current { border-color: #91c6ad; background: #edf8f2; color: #286947; }
+.authority-marker.previous { border-color: #b5c2d0; background: #f1f4f7; color: #526174; }
+.new-scan-label { color: var(--asip-accent-bright); }
+.change-tabs a.active { border-color: #b5bee0; background: #f0f2fb; color: var(--asip-accent-bright); }
+.change-tabs a { color: var(--asip-text-muted); }
+
+.MuiOutlinedInput-root { background: var(--asip-surface-raised); }
+.MuiOutlinedInput-root fieldset { border-color: #c5d0dc; }
+.MuiOutlinedInput-root:hover fieldset { border-color: #9eabc0 !important; }
+.MuiOutlinedInput-root.Mui-focused fieldset { border-color: var(--asip-accent) !important; }
+.MuiInputBase-input, .MuiSelect-select { color: var(--asip-text-primary) !important; }
+.MuiInputLabel-root { color: var(--asip-text-muted) !important; }
+.MuiButton-outlined { color: var(--asip-accent-bright) !important; border-color: #aebbd0 !important; }
+.MuiButton-outlined:hover { background: #f0f2fb !important; border-color: #7f8fc9 !important; }
+
+@media (max-width: 900px) {
+  .app-sidebar { box-shadow: 3px 0 12px rgba(22, 29, 40, .1); }
+}

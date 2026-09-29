@@ -7,11 +7,12 @@ import reportWebVitals from './reportWebVitals';
 
 const theme = createTheme({
   palette: {
-    mode: 'dark',
-    background: { default: '#07111f', paper: '#101d2f' },
-    primary: { main: '#28a9e2' },
-    text: { primary: '#e7eef6', secondary: '#a9bacb' },
-    divider: 'rgba(116, 145, 174, .17)',
+    mode: 'light',
+    background: { default: '#eef2f6', paper: '#fbfcfe' },
+    primary: { main: '#4655a6' },
+    secondary: { main: '#327d80' },
+    text: { primary: '#172130', secondary: '#526174' },
+    divider: '#d4dde7',
   },
   shape: { borderRadius: 8 },
   typography: {
@@ -21,7 +22,7 @@ const theme = createTheme({
   components: {
     MuiButton: {
       styleOverrides: {
-        root: { borderColor: 'rgba(61, 196, 255, .35)', fontSize: 12 },
+        root: { borderColor: '#aebbd0', fontSize: 12 },
       },
     },
   },

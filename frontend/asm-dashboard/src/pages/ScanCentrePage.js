@@ -44,9 +44,9 @@ export default function ScanCentrePage() {
   return (
     <div className="scan-workspace">
       <section className="operations-kpis" aria-label="Scan status context">
-        <MetricCard label="Current authoritative" value={scans.current_authoritative_scan_id ? `#${scans.current_authoritative_scan_id}` : "—"} support="Latest SUCCEEDED scan" accent="#39cb91" />
-        <MetricCard label="Previous baseline" value={scans.previous_authoritative_scan_id ? `#${scans.previous_authoritative_scan_id}` : "—"} support="Previous SUCCEEDED scan" accent="#4e789b" />
-        <MetricCard label="New assets" value={overview.changes?.new_assets ?? 0} support="Successful-scan comparison" accent="#3dc4ff" href="#/changes?view=new" />
+        <MetricCard label="Current authoritative" value={scans.current_authoritative_scan_id ? `#${scans.current_authoritative_scan_id}` : "—"} support="Latest SUCCEEDED scan" accent="#2f7d5b" />
+        <MetricCard label="Previous baseline" value={scans.previous_authoritative_scan_id ? `#${scans.previous_authoritative_scan_id}` : "—"} support="Previous SUCCEEDED scan" accent="#64748b" />
+        <MetricCard label="New assets" value={overview.changes?.new_assets ?? 0} support="Successful-scan comparison" accent="#4655a6" href="#/changes?view=new" />
         <MetricCard label="Disappeared" value={overview.changes?.disappeared_assets ?? 0} support="Successful-scan comparison" accent="#7e91a8" href="#/changes?view=disappeared" />
       </section>
 

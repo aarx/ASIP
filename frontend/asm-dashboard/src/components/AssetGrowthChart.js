@@ -13,30 +13,30 @@ export default function AssetGrowthChart({ data }) {
 
   return (
     <LineChart width={500} height={300} data={data}>
-      <XAxis dataKey="scan_id" />
-      <YAxis />
-      <Tooltip />
+      <XAxis dataKey="scan_id" tick={{ fill: "#526174", fontSize: 10 }} />
+      <YAxis tick={{ fill: "#526174", fontSize: 10 }} />
+      <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", color: "#172130" }} />
       <Legend />
 
       <Line
         type="monotone"
         dataKey="total"
         name="Total Domains"
-        stroke="#1976d2"
+        stroke="#4655a6"
       />
 
       <Line
         type="monotone"
         dataKey="live"
         name="Live Domains"
-        stroke="#4caf50"
+        stroke="#398261"
       />
 
       <Line
         type="monotone"
         dataKey="shadow"
         name="Shadow Assets"
-        stroke="#f44336"
+        stroke="#b43d4a"
       />
     </LineChart>
   );

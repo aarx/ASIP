@@ -4,8 +4,8 @@ import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 
 export const RISK_COLORS = {
   High: "#f06467",
   Elevated: "#e7a84b",
-  Review: "#d4c266",
-  Low: "#4e789b",
+  Review: "#6b61b1",
+  Low: "#398261",
 };
 
 export default function RiskDistributionChart({ distribution, priorityHref }) {
@@ -19,9 +19,9 @@ export default function RiskDistributionChart({ distribution, priorityHref }) {
       <div className="risk-chart-canvas">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} layout="vertical" margin={{ top: 2, right: 22, bottom: 2, left: 6 }}>
-            <XAxis type="number" allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: "#708298", fontSize: 10 }} />
-            <YAxis type="category" dataKey="priority" axisLine={false} tickLine={false} width={62} tick={{ fill: "#a9bacb", fontSize: 10 }} />
-            <Tooltip cursor={{ fill: "rgba(61,196,255,.04)" }} contentStyle={{ background: "#0c1828", border: "1px solid #273b52", borderRadius: 6, fontSize: 11 }} />
+            <XAxis type="number" allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 10 }} />
+            <YAxis type="category" dataKey="priority" axisLine={false} tickLine={false} width={62} tick={{ fill: "#334155", fontSize: 10 }} />
+            <Tooltip cursor={{ fill: "rgba(70,85,166,.06)" }} contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#172130", fontSize: 11, boxShadow: "0 6px 18px rgba(31,45,61,.12)" }} />
             <Bar dataKey="count" radius={[0, 3, 3, 0]} barSize={15}>
               {data.map((entry) => <Cell key={entry.priority} fill={RISK_COLORS[entry.priority]} />)}
             </Bar>

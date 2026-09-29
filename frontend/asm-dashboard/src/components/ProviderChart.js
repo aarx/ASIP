@@ -16,12 +16,12 @@ export default function ProviderChart({ data, onProviderClick }) {
         bottom: 10
       }}
     >
-      <XAxis dataKey="provider"/>
-      <YAxis/>
-      <Tooltip/>
+      <XAxis dataKey="provider" tick={{ fill: "#526174", fontSize: 10 }}/>
+      <YAxis tick={{ fill: "#526174", fontSize: 10 }}/>
+      <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", color: "#172130" }}/>
       <Bar
         dataKey="count"
-        fill="#8884d8"
+        fill="#4655a6"
         onClick={(data) => {
           console.log("CLICKED:", data);
       
@@ -35,7 +35,8 @@ export default function ProviderChart({ data, onProviderClick }) {
           position="top"
           style={{
             fontSize: 12,
-            fontWeight: "bold"
+            fontWeight: "bold",
+            fill: "#334155"
           }}
         />
       </Bar>
