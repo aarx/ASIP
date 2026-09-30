@@ -70,14 +70,14 @@ test("analyst selects an asset, reviews authoritative evidence, and runs all gro
     domain,
     action,
     response: `**${action}** grounded response`,
-    source: "ASIP deterministic evidence + Gemma",
+    source: "ShadowRecon deterministic evidence + Gemma",
     model: "gemma3:4b",
   }));
 
   render(<App />);
 
   fireEvent.click(await screen.findByRole("button", { name: /investigate\.example\.com/i }));
-  expect(await screen.findByText("Authoritative ASIP evidence")).toBeInTheDocument();
+  expect(await screen.findByText("Authoritative ShadowRecon evidence")).toBeInTheDocument();
   expect(screen.getByText("192.0.2.10")).toBeInTheDocument();
   expect(screen.getByText("RESPONDED")).toBeInTheDocument();
   expect(screen.getByText("443")).toBeInTheDocument();
@@ -115,7 +115,7 @@ test("Candidate assets retain the no-organizational-risk boundary", async () => 
     domain: "candidate.example.net",
     action: "explain_risk",
     response: "No organizational canonical risk applies.",
-    source: "ASIP deterministic evidence + Gemma",
+    source: "ShadowRecon deterministic evidence + Gemma",
     model: "gemma3:4b",
   });
 
@@ -151,9 +151,9 @@ test("assistant errors do not alter or hide authoritative evidence", async () =>
 
   render(<App />);
 
-  expect(await screen.findByText("Authoritative ASIP evidence")).toBeInTheDocument();
+  expect(await screen.findByText("Authoritative ShadowRecon evidence")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Summarize Asset" }));
-  expect(await screen.findByText("Grounded assistance is unavailable. Authoritative ASIP evidence remains unchanged.")).toBeInTheDocument();
+  expect(await screen.findByText("Grounded assistance is unavailable. Authoritative ShadowRecon evidence remains unchanged.")).toBeInTheDocument();
   expect(screen.getByText("192.0.2.10")).toBeInTheDocument();
 });
 
@@ -166,7 +166,7 @@ test("presentation treats null and NaN-like strings as missing without hiding se
   });
   render(<App />);
 
-  expect(await screen.findByText("Authoritative ASIP evidence")).toBeInTheDocument();
+  expect(await screen.findByText("Authoritative ShadowRecon evidence")).toBeInTheDocument();
   expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
   expect(screen.getByText("0")).toBeInTheDocument();
   expect(screen.getAllByText("Not observed")).toHaveLength(2);

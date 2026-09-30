@@ -3,7 +3,7 @@ import os
 from db import get_conn, get_latest_authoritative_scan_id
 from risk_engine import calculate_scan_risks
 
-app = FastAPI(title="ASM MCP Server")
+app = FastAPI(title="ShadowRecon MCP Server")
 
 # -------------------------
 # TOOL 1: SUMMARY

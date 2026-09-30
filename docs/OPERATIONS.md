@@ -1,8 +1,8 @@
-# ASIP v0.1.0 Operations Guide
+# ShadowRecon v0.1.0 Operations Guide
 
 ## Status and architecture
 
-ASIP v0.1.0 is an internal alpha. Docker Compose runs PostgreSQL 15, the FastAPI backend/orchestration runtime, the MCP read API, and the React dashboard. The supported scan path is `backend/orchestration.py`; individual workers are not the operator entry point.
+ShadowRecon v0.1.0 is an internal alpha. Docker Compose runs PostgreSQL 15, the FastAPI backend/orchestration runtime, the MCP read API, and the React dashboard. The supported scan path is `backend/orchestration.py`; individual workers are not the operator entry point.
 
 Pipeline:
 
@@ -133,7 +133,7 @@ Boundaries:
 - Ownership confirmation does not grant active scanning.
 - A redirect destination inherits neither ownership nor active-testing authorization.
 - A Review Indicator is evidence for analyst context, not automatically a finding, vulnerability, compromise, or malicious condition.
-- AI Assistance is interpretive and is not authoritative ASIP evidence.
+- AI Assistance is interpretive and is not authoritative ShadowRecon evidence.
 
 T2 active scanning requires all of the existing independent conditions: the asset is `CONFIRMED`, `scannable IS TRUE`, and `validation_source = 'manual'`. Manual approval/rejection is processed by `validation_ingest.py`; ownership review alone never satisfies this gate. Use a separately controlled CSV with columns `domain,validation_status` (`approved` or `rejected`), copy it temporarily into the container, and remove it after processing:
 
@@ -181,7 +181,7 @@ Create and verify a timestamped custom-format archive:
 ./scripts/backup-db.sh /secure/backups/asip-before-upgrade.dump
 ```
 
-The script reads the database identity from the protected local `.env`, never prints the password, refuses to overwrite an archive, validates the archive with `pg_restore --list`, and prints its SHA-256. Store the archive and checksum outside the repository and preferably outside the ASIP host. Keep `.env` limited to shell-compatible `KEY=VALUE` entries.
+The script reads the database identity from the protected local `.env`, never prints the password, refuses to overwrite an archive, validates the archive with `pg_restore --list`, and prints its SHA-256. Store the archive and checksum outside the repository and preferably outside the ShadowRecon host. Keep `.env` limited to shell-compatible `KEY=VALUE` entries.
 
 ## Restore
 
@@ -223,7 +223,7 @@ For operational recovery, stop `backend` and `mcp`, restore into a newly created
 - Analyst attribution, authentication, and RBAC are not implemented.
 - Production security hardening, network isolation, TLS termination, and secret management remain future work.
 - Some richer HTTP/DNS negative-evidence semantics remain maturity work; missing/failed evidence must not be read as a negative observation.
-- AI output is interpretive, non-authoritative, and can be unavailable independently of deterministic ASIP evidence.
+- AI output is interpretive, non-authoritative, and can be unavailable independently of deterministic ShadowRecon evidence.
 - Migration application is manually tracked in v0.1.0.
 - The frontend container uses the Create React App development server; place this internal alpha behind an approved internal access boundary.
 - Backend Python and external recon-tool dependencies are not fully version-pinned; rebuilds may require controlled compatibility validation.

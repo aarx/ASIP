@@ -1,4 +1,4 @@
-# ASIP v0.1.0 Internal-Alpha Release Checklist
+# ShadowRecon v0.1.0 Internal-Alpha Release Checklist
 
 - [ ] `.env` created from `.env.example`, permissions restricted, and no placeholders remain.
 - [ ] All credentials that were ever exposed or committed have been revoked and rotated.

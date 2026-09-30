@@ -126,7 +126,7 @@ def record_source_attempt(source, status, result_count=0, error=None):
 
 
 def print_source_summary():
-    print("\nASIP Recon Source Summary")
+    print("\nShadowRecon Recon Source Summary")
     print("-------------------------")
 
     for source, entry in source_outcomes.items():

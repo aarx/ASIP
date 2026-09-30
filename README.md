@@ -1,6 +1,6 @@
-# ASIP v0.1.0 — Internal Alpha
+# ShadowRecon v0.1.0 — Internal Alpha
 
-ASIP is an internally controlled Attack Surface Management capability for repeated passive discovery, evidence enrichment, deterministic risk prioritization, ownership review, change intelligence, and analyst investigation.
+ShadowRecon is an internally controlled Attack Surface Management capability for repeated passive discovery, evidence enrichment, deterministic risk prioritization, ownership review, change intelligence, and analyst investigation.
 
 This release is an **internal alpha**. It is not internet-hardened or production-ready. Run it only in an approved internal environment and authorize active scanning explicitly.
 
@@ -8,7 +8,7 @@ This release is an **internal alpha**. It is not internet-hardened or production
 
 | Service | Compose name | Local URL | Purpose |
 | --- | --- | --- | --- |
-| Dashboard | `frontend` | <http://localhost:3555> | ASIP V2 analyst interface |
+| Dashboard | `frontend` | <http://localhost:3555> | ShadowRecon analyst interface |
 | API | `backend` | <http://localhost:8555> | FastAPI application and orchestration runtime |
 | MCP | `mcp` | <http://localhost:8666> | Read-only investigation/tool endpoints |
 | PostgreSQL | `db` | internal only | Durable scan, asset, evidence, and risk history |
@@ -40,7 +40,7 @@ curl -fsS http://localhost:3555/ >/dev/null
 curl -fsS http://localhost:8666/tools/summary
 ```
 
-The MCP summary requires a healthy database but may legitimately report no authoritative scan on a fresh installation. AI Assistance also requires the optional configured LLM endpoint; the deterministic ASIP application remains authoritative if the LLM is unavailable.
+The MCP summary requires a healthy database but may legitimately report no authoritative scan on a fresh installation. AI Assistance also requires the optional configured LLM endpoint; the deterministic ShadowRecon application remains authoritative if the LLM is unavailable.
 
 ## Configure inventory and run a scan
 

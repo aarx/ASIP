@@ -158,7 +158,7 @@ export default function AssetExplorerPage({ query }) {
       const url = window.URL.createObjectURL(response.data);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `asip-assets-scan-${data.scan_id}.csv`;
+      link.download = `shadowrecon-assets-scan-${data.scan_id}.csv`;
       document.body.appendChild(link);
       link.click();
       link.remove();

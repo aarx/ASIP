@@ -98,7 +98,7 @@ class GroundedAssetAssistantTests(unittest.TestCase):
         self.assertIn('"shadow_asset"', prompt)
         self.assertIn("Never calculate, modify, or infer a risk score", prompt)
         self.assertEqual(result["action"], "explain_risk")
-        self.assertEqual(result["source"], "ASIP deterministic evidence + Gemma")
+        self.assertEqual(result["source"], "ShadowRecon deterministic evidence + Gemma")
 
     def test_candidate_and_external_never_receive_organizational_risk(self):
         for ownership in ("CANDIDATE", "EXTERNAL"):

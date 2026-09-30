@@ -441,7 +441,7 @@
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
 
-/* ASIP visual refresh: graphite navigation with a calm, light analyst canvas. */
+/* ShadowRecon visual refresh: graphite navigation with a calm, light analyst canvas. */
 .app-shell {
   background: radial-gradient(circle at 78% -10%, rgba(70, 85, 166, .08), transparent 32rem), var(--asip-bg);
 }

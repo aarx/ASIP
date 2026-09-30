@@ -68,7 +68,7 @@ function OwnershipReview({ asset, onChanged, fixtureMode = false }) {
         <div><span>Current ownership</span><StatusBadge value={asset.ownership_status} /></div>
         <p>Confirming ownership does not grant active-scanning authorization. Redirect destinations are never confirmed or authorized by association.</p>
       </div>
-      {fixtureMode && <div className="ownership-review-note">Acceptance fixture decisions remain in this browser view only and never reach ASIP APIs or data.</div>}
+      {fixtureMode && <div className="ownership-review-note">Acceptance fixture decisions remain in this browser view only and never reach ShadowRecon APIs or data.</div>}
       <div className="ownership-review-actions">
         {canConfirm && <Button variant="contained" onClick={() => { setPending("CONFIRMED"); setMessage(""); }}>Confirm Organizational Asset</Button>}
         {canMarkExternal && <Button variant="outlined" color="warning" onClick={() => { setPending("EXTERNAL"); setMessage(""); }}>Mark External / Not Ours</Button>}

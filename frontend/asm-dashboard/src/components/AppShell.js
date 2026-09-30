@@ -30,10 +30,10 @@ export default function AppShell({ activeRoute, routeMeta, children }) {
     <div className="app-shell">
       <aside className="app-sidebar" aria-label="Primary navigation">
         <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true">A//</div>
+          <div className="brand-mark" aria-hidden="true">S//</div>
           <div className="brand-copy">
-            <div className="brand-name">ASIP</div>
-            <div className="brand-subtitle">Attack Surface Intelligence</div>
+            <div className="brand-name">ShadowRecon</div>
+            <div className="brand-subtitle">Attack Surface Management</div>
           </div>
         </div>
 

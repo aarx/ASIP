@@ -206,7 +206,7 @@ class FrontendV2ContractTests(unittest.TestCase):
         exported = list(csv.DictReader(io.StringIO("".join(response.content))))
         self.assertEqual(response.media_type, "text/csv")
         self.assertEqual(response.headers["Content-Disposition"],
-                         'attachment; filename="asip-assets-scan-42.csv"')
+                         'attachment; filename="shadowrecon-assets-scan-42.csv"')
         self.assertEqual(len(exported), 1)
         self.assertEqual(exported[0]["Inventory Status"], "Known")
         self.assertEqual(exported[0]["Risk Reasons"], "finding")

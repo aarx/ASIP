@@ -61,6 +61,7 @@ test("renders the permanent shell and authoritative overview", async () => {
 
   expect(screen.getByText("Loading authoritative state")).toBeInTheDocument();
   expect(await screen.findByText("alpha.example")).toBeInTheDocument();
+  expect(screen.getByText("ShadowRecon")).toBeInTheDocument();
   expect(screen.getByText("Organizational assets")).toBeInTheDocument();
   expect(screen.getByText("Brand perimeter")).toBeInTheDocument();
   expect(screen.getByText("scan 41 → 42")).toBeInTheDocument();

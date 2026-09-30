@@ -43,7 +43,7 @@ function AssetEvidence({ asset, detailHref }) {
   return (
     <div className="investigation-evidence">
       <section className="investigation-identity">
-        <div><span className="identity-kicker">Authoritative ASIP evidence</span><h2>{asset.domain}</h2></div>
+        <div><span className="identity-kicker">Authoritative ShadowRecon evidence</span><h2>{asset.domain}</h2></div>
         <div className="identity-badges"><StatusBadge value={asset.asset_class} /><StatusBadge value={asset.ownership_status} /><a className="context-link" href={detailHref}>Full Asset Detail</a></div>
         <div className="investigation-risk">
           {risk ? <><StatusBadge value={risk.priority} /><strong>{risk.score}</strong><div className="reason-list">{risk.reasons.map((reason) => <span className="reason-token" key={reason}>{reason.replaceAll("_", " ")}</span>)}</div></> : <span>No organizational canonical risk applies to {asset.ownership_status} assets.</span>}
@@ -182,9 +182,9 @@ export default function InvestigationPage({ query }) {
             <div className="assistant-boundary">AI may explain, summarize, or suggest passive review steps. Its prose is not an ASM observation and cannot change risk, ownership, findings, or authorization.</div>
             <div className="assistant-actions">{ACTIONS.map(([action, label]) => <Button key={action} variant={assistant?.action === action ? "contained" : "outlined"} disabled={assistantStatus === "loading"} onClick={() => runAction(action)}>{label}</Button>)}</div>
             {assistantStatus === "idle" && <div className="detail-empty">Choose an action to request a grounded response.</div>}
-            {assistantStatus === "loading" && <div className="assistant-progress" role="status">AI is reviewing supplied ASIP evidence…</div>}
-            {assistantStatus === "error" && <div className="assistant-error" role="alert">Grounded assistance is unavailable. Authoritative ASIP evidence remains unchanged.</div>}
-            {assistantStatus === "ready" && <div className="assistant-response"><div><span>Source</span><strong>Grounded AI · authoritative ASIP context</strong></div><pre>{cleanAIResponse(assistant.response)}</pre></div>}
+            {assistantStatus === "loading" && <div className="assistant-progress" role="status">AI is reviewing supplied ShadowRecon evidence…</div>}
+            {assistantStatus === "error" && <div className="assistant-error" role="alert">Grounded assistance is unavailable. Authoritative ShadowRecon evidence remains unchanged.</div>}
+            {assistantStatus === "ready" && <div className="assistant-response"><div><span>Source</span><strong>Grounded AI · authoritative ShadowRecon context</strong></div><pre>{cleanAIResponse(assistant.response)}</pre></div>}
           </Panel>
         )}
       </div>

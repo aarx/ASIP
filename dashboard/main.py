@@ -3,11 +3,11 @@ from loader import get_dataframe
 from stats import summary_stats, http_status_stats, source_stats, domains_per_seed
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="External Attack Surface API")
+app = FastAPI(title="ShadowRecon Attack Surface Management API")
 
 @app.get("/")
 def home():
-    return {"message": "ASM Dashboard API running"}
+    return {"message": "ShadowRecon Attack Surface Management API running"}
 
 @app.get("/summary")
 def summary():

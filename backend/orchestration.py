@@ -382,7 +382,7 @@ def main():
 
     if lock_conn is None:
         logging.error(
-            "Another ASIP orchestration pipeline is already running; exiting"
+            "Another ShadowRecon orchestration pipeline is already running; exiting"
         )
         sys.exit(1)
 
