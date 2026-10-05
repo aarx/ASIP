@@ -96,10 +96,14 @@ test("explorer loads current assets, applies server filters, and clears them", a
   render(<App />);
 
   expect(await screen.findByText("app.example.com")).toBeInTheDocument();
-  expect(getV2Assets).toHaveBeenCalledWith({ page: 1, limit: 25 });
+  expect(getV2Assets).toHaveBeenCalledWith({ page: 1, limit: 25, sort_by: "domain", sort_dir: "asc" });
   expect(screen.getByText("26")).toBeInTheDocument();
   expect(screen.getByText("SHADOW")).toBeInTheDocument();
   expect(screen.getByText("Example Cloud")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Sort by Priority" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Sort by Risk Score" })).toBeInTheDocument();
+  expect(screen.getByText("8")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Sort by Asset, currently ascending" }).closest("th")).toHaveAttribute("aria-sort", "ascending");
 
   fireEvent.change(screen.getByLabelText("Search domain"), {
     target: { name: "search", value: "login" },
@@ -107,7 +111,7 @@ test("explorer loads current assets, applies server filters, and clears them", a
   fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
 
   await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 1, limit: 25, search: "login",
+    page: 1, limit: 25, search: "login", sort_by: "domain", sort_dir: "asc",
   }));
   expect(await screen.findByText("search: login")).toBeInTheDocument();
 
@@ -124,7 +128,7 @@ test("explorer pagination is server-backed and preserves deterministic ordering"
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
   await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 2, limit: 25, ownership: "CONFIRMED",
+    page: 2, limit: 25, ownership: "CONFIRMED", sort_by: "domain", sort_dir: "asc",
   }));
   expect(screen.getByText("ownership: CONFIRMED")).toBeInTheDocument();
   expect(screen.getByText("Ordered by domain")).toBeInTheDocument();
@@ -136,7 +140,10 @@ test("overview drill-down filters are consumed by the asset explorer", async () 
   render(<App />);
 
   await screen.findByText("app.example.com");
-  expect(getV2Assets).toHaveBeenCalledWith({ page: 1, limit: 25, asset_class: "KNOWN", priority: "High" });
+  expect(getV2Assets).toHaveBeenCalledWith({
+    page: 1, limit: 25, asset_class: "KNOWN", priority: "High",
+    sort_by: "domain", sort_dir: "asc",
+  });
   expect(screen.getByText("asset class: KNOWN")).toBeInTheDocument();
   expect(screen.getByText("priority: High")).toBeInTheDocument();
 });
@@ -157,9 +164,56 @@ test("asset explorer exports the complete filtered authoritative dataset", async
 
   await waitFor(() => expect(exportV2AssetsCsv).toHaveBeenCalledWith({
     asset_class: "SHADOW", provider: "Example Cloud",
+    sort_by: "domain", sort_dir: "asc",
   }));
   expect(createObjectURL).toHaveBeenCalled();
   await waitFor(() => expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled());
+  anchorClick.mockRestore();
+});
+
+test("asset explorer sorts by risk score server-side, resets pagination, and preserves filters", async () => {
+  window.location.hash = "#/assets?search=app&ownership=CONFIRMED&page=3&limit=25";
+  getV2Assets.mockResolvedValue(assetPage);
+  render(<App />);
+
+  await screen.findByText("app.example.com");
+  fireEvent.click(screen.getByRole("button", { name: "Sort by Risk Score" }));
+
+  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 1, limit: 25, search: "app", ownership: "CONFIRMED",
+    sort_by: "risk_score", sort_dir: "desc",
+  }));
+  expect(window.location.hash).toBe(
+    "#/assets?search=app&ownership=CONFIRMED&limit=25&sort_by=risk_score&sort_dir=desc"
+  );
+  expect(screen.getByRole("button", { name: "Sort by Risk Score, currently descending" }).closest("th")).toHaveAttribute("aria-sort", "descending");
+
+  fireEvent.click(screen.getByRole("button", { name: "Sort by Risk Score, currently descending" }));
+  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 1, limit: 25, search: "app", ownership: "CONFIRMED",
+    sort_by: "risk_score", sort_dir: "asc",
+  }));
+  expect(screen.getByRole("button", { name: "Sort by Risk Score, currently ascending" }).closest("th")).toHaveAttribute("aria-sort", "ascending");
+});
+
+test("asset explorer uses canonical priority sorting defaults and keeps selected export ordering", async () => {
+  window.location.hash = "#/assets?provider=Example%20Cloud&limit=25";
+  getV2Assets.mockResolvedValue(assetPage);
+  exportV2AssetsCsv.mockResolvedValue({ data: new Blob(["Domain\r\napp.example.com\r\n"]) });
+  const anchorClick = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  Object.defineProperty(window.URL, "createObjectURL", { configurable: true, value: jest.fn(() => "blob:assets") });
+  Object.defineProperty(window.URL, "revokeObjectURL", { configurable: true, value: jest.fn() });
+  render(<App />);
+
+  await screen.findByText("app.example.com");
+  fireEvent.click(screen.getByRole("button", { name: "Sort by Priority" }));
+  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 1, limit: 25, provider: "Example Cloud", sort_by: "priority", sort_dir: "desc",
+  }));
+  fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+  await waitFor(() => expect(exportV2AssetsCsv).toHaveBeenCalledWith({
+    provider: "Example Cloud", sort_by: "priority", sort_dir: "desc",
+  }));
   anchorClick.mockRestore();
 });
 

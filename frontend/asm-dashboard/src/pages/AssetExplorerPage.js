@@ -13,6 +13,8 @@ import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncStat
 import { displayEvidence, isMissingEvidence } from "../utils/presentation";
 
 const DEFAULT_LIMIT = 25;
+const SORT_DEFAULTS = { domain: "asc", priority: "desc", risk_score: "desc" };
+const SORT_LABELS = { domain: "Asset", priority: "Priority", risk_score: "Risk Score" };
 
 const FILTERS = [
   ["ownership", "Ownership", ["CONFIRMED", "CANDIDATE", "EXTERNAL"]],
@@ -33,13 +35,28 @@ function readFilters(query) {
   };
 }
 
-function explorerHash(filters, page = 1) {
+function readSort(query) {
+  const params = new URLSearchParams(query);
+  const requestedSort = params.get("sort_by");
+  const sortBy = SORT_DEFAULTS[requestedSort] ? requestedSort : "domain";
+  const requestedDirection = params.get("sort_dir");
+  const sortDir = requestedDirection === "asc" || requestedDirection === "desc"
+    ? requestedDirection
+    : SORT_DEFAULTS[sortBy];
+  return { sortBy, sortDir };
+}
+
+function explorerHash(filters, page = 1, sortBy = "domain", sortDir = "asc") {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
     if (value) params.set(key, value);
   });
   if (page > 1) params.set("page", String(page));
   params.set("limit", String(DEFAULT_LIMIT));
+  if (!(sortBy === "domain" && sortDir === "asc")) {
+    params.set("sort_by", sortBy);
+    params.set("sort_dir", sortDir);
+  }
   return `#/assets?${params.toString()}`;
 }
 
@@ -55,14 +72,35 @@ function FilterSelect({ name, label, values, value, onChange }) {
   );
 }
 
-function AssetTable({ assets, returnQuery }) {
+function SortableHeader({ field, sortBy, sortDir, onSort }) {
+  const active = sortBy === field;
+  const direction = sortDir === "asc" ? "↑" : "↓";
+  return (
+    <th aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
+      <button
+        type="button"
+        className="asset-sort-button"
+        onClick={() => onSort(field)}
+        aria-label={`Sort by ${SORT_LABELS[field]}${active ? `, currently ${sortDir === "asc" ? "ascending" : "descending"}` : ""}`}
+      >
+        {SORT_LABELS[field]}{active && <span aria-hidden="true"> {direction}</span>}
+      </button>
+    </th>
+  );
+}
+
+function AssetTable({ assets, returnQuery, sortBy, sortDir, onSort }) {
   return (
     <div className="asset-table-wrap">
       <table className="asset-table">
         <thead>
           <tr>
-            <th>Asset</th><th>Class</th><th>Network</th><th>HTTP</th>
-            <th>Provider / ASN</th><th>Risk</th><th aria-label="Open asset" />
+            <SortableHeader field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+            <th>Class</th><th>Network</th><th>HTTP</th>
+            <th>Provider / ASN</th>
+            <SortableHeader field="priority" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+            <SortableHeader field="risk_score" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+            <th aria-label="Open asset" />
           </tr>
         </thead>
         <tbody>
@@ -91,14 +129,8 @@ function AssetTable({ assets, returnQuery }) {
                   <span>{displayEvidence(asset.provider, "Unknown")}</span>
                   {asset.asn && <span className="asset-secondary">{asset.asn}</span>}
                 </td>
-                <td>
-                  {asset.risk ? (
-                    <div className="table-risk">
-                      <StatusBadge value={asset.risk.priority} />
-                      <span className="risk-score">{asset.risk.score}</span>
-                    </div>
-                  ) : <span className="not-applicable">No org. risk</span>}
-                </td>
+                <td>{asset.risk ? <StatusBadge value={asset.risk.priority} /> : <span className="not-applicable">—</span>}</td>
+                <td><span className="risk-score">{asset.risk ? asset.risk.score : "—"}</span></td>
                 <td><a className="row-action" href={detailHref} aria-label={`Open ${asset.domain}`}>→</a></td>
               </tr>
             );
@@ -111,6 +143,7 @@ function AssetTable({ assets, returnQuery }) {
 
 export default function AssetExplorerPage({ query }) {
   const appliedFilters = useMemo(() => readFilters(query), [query]);
+  const { sortBy, sortDir } = useMemo(() => readSort(query), [query]);
   const urlParams = useMemo(() => new URLSearchParams(query), [query]);
   const page = Math.max(Number(urlParams.get("page")) || 1, 1);
   const limit = Math.min(Math.max(Number(urlParams.get("limit")) || DEFAULT_LIMIT, 1), 200);
@@ -125,7 +158,7 @@ export default function AssetExplorerPage({ query }) {
   useEffect(() => {
     let active = true;
     setStatus("loading");
-    const params = { page, limit };
+    const params = { page, limit, sort_by: sortBy, sort_dir: sortDir };
     Object.entries(appliedFilters).forEach(([key, value]) => {
       if (value) params[key] = value;
     });
@@ -135,23 +168,31 @@ export default function AssetExplorerPage({ query }) {
       })
       .catch(() => { if (active) setStatus("error"); });
     return () => { active = false; };
-  }, [appliedFilters, limit, page, requestVersion]);
+  }, [appliedFilters, limit, page, requestVersion, sortBy, sortDir]);
 
   const updateDraft = (event) => setDraft((current) => ({
     ...current, [event.target.name]: event.target.value,
   }));
   const applyFilters = (event) => {
     event.preventDefault();
-    window.location.hash = explorerHash(draft, 1);
+    window.location.hash = explorerHash(draft, 1, sortBy, sortDir);
   };
-  const clearFilters = () => { window.location.hash = explorerHash(readFilters(""), 1); };
-  const movePage = (nextPage) => { window.location.hash = explorerHash(appliedFilters, nextPage); };
+  const clearFilters = () => { window.location.hash = explorerHash(readFilters(""), 1, sortBy, sortDir); };
+  const movePage = (nextPage) => { window.location.hash = explorerHash(appliedFilters, nextPage, sortBy, sortDir); };
+  const changeSort = (nextSortBy) => {
+    const nextSortDir = sortBy === nextSortBy
+      ? (sortDir === "asc" ? "desc" : "asc")
+      : SORT_DEFAULTS[nextSortBy];
+    window.location.hash = explorerHash(appliedFilters, 1, nextSortBy, nextSortDir);
+  };
   const exportAssets = async () => {
     setExportStatus("loading");
     const params = {};
     Object.entries(appliedFilters).forEach(([key, value]) => {
       if (value) params[key] = value;
     });
+    params.sort_by = sortBy;
+    params.sort_dir = sortDir;
 
     try {
       const response = await exportV2AssetsCsv(params);
@@ -216,7 +257,7 @@ export default function AssetExplorerPage({ query }) {
           {status === "ready" && data?.scan_id != null && <span> · authoritative scan #{data.scan_id}</span>}
         </div>
         <div className="asset-results-actions">
-          <span>Ordered by domain</span>
+          <span>Ordered by {sortBy === "domain" ? "domain" : SORT_LABELS[sortBy].toLowerCase()}</span>
           <Button
             size="small"
             variant="outlined"
@@ -235,7 +276,15 @@ export default function AssetExplorerPage({ query }) {
       {status === "ready" && data?.scan_id != null && data.assets.length === 0 && (
         <EmptyState title="No assets match these filters" copy="Clear or adjust the active filters to broaden the current authoritative result set." />
       )}
-      {status === "ready" && data?.assets?.length > 0 && <AssetTable assets={data.assets} returnQuery={query} />}
+      {status === "ready" && data?.assets?.length > 0 && (
+        <AssetTable
+          assets={data.assets}
+          returnQuery={query}
+          sortBy={sortBy}
+          sortDir={sortDir}
+          onSort={changeSort}
+        />
+      )}
 
       {status === "ready" && data?.scan_id != null && data.count > 0 && (
         <div className="pagination-bar">

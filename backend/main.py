@@ -2002,6 +2002,63 @@ def _frontend_inventory_status(ownership_status, is_known):
     return ""
 
 
+_FRONTEND_ASSET_SORT_FIELDS = frozenset({"domain", "priority", "risk_score"})
+_FRONTEND_ASSET_SORT_DIRECTIONS = frozenset({"asc", "desc"})
+_FRONTEND_PRIORITY_RANK = {
+    "Low": 0,
+    "Review": 1,
+    "Elevated": 2,
+    "High": 3,
+}
+
+
+def _frontend_sort_options(sort_by=None, sort_dir=None):
+    sort_by = "domain" if sort_by is None else sort_by
+    sort_dir = "asc" if sort_dir is None else sort_dir
+    if sort_by not in _FRONTEND_ASSET_SORT_FIELDS:
+        raise HTTPException(
+            status_code=400,
+            detail="sort_by must be one of: domain, priority, risk_score",
+        )
+    if sort_dir not in _FRONTEND_ASSET_SORT_DIRECTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="sort_dir must be one of: asc, desc",
+        )
+    return sort_by, sort_dir
+
+
+def _frontend_asset_sort_key(asset, sort_by, sort_dir):
+    domain = (asset.get("domain") or "").casefold()
+    if sort_by == "domain":
+        return domain
+
+    risk = asset.get("risk")
+    if sort_by == "priority":
+        priority = risk.get("priority") if risk else None
+        rank = _FRONTEND_PRIORITY_RANK.get(priority)
+        if rank is None:
+            return (1, 0, domain)
+        return (0, rank if sort_dir == "asc" else -rank, domain)
+
+    score = risk.get("score") if risk else None
+    if score is None:
+        return (1, 0, domain)
+    return (0, score if sort_dir == "asc" else -score, domain)
+
+
+def _frontend_sort_items(items, sort_by=None, sort_dir=None, asset_getter=None):
+    sort_by, sort_dir = _frontend_sort_options(sort_by, sort_dir)
+    asset_getter = asset_getter or (lambda item: item)
+    return sorted(
+        items,
+        key=lambda item: _frontend_asset_sort_key(
+            asset_getter(item), sort_by, sort_dir
+        ),
+        reverse=sort_by == "domain" and sort_dir == "desc",
+    )
+
+
 def _url_hostname(value):
     try:
         hostname = urlparse(str(value or "").strip()).hostname
@@ -2134,9 +2191,12 @@ def frontend_v2_assets(
     priority: str = None,
     provider: str = None,
     http_observation_status: str = None,
+    sort_by: str = None,
+    sort_dir: str = None,
 ):
     page = max(page, 1)
     limit = min(max(limit, 1), 200)
+    sort_by, sort_dir = _frontend_sort_options(sort_by, sort_dir)
 
     conn = get_conn()
     cur = conn.cursor()
@@ -2205,12 +2265,15 @@ def frontend_v2_assets(
             "risk": _frontend_risk_payload(risk),
         })
 
+    assets = _frontend_sort_items(assets, sort_by, sort_dir)
     total = len(assets)
     offset = (page - 1) * limit
     return {
         "scan_id": scan_id,
         "page": page,
         "limit": limit,
+        "sort_by": sort_by,
+        "sort_dir": sort_dir,
         "count": total,
         "assets": assets[offset:offset + limit],
     }
@@ -2224,7 +2287,10 @@ def frontend_v2_assets_export(
     priority: str = None,
     provider: str = None,
     http_observation_status: str = None,
+    sort_by: str = None,
+    sort_dir: str = None,
 ):
+    sort_by, sort_dir = _frontend_sort_options(sort_by, sort_dir)
     conn = get_conn()
     cur = conn.cursor()
     scan_id = get_latest_authoritative_scan_id(cur)
@@ -2285,6 +2351,7 @@ def frontend_v2_assets_export(
         "Risk Reasons", "First Seen", "Last Seen", "Authoritative Scan",
     ])
 
+    export_rows = []
     for row in rows:
         (
             domain_id, domain, is_known, ownership_status,
@@ -2301,6 +2368,24 @@ def frontend_v2_assets_export(
         ):
             continue
 
+        export_rows.append((
+            row,
+            {
+                "domain": domain,
+                "risk": _frontend_risk_payload(risk),
+            },
+        ))
+
+    for row, _sort_asset in _frontend_sort_items(
+        export_rows, sort_by, sort_dir, asset_getter=lambda entry: entry[1]
+    ):
+        (
+            domain_id, domain, is_known, ownership_status,
+            first_seen, last_seen, ip, _has_ip, http_outcome, http_status,
+            title, final_url, asset_provider, asn, ports, technologies,
+            findings,
+        ) = row
+        risk = risk_by_domain.get(domain_id)
         writer.writerow([
             domain,
             ownership_status,

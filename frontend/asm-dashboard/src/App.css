@@ -164,15 +164,19 @@
 .pagination-bar > div { display: flex; gap: 8px; }
 
 .asset-table-wrap { overflow-x: auto; border: 1px solid var(--asip-border); border-radius: var(--asip-radius); background: rgba(16, 29, 47, .92); box-shadow: var(--asip-shadow); }
-.asset-table { width: 100%; min-width: 1040px; border-collapse: collapse; table-layout: fixed; }
+.asset-table { width: 100%; min-width: 1160px; border-collapse: collapse; table-layout: fixed; }
 .asset-table th { padding: 11px 14px; border-bottom: 1px solid var(--asip-border); background: rgba(7, 16, 29, .38); color: #718499; font-size: 9px; font-weight: 750; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
-.asset-table th:nth-child(1) { width: 23%; }
-.asset-table th:nth-child(2) { width: 12%; }
-.asset-table th:nth-child(3) { width: 15%; }
-.asset-table th:nth-child(4) { width: 13%; }
-.asset-table th:nth-child(5) { width: 19%; }
-.asset-table th:nth-child(6) { width: 14%; }
-.asset-table th:last-child { width: 4%; }
+.asset-sort-button { padding: 4px 0; border: 0; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; text-align: left; text-transform: inherit; cursor: pointer; }
+.asset-sort-button:hover, .asset-sort-button:focus-visible { color: var(--asip-accent-bright); outline: none; }
+.asset-sort-button:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
+.asset-table th:nth-child(1) { width: 21%; }
+.asset-table th:nth-child(2) { width: 11%; }
+.asset-table th:nth-child(3) { width: 14%; }
+.asset-table th:nth-child(4) { width: 12%; }
+.asset-table th:nth-child(5) { width: 17%; }
+.asset-table th:nth-child(6) { width: 10%; }
+.asset-table th:nth-child(7) { width: 10%; }
+.asset-table th:last-child { width: 5%; }
 .asset-table td { height: 62px; padding: 9px 14px; border-bottom: 1px solid rgba(115, 142, 170, .09); color: var(--asip-text-secondary); font-size: 11px; vertical-align: middle; }
 .asset-table tbody tr:last-child td { border-bottom: 0; }
 .asset-table tbody tr { transition: background 100ms ease; }

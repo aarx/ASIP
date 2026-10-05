@@ -227,7 +227,101 @@ class FrontendV2ContractTests(unittest.TestCase):
         exported = list(csv.DictReader(io.StringIO("".join(response.content))))
         self.assertEqual(
             [row["Inventory Status"] for row in exported],
-            ["Known", "Shadow", "Candidate", "External"],
+            ["Candidate", "External", "Known", "Shadow"],
+        )
+
+    def test_asset_explorer_sorting_is_filtered_before_pagination(self):
+        rows = [
+            (1, "zulu.example", False, "CONFIRMED", 10, 42, "192.0.2.1", True, "RESPONDED", 200, None, None, "Cloud", "AS64501"),
+            (2, "beta.example", True, "CONFIRMED", 10, 42, "192.0.2.2", True, "RESPONDED", 200, None, None, "Cloud", "AS64502"),
+            (3, "alpha.example", False, "CONFIRMED", 10, 42, "192.0.2.3", True, "RESPONDED", 200, None, None, "Cloud", "AS64503"),
+            (4, "charlie.example", True, "CONFIRMED", 10, 42, "192.0.2.4", True, "RESPONDED", 200, None, None, "Cloud", "AS64504"),
+            (5, "delta.example", True, "CONFIRMED", 10, 42, "192.0.2.5", True, "RESPONDED", 200, None, None, "Cloud", "AS64505"),
+            (6, "candidate.example", False, "CANDIDATE", 42, 42, None, False, "UNKNOWN", None, None, None, "Unknown", None),
+        ]
+        risks = [
+            risk(1, "zulu.example", 4, "Review"),
+            risk(2, "beta.example", 8, "High"),
+            risk(3, "alpha.example", 8, "High"),
+            risk(4, "charlie.example", 6, "Elevated"),
+            risk(5, "delta.example", 1, "Low"),
+        ]
+
+        def query(**kwargs):
+            cursor = QueueCursor(fetchalls=[rows])
+            self.main.get_conn = lambda: FakeConnection(cursor)
+            self.main.calculate_scan_risks = mock.Mock(return_value=risks)
+            return self.main.frontend_v2_assets(**kwargs)
+
+        self.assertEqual(
+            [asset["domain"] for asset in query(limit=2)["assets"]],
+            ["alpha.example", "beta.example"],
+        )
+        self.assertEqual(
+            [asset["domain"] for asset in query(sort_by="domain", sort_dir="desc")["assets"]],
+            ["zulu.example", "delta.example", "charlie.example", "candidate.example", "beta.example", "alpha.example"],
+        )
+        self.assertEqual(
+            [asset["domain"] for asset in query(sort_by="risk_score", sort_dir="desc")["assets"]],
+            ["alpha.example", "beta.example", "charlie.example", "zulu.example", "delta.example", "candidate.example"],
+        )
+        self.assertEqual(
+            [asset["domain"] for asset in query(sort_by="risk_score", sort_dir="asc")["assets"]],
+            ["delta.example", "zulu.example", "charlie.example", "alpha.example", "beta.example", "candidate.example"],
+        )
+        self.assertEqual(
+            [asset["domain"] for asset in query(sort_by="priority", sort_dir="desc")["assets"]],
+            ["alpha.example", "beta.example", "charlie.example", "zulu.example", "delta.example", "candidate.example"],
+        )
+        self.assertEqual(
+            [asset["domain"] for asset in query(sort_by="priority", sort_dir="asc")["assets"]],
+            ["delta.example", "zulu.example", "charlie.example", "alpha.example", "beta.example", "candidate.example"],
+        )
+        self.assertEqual(
+            [asset["domain"] for asset in query(sort_by="risk_score", sort_dir="desc", page=2, limit=2)["assets"]],
+            ["charlie.example", "zulu.example"],
+        )
+        self.assertEqual(
+            [asset["domain"] for asset in query(asset_class="SHADOW", sort_by="priority", sort_dir="desc")["assets"]],
+            ["alpha.example", "zulu.example"],
+        )
+
+        with self.assertRaisesRegex(self.main.HTTPException, "sort_by"):
+            query(sort_by="provider")
+        with self.assertRaisesRegex(self.main.HTTPException, "sort_dir"):
+            query(sort_by="domain", sort_dir="sideways")
+
+    def test_asset_export_respects_selected_sort_order_without_pagination(self):
+        rows = [
+            (*row, "", "", "")
+            for row in [
+                (1, "zulu.example", False, "CONFIRMED", 10, 42, "192.0.2.1", True, "RESPONDED", 200, None, None, "Cloud", "AS64501"),
+                (2, "beta.example", True, "CONFIRMED", 10, 42, "192.0.2.2", True, "RESPONDED", 200, None, None, "Cloud", "AS64502"),
+                (3, "alpha.example", False, "CONFIRMED", 10, 42, "192.0.2.3", True, "RESPONDED", 200, None, None, "Cloud", "AS64503"),
+                (4, "charlie.example", True, "CONFIRMED", 10, 42, "192.0.2.4", True, "RESPONDED", 200, None, None, "Cloud", "AS64504"),
+                (5, "delta.example", True, "CONFIRMED", 10, 42, "192.0.2.5", True, "RESPONDED", 200, None, None, "Cloud", "AS64505"),
+                (6, "candidate.example", False, "CANDIDATE", 42, 42, None, False, "UNKNOWN", None, None, None, "Unknown", None),
+            ]
+        ]
+        cursor = QueueCursor(fetchalls=[rows])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        self.main.calculate_scan_risks = mock.Mock(return_value=[
+            risk(1, "zulu.example", 4, "Review"),
+            risk(2, "beta.example", 8, "High"),
+            risk(3, "alpha.example", 8, "High"),
+            risk(4, "charlie.example", 6, "Elevated"),
+            risk(5, "delta.example", 1, "Low"),
+        ])
+
+        with mock.patch.object(self.main, "StreamingResponse", CapturedStreamingResponse):
+            response = self.main.frontend_v2_assets_export(
+                sort_by="priority", sort_dir="asc"
+            )
+
+        exported = list(csv.DictReader(io.StringIO("".join(response.content))))
+        self.assertEqual(
+            [row["Domain"] for row in exported],
+            ["delta.example", "zulu.example", "charlie.example", "alpha.example", "beta.example", "candidate.example"],
         )
 
     def test_asset_export_requires_an_authoritative_scan(self):
