@@ -20,6 +20,210 @@ function DetailEmpty({ children, compact = false }) {
   return <div className={compact ? "detail-empty compact" : "detail-empty"}>{children}</div>;
 }
 
+function humanizeStatus(value, fallback = "Unknown") {
+  if (value === null || value === undefined || value === "") return fallback;
+  return String(value)
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function statusTone(value) {
+  return String(value || "unknown").toLowerCase().replaceAll("_", "-");
+}
+
+function TechnologyStatus({ value, tone }) {
+  return <span className={`technology-status technology-status-${tone || statusTone(value)}`}>{value}</span>;
+}
+
+function technologyRows(technologies, observations) {
+  const structured = Array.isArray(observations)
+    ? observations.filter((observation) => observation && observation.technology)
+    : [];
+  const structuredNames = new Set(
+    structured.map((observation) => String(observation.technology).trim().toLowerCase())
+  );
+  const legacy = Array.isArray(technologies)
+    ? technologies.filter(Boolean).filter((technology, index, values) => (
+      values.findIndex((item) => String(item).trim().toLowerCase() === String(technology).trim().toLowerCase()) === index
+      && !structuredNames.has(String(technology).trim().toLowerCase())
+    ))
+    : [];
+
+  return [
+    ...structured.map((observation, index) => ({
+      key: `structured-${index}`,
+      technology: observation.technology,
+      observation,
+    })),
+    ...legacy.map((technology, index) => ({
+      key: `legacy-${index}-${technology}`,
+      technology,
+      observation: null,
+    })),
+  ];
+}
+
+function lifecycleSummary(observation) {
+  if (!observation) return { label: "Not assessed", tone: "not-assessed" };
+  const status = observation.lifecycle?.status;
+  const labels = {
+    active_support: "Active support",
+    security_support: "Security support",
+    end_of_life: "End of life",
+    unknown: "Unknown",
+  };
+  return status && labels[status]
+    ? { label: labels[status], tone: statusTone(status) }
+    : { label: "Not assessed", tone: "not-assessed" };
+}
+
+function cveSummary(observation) {
+  const intelligence = observation?.cve_intelligence;
+  if (!intelligence) return { label: "Not assessed", tone: "not-assessed" };
+  const candidates = Array.isArray(intelligence.candidates) ? intelligence.candidates : [];
+  const potentialCount = candidates.filter((candidate) => candidate?.applicability_status === "potentially_affected").length;
+  if (potentialCount) {
+    return {
+      label: `${potentialCount} Potential CVE${potentialCount === 1 ? "" : "s"}`,
+      tone: "potential-cve",
+    };
+  }
+  if (candidates.some((candidate) => candidate?.applicability_status === "insufficient_evidence")) {
+    return { label: "Insufficient evidence", tone: "insufficient-evidence" };
+  }
+  return { label: "No local candidates", tone: "no-candidates" };
+}
+
+function applicabilityLabel(status) {
+  if (status === "potentially_affected") return "Potential CVE";
+  if (status === "insufficient_evidence") return "Insufficient evidence";
+  if (status === "not_affected_by_version") return "Not affected by reported version";
+  return humanizeStatus(status);
+}
+
+function TechnologyDetails({ observation }) {
+  const lifecycle = observation.lifecycle;
+  const intelligence = observation.cve_intelligence;
+  const candidates = Array.isArray(intelligence?.candidates) ? intelligence.candidates : [];
+
+  return (
+    <details className="technology-details">
+      <summary>Technical details</summary>
+      <div className="technology-details-body">
+        <div className="technology-detail-grid">
+          <EvidenceRow label="Detection confidence" value={observation.confidence} />
+          <EvidenceRow label="Evidence type" value={observation.evidence_type} />
+          <EvidenceRow label="Sanitized evidence" value={observation.sanitized_evidence} mono wide />
+          <EvidenceRow label="Observed URL" value={observation.observed_url} mono wide />
+          <EvidenceRow label="Detector version" value={observation.detector_version} mono />
+        </div>
+
+        {lifecycle && (
+          <div className="technology-subsection">
+            <div className="subsection-heading">Support lifecycle</div>
+            <div className="technology-detail-grid">
+              <EvidenceRow label="Status" value={lifecycleSummary(observation).label} />
+              <EvidenceRow label="Release branch" value={lifecycle.matched_release_branch} mono />
+              <EvidenceRow label="Active support until" value={lifecycle.active_support_until} mono />
+              <EvidenceRow label="Security support until" value={lifecycle.security_support_until} mono />
+              <EvidenceRow label="End of life" value={lifecycle.end_of_life} mono />
+              <EvidenceRow label="Assessment date" value={lifecycle.assessment_date} mono />
+              <EvidenceRow label="Source" value={lifecycle.source_url} mono wide />
+            </div>
+          </div>
+        )}
+
+        {intelligence && (
+          <div className="technology-subsection">
+            <div className="subsection-heading">Potential CVE intelligence</div>
+            <div className="technology-detail-grid">
+              <EvidenceRow label="Coverage" value={humanizeStatus(intelligence.coverage)} />
+              <EvidenceRow label="Assessment date" value={intelligence.assessment_date} mono />
+              <EvidenceRow label="Dataset revision" value={intelligence.dataset_revision} mono />
+            </div>
+            {candidates.length ? (
+              <div className="technology-cve-list">
+                {candidates.map((candidate, index) => (
+                  <div className="technology-cve-row" key={`${candidate.cve_id || "candidate"}-${index}`}>
+                    <div className="technology-cve-heading">
+                      <strong>{candidate.cve_id || "Unidentified advisory"}</strong>
+                      <TechnologyStatus
+                        value={applicabilityLabel(candidate.applicability_status)}
+                        tone={statusTone(candidate.applicability_status)}
+                      />
+                    </div>
+                    <div className="technology-detail-grid">
+                      <EvidenceRow label="Reported version" value={candidate.reported_version} mono />
+                      <EvidenceRow label="Affected range" value={candidate.affected_version_range} mono />
+                      <EvidenceRow label="Fixed version" value={candidate.fixed_version} mono />
+                      <EvidenceRow label="Evidence confidence" value={humanizeStatus(candidate.evidence_confidence)} />
+                      <EvidenceRow label="Patch status" value={humanizeStatus(candidate.patch_status)} />
+                      <EvidenceRow label="Explanation" value={humanizeStatus(candidate.explanation_code)} />
+                      {candidate.source_url && (
+                        <div className="evidence-row evidence-wide">
+                          <span className="evidence-label">Advisory source</span>
+                          <a className="technology-source-link technical-value" href={candidate.source_url} target="_blank" rel="noreferrer">
+                            {candidate.source_url}
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <DetailEmpty compact>No local CVE candidates were returned. This does not establish that no vulnerabilities exist.</DetailEmpty>
+            )}
+          </div>
+        )}
+
+        <p className="technology-boundary-note">Reported technology and version evidence do not verify the installed runtime, patch state, configuration, or exploitability.</p>
+      </div>
+    </details>
+  );
+}
+
+function TechnologyIntelligence({ technologies, observations }) {
+  const rows = technologyRows(technologies, observations);
+  const hasPartialCoverage = rows.some(({ observation }) => observation?.cve_intelligence?.coverage === "partial");
+
+  return (
+    <Panel title="Technology Intelligence" subtitle="Reported current-scan technology and advisory context; not verification" className="detail-panel detail-panel-wide">
+      {hasPartialCoverage && (
+        <div className="technology-coverage-note" role="note">
+          Local CVE advisory coverage is partial. No local candidate does not mean no vulnerabilities exist.
+        </div>
+      )}
+      {rows.length ? (
+        <div className="technology-table-wrap">
+          <table className="technology-table">
+            <thead>
+              <tr><th>Technology</th><th>Version</th><th>Support</th><th>Potential CVEs</th><th aria-label="Details" /></tr>
+            </thead>
+            <tbody>
+              {rows.map(({ key, technology, observation }) => {
+                const lifecycle = lifecycleSummary(observation);
+                const cves = cveSummary(observation);
+                return (
+                  <tr key={key}>
+                    <td data-label="Technology"><strong>{displayEvidence(technology)}</strong></td>
+                    <td data-label="Version" className="technical-value">{observation ? displayEvidence(observation.version, "Version unavailable") : "—"}</td>
+                    <td data-label="Support"><TechnologyStatus value={lifecycle.label} tone={lifecycle.tone} /></td>
+                    <td data-label="Potential CVEs"><TechnologyStatus value={cves.label} tone={cves.tone} /></td>
+                    <td data-label="Details">
+                      {observation ? <TechnologyDetails observation={observation} /> : <span className="technology-legacy-note">No structured observation</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : <DetailEmpty>No technology evidence available.</DetailEmpty>}
+    </Panel>
+  );
+}
+
 function redirectBoundary(domain, finalUrl) {
   if (!finalUrl) return null;
   try {
@@ -244,11 +448,10 @@ export default function AssetDetailPage({ domain, returnQuery }) {
           )}
         </Panel>
 
-        <Panel title="Technology" subtitle="Detected current-scan technologies" className="detail-panel">
-          {data.technologies?.length ? (
-            <div className="technology-list">{data.technologies.map((tech) => <span key={tech}>{tech}</span>)}</div>
-          ) : <DetailEmpty>No technology evidence available.</DetailEmpty>}
-        </Panel>
+        <TechnologyIntelligence
+          technologies={data.technologies}
+          observations={data.technology_observations}
+        />
 
         <Panel title="Certificate" subtitle="Observed certificate metadata" className="detail-panel">
           {data.certificate ? (

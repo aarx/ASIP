@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
 import {
   exportV2AssetsCsv,
@@ -81,6 +81,74 @@ const candidateDetail = {
   certificate: { expiry_date: "2027-01-01", days_to_expiry: 98, status: "valid" },
   discovery: { sources: [{ source: "brand_tld", seed: "example.com" }] },
   findings: [{ finding: "redirect_review", severity: "MEDIUM", evidence: "external target" }],
+};
+
+const technologyDetail = {
+  ...candidateDetail,
+  domain: "technology.example",
+  ownership_status: "CONFIRMED",
+  asset_class: "KNOWN",
+  is_known: true,
+  technologies: ["nginx", "php"],
+  technology_observations: [
+    {
+      technology: "php",
+      version: "8.2.34",
+      confidence: "high",
+      evidence_type: "x-powered-by_header",
+      sanitized_evidence: "PHP/8.2.34",
+      observed_url: "https://technology.example",
+      detector_version: "sr-tech-02",
+      lifecycle: {
+        status: "security_support",
+        matched_release_branch: "8.2",
+        active_support_until: "2024-12-31",
+        security_support_until: "2026-12-31",
+        end_of_life: "2026-12-31",
+        source_url: "https://www.php.net/supported-versions.php",
+        dataset_revision: "2026-10-28",
+        assessment_date: "2026-10-28",
+      },
+      cve_intelligence: {
+        assessment_date: "2026-10-28",
+        dataset_revision: "2026-10-28",
+        coverage: "partial",
+        candidates: [
+          {
+            cve_id: "CVE-2026-109618",
+            applicability_status: "potentially_affected",
+            reported_version: "8.2.34",
+            affected_version_range: "< 8.2.35 (PHP 8.2 branch)",
+            fixed_version: "8.2.35",
+            source_url: "https://example.test/cve-2026-109618",
+            evidence_confidence: "high_version_range_match",
+            patch_status: "unknown",
+            explanation_code: "php_version_within_verified_affected_range",
+          },
+        ],
+      },
+    },
+    {
+      technology: "php",
+      version: "8.1.0",
+      confidence: "medium",
+      evidence_type: "server_header",
+      sanitized_evidence: "PHP/8.1.0",
+      observed_url: "https://technology.example",
+      detector_version: "sr-tech-02",
+      lifecycle: { status: "unknown" },
+      cve_intelligence: { coverage: "partial", candidates: [] },
+    },
+    {
+      technology: "nginx",
+      version: null,
+      confidence: "low",
+      evidence_type: "server_header",
+      sanitized_evidence: "nginx",
+      observed_url: "https://technology.example",
+      detector_version: "sr-tech-02",
+    },
+  ],
 };
 
 beforeEach(() => {
@@ -238,6 +306,62 @@ test("asset detail renders exact evidence and no risk for a Candidate", async ()
   expect(screen.getByRole("link", { name: "← Back to Assets" })).toHaveAttribute(
     "href", "#/assets?ownership=CANDIDATE&limit=25"
   );
+});
+
+test("asset detail renders technology intelligence and expands structured evidence", async () => {
+  window.location.hash = "#/assets/technology.example";
+  getV2AssetDetail.mockResolvedValue(technologyDetail);
+  render(<App />);
+
+  expect(await screen.findByText("Technology Intelligence")).toBeInTheDocument();
+  expect(screen.getByText("Technology")).toBeInTheDocument();
+  expect(screen.getAllByText("8.2.34")).toHaveLength(2);
+  expect(screen.getAllByText("Security support")).toHaveLength(2);
+  expect(screen.getByText("1 Potential CVE")).toBeInTheDocument();
+  expect(screen.getByText("No local candidates")).toBeInTheDocument();
+  expect(screen.getByText("Version unavailable")).toBeInTheDocument();
+  expect(screen.getByText(/Local CVE advisory coverage is partial/)).toBeInTheDocument();
+  expect(screen.getAllByText("php")).toHaveLength(2);
+
+  const nginxRow = screen.getAllByText("nginx")[0].closest("tr");
+  expect(within(nginxRow).getAllByText("Not assessed")).toHaveLength(2);
+
+  const phpRow = screen.getAllByText("8.2.34")[0].closest("tr");
+  const details = within(phpRow).getByText("Technical details").closest("details");
+  expect(details).not.toHaveAttribute("open");
+  fireEvent.click(within(phpRow).getByText("Technical details"));
+  expect(details).toHaveAttribute("open");
+  expect(within(details).getByText("PHP/8.2.34")).toBeInTheDocument();
+  expect(within(details).getByText("CVE-2026-109618")).toBeInTheDocument();
+  expect(within(details).getByText("Unknown")).toBeInTheDocument();
+  expect(within(details).getByRole("link", { name: "https://example.test/cve-2026-109618" })).toHaveAttribute(
+    "href", "https://example.test/cve-2026-109618"
+  );
+});
+
+test("asset detail preserves legacy-only technology labels and empty states", async () => {
+  window.location.hash = "#/assets/legacy.example";
+  getV2AssetDetail.mockResolvedValue({
+    ...candidateDetail,
+    domain: "legacy.example",
+    technologies: ["Apache HTTP Server", "Apache HTTP Server"],
+    technology_observations: [],
+  });
+  render(<App />);
+
+  expect(await screen.findByText("Apache HTTP Server")).toBeInTheDocument();
+  expect(screen.getAllByText("Not assessed")).toHaveLength(2);
+  expect(screen.getByText("No structured observation")).toBeInTheDocument();
+
+  getV2AssetDetail.mockResolvedValueOnce({
+    ...candidateDetail,
+    domain: "empty.example",
+    technologies: [],
+    technology_observations: [],
+  });
+  window.location.hash = "#/assets/empty.example";
+  fireEvent(window, new HashChangeEvent("hashchange"));
+  expect(await screen.findByText("No technology evidence available.")).toBeInTheDocument();
 });
 
 test("ownership review confirms only after confirmation and refreshes classification", async () => {

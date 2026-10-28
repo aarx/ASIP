@@ -221,6 +221,35 @@
 .port-token strong { color: var(--asip-accent-bright); font-family: var(--asip-font-mono); font-size: 11px; }
 .port-token span { color: var(--asip-text-muted); font-size: 9px; }
 .technology-list span { padding: 6px 9px; border: 1px solid rgba(61, 196, 255, .16); border-radius: 4px; background: rgba(61, 196, 255, .05); color: #9bc8dc; font-size: 10px; }
+.technology-table-wrap { width: 100%; overflow-x: auto; }
+.technology-table { width: 100%; border-collapse: collapse; }
+.technology-table th { padding: 0 9px 10px; color: #718499; font-size: 9px; font-weight: 750; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
+.technology-table td { padding: 11px 9px; border-top: 1px solid rgba(115, 142, 170, .09); color: var(--asip-text-secondary); font-size: 10px; vertical-align: top; }
+.technology-table td:first-child { color: var(--asip-text-primary); }
+.technology-table td:nth-child(2) { white-space: nowrap; }
+.technology-table tbody tr:hover { background: rgba(61, 196, 255, .025); }
+.technology-table td:last-child { width: 150px; }
+.technology-table strong { font-size: 11px; }
+.technology-status { display: inline-flex; max-width: 100%; padding: 4px 7px; border: 1px solid rgba(115, 142, 170, .22); border-radius: 4px; color: var(--asip-text-secondary); font-size: 9px; line-height: 1.25; white-space: normal; }
+.technology-status-active-support, .technology-status-security-support { border-color: rgba(57, 203, 145, .28); background: rgba(57, 203, 145, .07); color: #78ddb4; }
+.technology-status-end-of-life, .technology-status-potentially-affected { border-color: rgba(231, 168, 75, .3); background: rgba(231, 168, 75, .07); color: #e2bd7c; }
+.technology-status-potential-cve { border-color: rgba(231, 168, 75, .3); background: rgba(231, 168, 75, .07); color: #e2bd7c; }
+.technology-status-insufficient-evidence, .technology-status-unknown, .technology-status-not-assessed, .technology-status-no-candidates { border-color: rgba(115, 142, 170, .22); background: rgba(115, 142, 170, .06); color: var(--asip-text-muted); }
+.technology-details { min-width: 120px; }
+.technology-details summary { color: var(--asip-accent-bright); cursor: pointer; font-size: 9px; font-weight: 700; list-style-position: inside; }
+.technology-details summary:hover, .technology-details summary:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
+.technology-details-body { min-width: 430px; margin-top: 12px; padding: 13px; border: 1px solid rgba(115, 142, 170, .14); border-radius: 5px; background: rgba(7, 15, 27, .22); }
+.technology-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; }
+.technology-subsection { margin-top: 15px; padding-top: 4px; border-top: 1px solid rgba(115, 142, 170, .12); }
+.technology-cve-list { display: grid; gap: 10px; }
+.technology-cve-row { padding-top: 10px; border-top: 1px solid rgba(115, 142, 170, .1); }
+.technology-cve-row:first-child { border-top: 0; }
+.technology-cve-heading { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.technology-cve-heading strong { color: var(--asip-text-primary); font-family: var(--asip-font-mono); font-size: 10px; }
+.technology-source-link { color: var(--asip-accent-bright); font-size: 9px; line-height: 1.45; overflow-wrap: anywhere; }
+.technology-coverage-note, .technology-boundary-note { margin: 0 0 13px; padding: 10px 12px; border-left: 3px solid rgba(231, 168, 75, .65); background: rgba(231, 168, 75, .035); color: var(--asip-text-muted); font-size: 10px; line-height: 1.5; }
+.technology-boundary-note { margin: 15px 0 0; border-left-color: rgba(61, 196, 255, .55); background: rgba(61, 196, 255, .035); }
+.technology-legacy-note { color: var(--asip-text-muted); font-size: 9px; font-style: italic; }
 .detail-empty { padding: 22px 0; color: var(--asip-text-muted); font-size: 10px; }
 .detail-empty.compact { padding: 4px 0; }
 
@@ -427,6 +456,18 @@
   .evidence-grid { grid-template-columns: 1fr; }
   .ownership-review-summary { grid-template-columns: 1fr; }
   .evidence-wide { grid-column: auto; }
+  .technology-table, .technology-table tbody, .technology-table tr, .technology-table td { display: block; }
+  .technology-table thead { display: none; }
+  .technology-table tr { padding: 12px 0; border-top: 1px solid rgba(115, 142, 170, .12); }
+  .technology-table tr:first-child { border-top: 0; }
+  .technology-table td { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; padding: 5px 0; border-top: 0; }
+  .technology-table td::before { flex: 0 0 88px; color: var(--asip-text-muted); content: attr(data-label); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .technology-table td:last-child { display: block; width: auto; padding-top: 10px; }
+  .technology-table td:last-child::before { display: block; margin-bottom: 7px; }
+  .technology-details-body { min-width: 0; }
+  .technology-detail-grid { grid-template-columns: 1fr; }
+  .technology-details { width: 100%; }
+  .technology-details summary { display: block; }
   .provenance-head, .provenance-row { grid-template-columns: 1fr; gap: 4px; }
   .operations-kpis, .actionable-kpis, .shadow-filters, .shadow-summary-bar { grid-template-columns: 1fr; }
   .risk-drilldown { grid-template-columns: repeat(2, minmax(0, 1fr)); }
