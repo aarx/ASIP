@@ -18,6 +18,10 @@ from risk_engine import calculate_scan_risks, get_asset_exposure_keywords
 from ownership import OWNERSHIP_CONFIRMED, OWNERSHIP_EXTERNAL, normalize_ownership_status
 from ownership_ingest import apply_ownership
 from php_lifecycle import evaluate_php_lifecycle
+from php_cve_intelligence import (
+    PHP_CVE_ADVISORIES,
+    evaluate_php_cve_applicability,
+)
 
 os.makedirs("logs", exist_ok=True)
 
@@ -2502,6 +2506,7 @@ def frontend_v2_asset_detail(domain_name: str):
                  dto.sanitized_evidence
     """, (domain_id, scan_id))
     technology_observations = []
+    assessment_date = date.today()
     for row in cur.fetchall():
         observation = {
             "technology": row[0],
@@ -2514,7 +2519,10 @@ def frontend_v2_asset_detail(domain_name: str):
         }
         if str(row[0] or "").strip().lower() == "php":
             observation["lifecycle"] = evaluate_php_lifecycle(
-                row[0], row[1], date.today()
+                row[0], row[1], assessment_date
+            )
+            observation["cve_intelligence"] = evaluate_php_cve_applicability(
+                row[0], row[1], PHP_CVE_ADVISORIES, assessment_date
             )
         technology_observations.append(observation)
 

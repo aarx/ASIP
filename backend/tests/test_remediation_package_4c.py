@@ -393,6 +393,43 @@ class FrontendV2ContractTests(unittest.TestCase):
                 "assessment_date": "2026-10-28",
                 "explanation_code": "php_security_support",
             },
+            "cve_intelligence": {
+                "assessment_date": "2026-10-28",
+                "dataset_revision": "2026-10-28",
+                "coverage": "partial",
+                "candidates": [
+                    {
+                        "cve_id": "CVE-2026-109618",
+                        "applicability_status": "potentially_affected",
+                        "reported_version": "8.2.12",
+                        "affected_version_range": "< 8.2.35 (PHP 8.2 branch)",
+                        "fixed_version": "8.2.35",
+                        "source_url": (
+                            "https://github.com/php/php-src/security/advisories/"
+                            "GHSA-w8hw-w9fx-j79w"
+                        ),
+                        "dataset_revision": "2026-10-28",
+                        "evidence_confidence": "high_version_range_match",
+                        "patch_status": "unknown",
+                        "explanation_code": "php_version_within_verified_affected_range",
+                    },
+                    {
+                        "cve_id": "CVE-2026-109619",
+                        "applicability_status": "potentially_affected",
+                        "reported_version": "8.2.12",
+                        "affected_version_range": "< 8.2.35 (PHP 8.2 branch)",
+                        "fixed_version": "8.2.35",
+                        "source_url": (
+                            "https://github.com/php/php-src/security/advisories/"
+                            "GHSA-6wmf-4rv5-p3rp"
+                        ),
+                        "dataset_revision": "2026-10-28",
+                        "evidence_confidence": "high_version_range_match",
+                        "patch_status": "unknown",
+                        "explanation_code": "php_version_within_verified_affected_range",
+                    },
+                ],
+            },
         }])
         self.assertEqual(result["discovery"]["sources"][0]["source"], "subfinder")
         self.assertEqual(result["findings"][0]["severity"], "MEDIUM")
