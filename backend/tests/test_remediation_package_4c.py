@@ -352,6 +352,10 @@ class FrontendV2ContractTests(unittest.TestCase):
             fetchalls=[
                 [(443, "https"), (8443, "https-alt")],
                 [("React",), ("Vite",)],
+                [(
+                    "php", "8.2.12", "high", "x-powered-by_header",
+                    "PHP/8.2.12", "http://app.example", "sr-tech-02",
+                )],
                 [("subfinder", "example.com")],
                 [("takeover_candidate", "MEDIUM", "404")],
             ],
@@ -368,11 +372,25 @@ class FrontendV2ContractTests(unittest.TestCase):
         self.assertEqual(result["http"]["observation_status"], "RESPONDED")
         self.assertEqual(result["ports"][0], {"port": 443, "service": "https"})
         self.assertEqual(result["technologies"], ["React", "Vite"])
+        self.assertEqual(result["technology_observations"], [{
+            "technology": "php",
+            "version": "8.2.12",
+            "confidence": "high",
+            "evidence_type": "x-powered-by_header",
+            "sanitized_evidence": "PHP/8.2.12",
+            "observed_url": "http://app.example",
+            "detector_version": "sr-tech-02",
+        }])
         self.assertEqual(result["discovery"]["sources"][0]["source"], "subfinder")
         self.assertEqual(result["findings"][0]["severity"], "MEDIUM")
         identity_sql, params = cursor.executions[0]
         self.assertIn("FROM scan_results sr", identity_sql)
         self.assertEqual(params, (42, "app.example"))
+        observation_sql, observation_params = cursor.executions[6]
+        self.assertIn("FROM domain_technology_observations dto", observation_sql)
+        self.assertIn("JOIN scan_results sr", observation_sql)
+        self.assertNotIn("dto.id", observation_sql.split("SELECT", 1)[1].split("FROM", 1)[0])
+        self.assertEqual(observation_params, (7, 42))
 
     def test_scan_centre_identifies_authoritative_scans(self):
         now = datetime(2026, 9, 25, 12, 0, 0)

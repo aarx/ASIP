@@ -115,6 +115,7 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
         "domain_provider",
         "domain_asn",
         "domain_tech",
+        "domain_technology_observations",
         "domain_ports",
         "domain_cert",
         "domain_dns",
@@ -248,6 +249,22 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
                     CREATE TABLE domain_cert (domain_id integer, scan_id integer);
                     CREATE TABLE domain_ports (domain_id integer, scan_id integer, port integer);
                     CREATE TABLE domain_tech (domain_id integer, scan_id integer, tech text);
+                    CREATE TABLE domain_technology_observations (
+                        id serial PRIMARY KEY,
+                        scan_id integer,
+                        domain_id integer,
+                        technology text,
+                        version text,
+                        confidence text,
+                        evidence_type text,
+                        sanitized_evidence text,
+                        observed_url text,
+                        detector_version text,
+                        created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE (scan_id, domain_id, technology, version,
+                                evidence_type, sanitized_evidence, observed_url,
+                                detector_version)
+                    );
                     CREATE TABLE domain_asn (domain_id integer, scan_id integer, asn text);
                     CREATE TABLE domain_provider (domain_id integer, scan_id integer, provider text);
                     CREATE TABLE domain_findings (domain_id integer, scan_id integer, finding text);

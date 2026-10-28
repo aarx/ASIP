@@ -445,7 +445,7 @@ class TechnologyTruthTests(unittest.TestCase):
         )
         evidence = " ".join(item.evidence for item in parsed)
         self.assertNotIn("do-not-store-this", evidence)
-        self.assertIn("[REDACTED]", evidence)
+        self.assertEqual(evidence, "php/8.2.12")
 
     def test_failure_diagnostics_do_not_include_exception_text(self):
         with mock.patch.object(
@@ -481,6 +481,73 @@ class TechnologyTruthTests(unittest.TestCase):
         self.assertIn("ownership_status = 'CONFIRMED'", query)
         self.assertIn("scannable IS TRUE", query)
         self.assertIn("validation_source = 'manual'", query)
+
+    def test_structured_observations_persist_without_replacing_labels(self):
+        cursor = RecordingCursor(fetchalls=[[(1, "host.example")]])
+        connection = FakeConnection(cursor)
+        self.module.get_conn = lambda: connection
+        self.module.detect_tech = lambda domain: ["apache", "php"]
+        self.module._last_detections["host.example"] = self.module.DetectionResult(
+            fingerprints=(
+                self.module.Fingerprint(
+                    "php", "8.1.0", "high", "server_header", "PHP/8.1.0"
+                ),
+                self.module.Fingerprint(
+                    "php", "8.2.12", "high", "x-powered-by_header", "PHP/8.2.12"
+                ),
+            ),
+            observed_url="http://host.example",
+        )
+        with mock.patch("builtins.print"):
+            self.module.main()
+
+        label_writes = [
+            item for item in cursor.executions
+            if "INSERT INTO domain_tech(" in item[0]
+        ]
+        self.assertEqual(len(label_writes), 2)
+        observations = [
+            item for item in cursor.executions
+            if "INSERT INTO domain_technology_observations" in item[0]
+        ]
+        self.assertEqual(len(observations), 2)
+        self.assertIn("ON CONFLICT DO NOTHING", observations[0][0])
+        self.assertNotIn("Authorization", str(observations))
+        self.assertEqual(observations[0][1][8], "sr-tech-02")
+        self.assertEqual(observations[1][1][8], "sr-tech-02")
+
+    def test_unknown_observation_has_no_version_and_failed_request_writes_none(self):
+        unknown = self.module.fingerprint_response(headers={})[0]
+        self.assertEqual(unknown.technology, "unknown")
+        self.assertIsNone(unknown.version)
+
+        cursor = RecordingCursor(fetchalls=[[(1, "host.example")]])
+        connection = FakeConnection(cursor)
+        self.module.get_conn = lambda: connection
+        self.module.detect_tech = lambda domain: None
+        self.module._last_detections["host.example"] = None
+        with mock.patch("builtins.print"):
+            self.module.main()
+        self.assertEqual(
+            [
+                item for item in cursor.executions
+                if "INSERT INTO domain_technology_observations" in item[0]
+            ],
+            [],
+        )
+
+    def test_migration_is_additive_and_has_scan_safe_constraints(self):
+        migration = (
+            __import__("pathlib").Path(__file__).resolve().parents[1]
+            / "migrations/004_add_technology_observations.sql"
+        ).read_text(encoding="utf-8")
+        self.assertIn("BEGIN;", migration)
+        self.assertIn("COMMIT;", migration)
+        self.assertIn("CREATE TABLE public.domain_technology_observations", migration)
+        self.assertIn("FOREIGN KEY (scan_id, domain_id)", migration)
+        self.assertIn("CREATE UNIQUE INDEX", migration)
+        self.assertNotIn("DROP TABLE", migration.upper())
+        self.assertNotIn("ALTER TABLE public.domain_tech", migration)
 
     def test_real_unknown_and_fingerprint_results_are_persisted(self):
         for result in (["unknown"], ["nginx"]):

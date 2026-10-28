@@ -2482,6 +2482,38 @@ def frontend_v2_asset_detail(domain_name: str):
     technologies = [row[0] for row in cur.fetchall()]
 
     cur.execute("""
+        SELECT dto.technology,
+               dto.version,
+               dto.confidence,
+               dto.evidence_type,
+               dto.sanitized_evidence,
+               dto.observed_url,
+               dto.detector_version
+        FROM domain_technology_observations dto
+        JOIN scan_results sr
+          ON sr.scan_id = dto.scan_id
+         AND sr.domain_id = dto.domain_id
+        WHERE dto.domain_id = %s
+          AND dto.scan_id = %s
+        ORDER BY dto.technology,
+                 dto.version NULLS FIRST,
+                 dto.evidence_type,
+                 dto.sanitized_evidence
+    """, (domain_id, scan_id))
+    technology_observations = [
+        {
+            "technology": row[0],
+            "version": row[1],
+            "confidence": row[2],
+            "evidence_type": row[3],
+            "sanitized_evidence": row[4],
+            "observed_url": row[5],
+            "detector_version": row[6],
+        }
+        for row in cur.fetchall()
+    ]
+
+    cur.execute("""
         SELECT expiry_date, days_to_expiry, cert_status
         FROM domain_cert
         WHERE domain_id = %s AND scan_id = %s
@@ -2548,6 +2580,7 @@ def frontend_v2_asset_detail(domain_name: str):
         } if asn else None,
         "provider": provider[0] if provider else None,
         "technologies": technologies,
+        "technology_observations": technology_observations,
         "certificate": {
             "expiry_date": certificate[0],
             "days_to_expiry": certificate[1],

@@ -39,6 +39,7 @@ DOWNSTREAM_EVIDENCE_TABLES = (
     "domain_cert",
     "domain_ports",
     "domain_tech",
+    "domain_technology_observations",
     "domain_asn",
     "domain_provider",
     "domain_findings",

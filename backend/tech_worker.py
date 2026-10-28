@@ -23,6 +23,8 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+DETECTOR_VERSION = "sr-tech-02"
+TECH_AUTHORIZATION_PREDICATE = explicit_t2_authorization_sql("d")
 
 TECH_HEADERS = {
     "nginx": "nginx",
@@ -44,6 +46,9 @@ class Fingerprint:
     evidence_type: str
     evidence: str
 
+    def __post_init__(self):
+        object.__setattr__(self, "evidence", _sanitize_evidence(self.evidence))
+
     def as_dict(self):
         return {
             "technology": self.technology,
@@ -52,6 +57,12 @@ class Fingerprint:
             "evidence_type": self.evidence_type,
             "evidence": self.evidence,
         }
+
+
+@dataclass(frozen=True)
+class DetectionResult:
+    fingerprints: tuple
+    observed_url: str
 
 
 VERSION_PATTERN = r"(\d+\.\d+(?:\.\d+)?)"
@@ -88,7 +99,7 @@ def _versioned_header(value, technology, pattern, evidence_type):
             match.group(1),
             "high",
             evidence_type,
-            value,
+            f"{technology}/{match.group(1)}",
         )
     return None
 
@@ -104,7 +115,7 @@ def parse_php_header(value, evidence_type="header"):
             rf"\bphp/{VERSION_PATTERN}(?=$|[\s;,)])",
             evidence_type,
         )
-        or _observation("php", None, "medium", evidence_type, value)
+        or _observation("php", None, "medium", evidence_type, "marker=php")
     )
 
 
@@ -121,7 +132,7 @@ def parse_apache_header(value, evidence_type="server_header"):
             rf"\bapache/{VERSION_PATTERN}(?=$|[\s(;)])",
             evidence_type,
         )
-        or _observation("apache", None, "medium", evidence_type, value)
+        or _observation("apache", None, "medium", evidence_type, "marker=apache")
     )
 
 
@@ -136,7 +147,7 @@ def parse_nginx_header(value, evidence_type="server_header"):
             rf"\bnginx/{VERSION_PATTERN}(?=$|[\s(;)])",
             evidence_type,
         )
-        or _observation("nginx", None, "medium", evidence_type, value)
+        or _observation("nginx", None, "medium", evidence_type, "marker=nginx")
     )
 
 
@@ -151,14 +162,18 @@ def parse_iis_header(value, evidence_type="server_header"):
             rf"\bmicrosoft-iis/{VERSION_PATTERN}(?=$|[\s(;)])",
             evidence_type,
         )
-        or _observation("microsoft-iis", None, "medium", evidence_type, value)
+        or _observation(
+            "microsoft-iis", None, "medium", evidence_type, "marker=microsoft-iis"
+        )
     )
 
 
 def parse_tomcat_header(value, evidence_type="server_header"):
     value = str(value or "")
     if re.search(r"\bapache-coyote\b", value, re.IGNORECASE):
-        return _observation("tomcat", None, "low", evidence_type, value)
+        return _observation(
+            "tomcat", None, "low", evidence_type, "marker=apache-coyote"
+        )
     if not re.search(r"\b(?:apache\s+)?tomcat\b", value, re.IGNORECASE):
         return None
     return (
@@ -168,7 +183,7 @@ def parse_tomcat_header(value, evidence_type="server_header"):
             rf"\btomcat/{VERSION_PATTERN}(?=$|[\s(;)])",
             evidence_type,
         )
-        or _observation("tomcat", None, "medium", evidence_type, value)
+        or _observation("tomcat", None, "medium", evidence_type, "marker=tomcat")
     )
 
 
@@ -183,7 +198,7 @@ def parse_aspnet_header(value, evidence_type="x-powered-by_header"):
             rf"\basp\.net/{VERSION_PATTERN}(?=$|[\s(;)])",
             evidence_type,
         )
-        or _observation("asp.net", None, "medium", evidence_type, value)
+        or _observation("asp.net", None, "medium", evidence_type, "marker=asp.net")
     )
 
 
@@ -193,14 +208,27 @@ def parse_asp_header(value, evidence_type="x-powered-by_header"):
         return None
     if not re.search(r"\basp(?:/|\b)", value, re.IGNORECASE):
         return None
-    return _observation("asp", None, "medium", evidence_type, value)
+    return _observation("asp", None, "medium", evidence_type, "marker=asp")
 
 
 def _add_unique(observations, observation):
     if observation is None:
         return
-    key = (observation.technology, observation.version)
-    if not any((item.technology, item.version) == key for item in observations):
+    key = (
+        observation.technology,
+        observation.version,
+        observation.evidence_type,
+        observation.evidence,
+    )
+    if not any(
+        (
+            item.technology,
+            item.version,
+            item.evidence_type,
+            item.evidence,
+        ) == key
+        for item in observations
+    ):
         observations.append(observation)
 
 
@@ -258,7 +286,7 @@ def fingerprint_response(headers=None, body="", cookies=""):
         _add_unique(
             observations,
             _versioned_header(
-                aspnet_version,
+                f"asp.net/{aspnet_version}",
                 "asp.net",
                 rf"^{VERSION_PATTERN}$",
                 "x-aspnet-version_header",
@@ -344,25 +372,44 @@ def fingerprint_response(headers=None, body="", cookies=""):
     return sorted(observations, key=lambda item: (item.technology, item.version or ""))
 
 
-def detect_tech(domain):
+_last_detections = {}
+
+
+def detect_tech_observations(domain):
 
     try:
+        observed_url = f"http://{domain}"
         r = requests.get(
-            f"http://{domain}",
+            observed_url,
             timeout=4,
             allow_redirects=False,
             verify=False
         )
 
-        return [item.technology for item in fingerprint_response(
-            headers=r.headers,
-            body=r.text,
-            cookies=r.cookies,
-        )]
+        return DetectionResult(
+            fingerprints=tuple(fingerprint_response(
+                headers=r.headers,
+                body=r.text,
+                cookies=r.cookies,
+            )),
+            observed_url=observed_url,
+        )
 
-    except Exception as e:
-        logger.warning("Technology detection failed for %s (%s)", domain, type(e).__name__)
+    except Exception as exc:
+        logger.warning(
+            "Technology detection failed for %s (%s)",
+            domain,
+            type(exc).__name__,
+        )
         return None
+
+
+def detect_tech(domain):
+    detection = detect_tech_observations(domain)
+    _last_detections[domain] = detection
+    if detection is None:
+        return None
+    return sorted({item.technology for item in detection.fingerprints})
 
 def main():
 
@@ -370,7 +417,7 @@ def main():
     cur = conn.cursor()
     require_running_scan(cur, scan_id)
 
-    cur.execute("""
+    cur.execute(f"""
     SELECT DISTINCT ON (d.id) d.id, d.domain
     FROM domains d
     JOIN domain_states s
@@ -378,17 +425,17 @@ def main():
     JOIN scan_results sr
       ON sr.domain_id = s.domain_id
       AND sr.scan_id = s.scan_id
-    LEFT JOIN domain_tech dt
-      ON d.id = dt.domain_id
-      AND dt.scan_id = %s
+    LEFT JOIN domain_technology_observations dto
+      ON d.id = dto.domain_id
+      AND dto.scan_id = %s
     
     WHERE s.scan_id = %s
-    AND dt.domain_id IS NULL
+    AND dto.domain_id IS NULL
     AND s.http_status > 0
-    AND {authorization_predicate}
+    AND {TECH_AUTHORIZATION_PREDICATE}
     
     ORDER BY d.id, s.scan_id DESC
-    """.format(authorization_predicate=explicit_t2_authorization_sql("d")),
+    """,
     (scan_id, scan_id))
     
     rows = cur.fetchall()
@@ -398,6 +445,7 @@ def main():
     for domain_id, domain in rows:
 
         techs = detect_tech(domain)
+        detection = _last_detections.pop(domain, None)
 
         print("Tech detect →", domain, techs)
 
@@ -427,6 +475,42 @@ def main():
                     WHERE sr.scan_id = %s AND sr.domain_id = %s
                 )
                 """, (domain_id, scan_id, tech, scan_id, domain_id))
+
+        if detection is None:
+            continue
+
+        for fingerprint in detection.fingerprints:
+            cur.execute("""
+            INSERT INTO domain_technology_observations(
+                scan_id,
+                domain_id,
+                technology,
+                version,
+                confidence,
+                evidence_type,
+                sanitized_evidence,
+                observed_url,
+                detector_version
+            )
+            SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s
+            WHERE EXISTS (
+                SELECT 1 FROM scan_results sr
+                WHERE sr.scan_id = %s AND sr.domain_id = %s
+            )
+            ON CONFLICT DO NOTHING
+            """, (
+                scan_id,
+                domain_id,
+                fingerprint.technology,
+                fingerprint.version,
+                fingerprint.confidence,
+                fingerprint.evidence_type,
+                fingerprint.evidence,
+                detection.observed_url,
+                DETECTOR_VERSION,
+                scan_id,
+                domain_id,
+            ))
 
     conn.commit()
     conn.close()

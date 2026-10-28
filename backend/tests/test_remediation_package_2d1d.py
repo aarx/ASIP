@@ -11,10 +11,10 @@ from backend.tests import test_remediation_package_2d1c as convergence
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 
 PROTECTED_SHA256 = {
-    "ingest.py": "b1180a94fb9bcd39313f7f8b5ddef8ebd007300562710088ff589b378c38d880",
+    "ingest.py": "71f27393e1db6e90a33961f50b464681a108e490f2c0cdb7fdd85ca157bb398b",
     "orchestration.py": "1c7944aa2ed3b1f2991ff01875c8136fb6ed75e5bc80ab8c174e1d6abe97a8fc",
     "discovery_validator.py": "545dfad14226f1b2b1e2b609b49d7ae9f2738502e3dc68756c243f5d73e3ae81",
-    "main.py": "b7b2923b20e70ebf8f44a4fd0821e613fcffa1e031d62c692ca43ce428c4d9c5",
+    "main.py": "2d86f6ab00591d388af5c2864f3ae657a5daa47579ca809a8de4e92be9755a52",
 }
 
 CONSUMERS = (
@@ -37,7 +37,7 @@ ATOMIC_WRITERS = {
     "san_http_worker.py": ("UPDATE domain_states",),
     "cert_worker.py": ("INSERT INTO domain_cert",),
     "port_scan_worker.py": ("INSERT INTO domain_ports",),
-    "tech_worker.py": ("INSERT INTO domain_tech",),
+    "tech_worker.py": ("INSERT INTO domain_tech(", "INSERT INTO domain_technology_observations"),
     "asn_worker.py": ("INSERT INTO domain_asn",),
     "provider_worker.py": ("INSERT INTO domain_provider",),
     "takeover_worker.py": ("INSERT INTO domain_findings",),
