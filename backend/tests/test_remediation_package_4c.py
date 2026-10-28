@@ -365,7 +365,9 @@ class FrontendV2ContractTests(unittest.TestCase):
             risk(7, "app.example", 8, "High", ("finding", "shadow_asset")),
         ])
 
-        result = self.main.frontend_v2_asset_detail("app.example")
+        with mock.patch.object(self.main, "date") as date_type:
+            date_type.today.return_value = datetime(2026, 10, 28).date()
+            result = self.main.frontend_v2_asset_detail("app.example")
 
         self.assertEqual(result["asset_class"], "SHADOW")
         self.assertEqual(result["risk"]["score"], 8)
@@ -380,6 +382,17 @@ class FrontendV2ContractTests(unittest.TestCase):
             "sanitized_evidence": "PHP/8.2.12",
             "observed_url": "http://app.example",
             "detector_version": "sr-tech-02",
+            "lifecycle": {
+                "status": "security_support",
+                "matched_release_branch": "8.2",
+                "active_support_until": "2024-12-31",
+                "security_support_until": "2026-12-31",
+                "end_of_life": "2026-12-31",
+                "source_url": "https://www.php.net/supported-versions.php",
+                "dataset_revision": "2026-10-28",
+                "assessment_date": "2026-10-28",
+                "explanation_code": "php_security_support",
+            },
         }])
         self.assertEqual(result["discovery"]["sources"][0]["source"], "subfinder")
         self.assertEqual(result["findings"][0]["severity"], "MEDIUM")

@@ -10,13 +10,14 @@ import io
 import json
 import requests
 import re
-from datetime import datetime
+from datetime import date, datetime
 from llm_service import ask_llm
 from urllib.parse import urlparse
 from db import get_conn, get_latest_authoritative_scan_id, get_previous_authoritative_scan_id
 from risk_engine import calculate_scan_risks, get_asset_exposure_keywords
 from ownership import OWNERSHIP_CONFIRMED, OWNERSHIP_EXTERNAL, normalize_ownership_status
 from ownership_ingest import apply_ownership
+from php_lifecycle import evaluate_php_lifecycle
 
 os.makedirs("logs", exist_ok=True)
 
@@ -2500,8 +2501,9 @@ def frontend_v2_asset_detail(domain_name: str):
                  dto.evidence_type,
                  dto.sanitized_evidence
     """, (domain_id, scan_id))
-    technology_observations = [
-        {
+    technology_observations = []
+    for row in cur.fetchall():
+        observation = {
             "technology": row[0],
             "version": row[1],
             "confidence": row[2],
@@ -2510,8 +2512,11 @@ def frontend_v2_asset_detail(domain_name: str):
             "observed_url": row[5],
             "detector_version": row[6],
         }
-        for row in cur.fetchall()
-    ]
+        if str(row[0] or "").strip().lower() == "php":
+            observation["lifecycle"] = evaluate_php_lifecycle(
+                row[0], row[1], date.today()
+            )
+        technology_observations.append(observation)
 
     cur.execute("""
         SELECT expiry_date, days_to_expiry, cert_status
