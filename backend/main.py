@@ -1104,6 +1104,8 @@ def tech():
     cur.execute("""
         SELECT dt.tech, COUNT(*)
         FROM domain_tech dt
+        JOIN domains d
+          ON d.id = dt.domain_id
         JOIN domain_states ds 
           ON dt.domain_id = ds.domain_id
          AND dt.scan_id = ds.scan_id

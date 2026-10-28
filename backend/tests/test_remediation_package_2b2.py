@@ -130,6 +130,8 @@ class SnapshotCursor:
 
     @staticmethod
     def assert_tech_isolation(sql, params):
+        assert "join domains d" in sql
+        assert "d.ownership_status = 'confirmed'" in sql
         assert "dt.domain_id = ds.domain_id" in sql
         assert "dt.scan_id = ds.scan_id" in sql
         assert "ds.scan_id = %s" in sql

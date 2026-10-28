@@ -379,6 +379,109 @@ class TechnologyTruthTests(unittest.TestCase):
         ):
             self.assertIn("nginx", self.module.detect_tech("host.example"))
 
+    def test_php_parser_extracts_only_valid_explicit_versions(self):
+        parsed = self.module.fingerprint_response(
+            headers={"X-Powered-By": "PHP/8.2.12"}
+        )
+        php = next(item for item in parsed if item.technology == "php")
+        self.assertEqual(php.version, "8.2.12")
+        self.assertEqual(php.confidence, "high")
+        self.assertEqual(php.evidence_type, "x-powered-by_header")
+
+        parsed = self.module.fingerprint_response(
+            headers={"X-Powered-By": "PHP/not-a-version"}
+        )
+        php = next(item for item in parsed if item.technology == "php")
+        self.assertIsNone(php.version)
+
+    def test_server_banner_parsers_extract_versions(self):
+        cases = (
+            ({"Server": "Apache/2.4.58 (Unix)"}, "apache", "2.4.58"),
+            ({"Server": "nginx/1.24.0"}, "nginx", "1.24.0"),
+            ({"Server": "Microsoft-IIS/10.0"}, "microsoft-iis", "10.0"),
+            ({"Server": "Apache Tomcat/9.0.85"}, "tomcat", "9.0.85"),
+        )
+        for headers, technology, version in cases:
+            with self.subTest(technology=technology):
+                parsed = self.module.fingerprint_response(headers=headers)
+                match = next(item for item in parsed if item.technology == technology)
+                self.assertEqual(match.version, version)
+
+    def test_asp_and_aspnet_are_distinct(self):
+        aspnet = self.module.fingerprint_response(
+            headers={"X-Powered-By": "ASP.NET"}
+        )
+        self.assertIn("asp.net", [item.technology for item in aspnet])
+        self.assertIn("asp", [item.technology for item in aspnet])
+
+        asp = self.module.fingerprint_response(
+            headers={"X-Powered-By": "ASP/3.0"}
+        )
+        self.assertIn("asp", [item.technology for item in asp])
+        self.assertNotIn("asp.net", [item.technology for item in asp])
+
+        tomcat = self.module.fingerprint_response(
+            headers={"Server": "Apache-Coyote/1.1"}
+        )
+        tomcat_match = next(item for item in tomcat if item.technology == "tomcat")
+        self.assertIsNone(tomcat_match.version)
+
+    def test_empty_and_ambiguous_values_do_not_fabricate_versions(self):
+        parsed = self.module.fingerprint_response(headers={})
+        self.assertEqual(parsed[0].technology, "unknown")
+        self.assertIsNone(parsed[0].version)
+
+        parsed = self.module.fingerprint_response(
+            headers={"Server": "nginx/unknown"}
+        )
+        nginx = next(item for item in parsed if item.technology == "nginx")
+        self.assertIsNone(nginx.version)
+
+    def test_evidence_is_sanitized(self):
+        parsed = self.module.fingerprint_response(
+            headers={
+                "X-Powered-By": "PHP/8.2.12; api_key=do-not-store-this",
+            }
+        )
+        evidence = " ".join(item.evidence for item in parsed)
+        self.assertNotIn("do-not-store-this", evidence)
+        self.assertIn("[REDACTED]", evidence)
+
+    def test_failure_diagnostics_do_not_include_exception_text(self):
+        with mock.patch.object(
+            self.module.requests,
+            "get",
+            side_effect=RuntimeError("token=do-not-log-this"),
+        ), mock.patch.object(self.module.logger, "warning") as warning:
+            self.assertIsNone(self.module.detect_tech("host.example"))
+
+        self.assertNotIn("do-not-log-this", str(warning.call_args))
+
+    def test_request_does_not_follow_redirects(self):
+        response = self.response(headers={}, text="")
+        response.status_code = 302
+        response.headers = {"Location": "https://external.example/secret"}
+        with mock.patch.object(
+            self.module.requests, "get", return_value=response
+        ) as request:
+            self.module.detect_tech("host.example")
+
+        self.assertFalse(request.call_args.kwargs["allow_redirects"])
+        self.assertNotIn("external.example", str(request.call_args))
+
+    def test_worker_query_requires_explicit_authorization(self):
+        cursor = RecordingCursor(fetchalls=[[(1, "host.example")]])
+        connection = FakeConnection(cursor)
+        self.module.get_conn = lambda: connection
+        self.module.detect_tech = lambda domain: ["nginx"]
+        with mock.patch("builtins.print"):
+            self.module.main()
+
+        query = cursor.executions[0][0]
+        self.assertIn("ownership_status = 'CONFIRMED'", query)
+        self.assertIn("scannable IS TRUE", query)
+        self.assertIn("validation_source = 'manual'", query)
+
     def test_real_unknown_and_fingerprint_results_are_persisted(self):
         for result in (["unknown"], ["nginx"]):
             with self.subTest(result=result):
