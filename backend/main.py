@@ -25,6 +25,13 @@ from php_cve_intelligence import (
     PHP_CVE_DATASET_REVISION,
     evaluate_php_cve_applicability,
 )
+from adhoc_campaigns import (
+    CampaignError,
+    CampaignSchemaUnavailable,
+    get_campaign,
+    get_campaign_results,
+    list_campaigns,
+)
 
 os.makedirs("logs", exist_ok=True)
 
@@ -3105,6 +3112,98 @@ def frontend_v2_scans(limit: int = 100):
             for row in rows
         ],
     }
+
+
+def _adhoc_campaign_api_error(exc):
+    if isinstance(exc, CampaignSchemaUnavailable):
+        return HTTPException(
+            status_code=503,
+            detail="Adhoc campaign storage is not available",
+        )
+    if isinstance(exc, CampaignError):
+        return HTTPException(status_code=400, detail=str(exc))
+    return None
+
+
+@app.get("/v2/adhoc/campaigns")
+def adhoc_campaign_list(
+    page: int = 1,
+    limit: int = 50,
+    status: str = None,
+    check_id: str = None,
+    source_scan_id: int = None,
+):
+    conn = get_conn()
+    try:
+        return list_campaigns(
+            conn,
+            page=page,
+            limit=limit,
+            status=status,
+            check_id=check_id,
+            source_scan_id=source_scan_id,
+        )
+    except Exception as exc:
+        api_error = _adhoc_campaign_api_error(exc)
+        if api_error is not None:
+            raise api_error from exc
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v2/adhoc/campaigns/{campaign_id}")
+def adhoc_campaign_detail(campaign_id: int):
+    conn = get_conn()
+    try:
+        result = get_campaign(conn, campaign_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        api_error = _adhoc_campaign_api_error(exc)
+        if api_error is not None:
+            raise api_error from exc
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v2/adhoc/campaigns/{campaign_id}/results")
+def adhoc_campaign_result_list(
+    campaign_id: int,
+    page: int = 1,
+    limit: int = 50,
+    target_status: str = None,
+    evaluation_status: str = None,
+    classification: str = None,
+    cve_status: str = None,
+):
+    conn = get_conn()
+    try:
+        if get_campaign(conn, campaign_id) is None:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        return get_campaign_results(
+            conn,
+            campaign_id,
+            page=page,
+            limit=limit,
+            target_status=target_status,
+            evaluation_status=evaluation_status,
+            classification=classification,
+            cve_status=cve_status,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        api_error = _adhoc_campaign_api_error(exc)
+        if api_error is not None:
+            raise api_error from exc
+        raise
+    finally:
+        conn.close()
 
 
 @app.get("/v2/brand-assets")
