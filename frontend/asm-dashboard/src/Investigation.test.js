@@ -86,6 +86,12 @@ test("analyst selects an asset, reviews authoritative evidence, and runs all gro
   expect(screen.getByText("subfinder")).toBeInTheDocument();
   expect(screen.getByText("Grounded AI Assistance")).toBeInTheDocument();
   expect(screen.getByText("AI · NOT EVIDENCE")).toBeInTheDocument();
+  expect(screen.queryByText("Current stored observations")).not.toBeInTheDocument();
+  expect(screen.queryByText("Positive evidence only")).not.toBeInTheDocument();
+  expect(screen.queryByText("Recorded deterministic observations")).not.toBeInTheDocument();
+  expect(screen.queryByText("Why this asset entered the current scan")).not.toBeInTheDocument();
+  expect(screen.queryByText(/AI may explain, summarize/)).not.toBeInTheDocument();
+  expect(screen.queryByText("Choose an action to request a grounded response.")).not.toBeInTheDocument();
 
   for (const [label, action] of [
     ["Explain Risk", "explain_risk"],
@@ -96,7 +102,7 @@ test("analyst selects an asset, reviews authoritative evidence, and runs all gro
     expect(await screen.findByText(`${action} grounded response`)).toBeInTheDocument();
     expect(getV2AssetAssistant).toHaveBeenLastCalledWith(selectedAsset.domain, action);
   }
-  expect(screen.getByText(/Its prose is not an ASM observation/)).toBeInTheDocument();
+  expect(screen.queryByText(/Its prose is not an ASM observation/)).not.toBeInTheDocument();
   expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Gemma|Ollama|Qwen|gemma3:4b/i)).not.toBeInTheDocument();
 });

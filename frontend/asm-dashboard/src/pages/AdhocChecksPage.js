@@ -292,7 +292,6 @@ export default function AdhocChecksPage() {
         <div>
           <div className="adhoc-kicker">PHP Remote Code Execution</div>
           <h2>Targeted vulnerability review</h2>
-          <p>Offline intelligence from authorized scan observations. This workspace does not execute probes or confirm exploitability.</p>
         </div>
         <label className="adhoc-scan-select">
           <span>Successful scan</span>
@@ -310,7 +309,6 @@ export default function AdhocChecksPage() {
         <div><span>Selected scan</span><strong>#{checkData?.scan?.scan_id || selectedScanId}</strong></div>
         <div><span>Completion</span><strong>{timestamp(checkData?.scan?.completed_at || selectedScan?.completed_at)}</strong></div>
         <div><span>Authority</span><strong>{selectedAuthoritative ? "Current authoritative" : "Historical successful"}</strong></div>
-        <p>Historical results remain tied to their selected scan. Asset Detail links are available only for the current authoritative scan.</p>
       </section>
 
       <section className="operations-kpis" aria-label="PHP review scope">
@@ -320,46 +318,43 @@ export default function AdhocChecksPage() {
         <MetricCard label="Not evaluated" value={scope?.not_evaluated_assets ?? "—"} support="No structured PHP observation" accent="#a96f1f" />
       </section>
 
-      <div className="adhoc-boundary-note">
-        Potential CVE is a reported-version candidate from the local advisory dataset. It is not a confirmed vulnerability, installed-runtime verification, or exploitability result. Partial coverage and unknown patch status remain explicit.
-      </div>
-
       <form className="adhoc-filter-panel" onSubmit={(event) => event.preventDefault()}>
         <div className="adhoc-filter-grid">
           {FILTERS.map(([name, label, values]) => (
             <FilterControl key={name} name={name} label={label} values={values} value={filters[name]} onChange={updateFilter} />
           ))}
         </div>
-        <div className="adhoc-filter-meta">
-          <span>Server-side filters · page {page} of {totalPages}</span>
-          {(filters.classification || filters.lifecycle || filters.cve_status) && <Button type="button" size="small" variant="text" onClick={() => { setFilters({ classification: "", lifecycle: "", cve_status: "" }); setPage(1); }}>Clear filters</Button>}
-        </div>
+        {(filters.classification || filters.lifecycle || filters.cve_status) && (
+          <div className="adhoc-filter-meta">
+            <Button type="button" size="small" variant="text" onClick={() => { setFilters({ classification: "", lifecycle: "", cve_status: "" }); setPage(1); }}>Clear filters</Button>
+          </div>
+        )}
       </form>
 
       {checkState === "loading" && <LoadingState title="Loading PHP review" copy="Applying the selected scan and server-side filters." />}
       {checkState === "error" && <ErrorState title="PHP RCE review unavailable" copy="The selected scan review could not be loaded. No values have been inferred." onRetry={retryCheck} />}
       {checkState === "ready" && !hasAuthorizedAssets && (
-        <Panel title="No authorized assets in selected scan" subtitle="The review population is empty because the exact authorization predicate returned no assets.">
-          <div className="adhoc-empty-copy"><strong>{scope?.scan_members ?? 0} scan members</strong><span>0 authorized assets · 0 structured observations evaluated</span><p>Candidate and External assets are excluded. Zero authorized assets is not evidence of safety or of no PHP exposure.</p></div>
+        <Panel title="No authorized assets in selected scan">
+          <div className="adhoc-empty-copy"><strong>{scope?.scan_members ?? 0} scan members · 0 authorized assets</strong></div>
         </Panel>
       )}
       {checkState === "ready" && hasAuthorizedAssets && !hasEvaluatedAssets && (
-        <Panel title="No structured PHP observations" subtitle="Authorized assets exist, but this selected scan has no persisted structured PHP observations.">
-          <div className="adhoc-empty-copy"><strong>{scope.authorized_assets} authorized assets</strong><span>No structured observations were returned for this scan.</span><p>Legacy PHP labels remain visible in the results table as evidence-only leads without version or CVE applicability.</p></div>
+        <Panel title="No structured PHP observations">
+          <div className="adhoc-empty-copy"><strong>{scope.authorized_assets} authorized assets</strong></div>
         </Panel>
       )}
       {checkState === "ready" && hasAuthorizedAssets && hasEvaluatedAssets && noFilteredResults && (
         <EmptyState title="No matching filtered results" copy="No authorized results matched the selected classification, lifecycle, and CVE status filters. This does not establish that no vulnerabilities exist." />
       )}
       {checkState === "ready" && resultRows.length > 0 && (
-        <Panel title="PHP review results" subtitle="Evidence remains observation-based; statuses do not confirm installation or exploitability." meta={`${checkData.count} MATCHING RESULTS`}>
+        <Panel title="PHP review results" meta={`${checkData.count} MATCHING RESULTS`}>
           <ResultTable results={resultRows} authoritative={selectedAuthoritative} />
         </Panel>
       )}
 
       {checkState === "ready" && checkData?.count > 0 && (
         <div className="pagination-bar">
-          <span>Page {page} of {totalPages} · {checkData.count} server-filtered results</span>
+          <span>Page {page} of {totalPages} · {checkData.count} results</span>
           <div>
             <Button size="small" variant="outlined" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Previous</Button>
             <Button size="small" variant="outlined" disabled={page >= totalPages} onClick={() => setPage((value) => value + 1)}>Next</Button>

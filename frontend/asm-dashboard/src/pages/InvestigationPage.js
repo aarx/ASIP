@@ -51,7 +51,7 @@ function AssetEvidence({ asset, detailHref }) {
       </section>
 
       <div className="investigation-evidence-grid">
-        <Panel title="Network & HTTP" subtitle="Current stored observations">
+        <Panel title="Network & HTTP">
           <div className="investigation-facts">
             <EvidenceItem label="IP" mono>{displayEvidence(asset.dns?.ip, "No current IP evidence")}</EvidenceItem>
             <EvidenceItem label="Reverse DNS" mono>{displayEvidence(asset.dns?.reverse_dns, "Unknown")}</EvidenceItem>
@@ -64,7 +64,7 @@ function AssetEvidence({ asset, detailHref }) {
           </div>
         </Panel>
 
-        <Panel title="Exposure & technology" subtitle="Positive evidence only">
+        <Panel title="Exposure & technology">
           <span className="evidence-label">Observed ports</span>
           {asset.ports?.length ? <div className="port-list">{asset.ports.map((item) => <div className="port-token" key={`${item.port}-${item.service}`}><strong>{item.port}</strong><span>{item.service || "service unknown"}</span></div>)}</div> : <div className="detail-empty compact">No positive port evidence.</div>}
           <span className="evidence-label investigation-subheading">Technologies</span>
@@ -73,11 +73,11 @@ function AssetEvidence({ asset, detailHref }) {
           <div className="technical-value investigation-inline-fact">{asset.certificate ? `${displayEvidence(asset.certificate.status)} · expires ${displayEvidence(asset.certificate.expiry_date)}` : "No certificate evidence"}</div>
         </Panel>
 
-        <Panel title="Findings" subtitle="Recorded deterministic observations">
+        <Panel title="Findings">
           {asset.findings?.length ? <div className="finding-list">{asset.findings.map((finding, index) => <div className="finding-row" key={`${finding.finding}-${index}`}><StatusBadge value={finding.severity} /><div><strong>{finding.finding}</strong><p>{displayEvidence(finding.evidence, "No supporting text recorded")}</p></div></div>)}</div> : <div className="detail-empty compact">No findings recorded for this scan.</div>}
         </Panel>
 
-        <Panel title="Discovery provenance" subtitle="Why this asset entered the current scan">
+        <Panel title="Discovery provenance">
           {asset.discovery?.sources?.length ? <div className="provenance-table">{asset.discovery.sources.map((item, index) => <div className="provenance-row" key={`${item.source}-${item.seed}-${index}`}><span className="technical-value">{displayEvidence(item.source)}</span><span className="technical-value">{displayEvidence(item.seed)}</span></div>)}</div> : <div className="detail-empty compact">No current-scan provenance rows.</div>}
         </Panel>
       </div>
@@ -153,7 +153,7 @@ export default function InvestigationPage({ query }) {
 
   return (
     <div className="investigation-workspace">
-      <Panel title="Investigation queue" subtitle="Current confirmed, resolving assets from the authoritative scan" meta={list?.count != null ? `${list.count} ASSETS` : "CURRENT"} className="investigation-queue">
+      <Panel title="Investigation queue" meta={list?.count != null ? `${list.count} ASSETS` : "CURRENT"} className="investigation-queue">
         <form className="investigation-search" onSubmit={openExact}>
           <TextField size="small" label="Search this page or load exact domain" value={search} onChange={(event) => setSearch(event.target.value)} />
           <Button type="submit" variant="outlined" disabled={!search.trim()}>Load exact</Button>
@@ -178,10 +178,8 @@ export default function InvestigationPage({ query }) {
         {assetStatus === "ready" && <AssetEvidence asset={asset} detailHref={assetDetailHref} />}
 
         {assetStatus === "ready" && (
-          <Panel title="Grounded AI Assistance" subtitle="Interpretive guidance generated only from the authoritative evidence above" meta="AI · NOT EVIDENCE" className="investigation-assistant">
-            <div className="assistant-boundary">AI may explain, summarize, or suggest passive review steps. Its prose is not an ASM observation and cannot change risk, ownership, findings, or authorization.</div>
+          <Panel title="Grounded AI Assistance" meta="AI · NOT EVIDENCE" className="investigation-assistant">
             <div className="assistant-actions">{ACTIONS.map(([action, label]) => <Button key={action} variant={assistant?.action === action ? "contained" : "outlined"} disabled={assistantStatus === "loading"} onClick={() => runAction(action)}>{label}</Button>)}</div>
-            {assistantStatus === "idle" && <div className="detail-empty">Choose an action to request a grounded response.</div>}
             {assistantStatus === "loading" && <div className="assistant-progress" role="status">AI is reviewing supplied ShadowRecon evidence…</div>}
             {assistantStatus === "error" && <div className="assistant-error" role="alert">Grounded assistance is unavailable. Authoritative ShadowRecon evidence remains unchanged.</div>}
             {assistantStatus === "ready" && <div className="assistant-response"><div><span>Source</span><strong>Grounded AI · authoritative ShadowRecon context</strong></div><pre>{cleanAIResponse(assistant.response)}</pre></div>}

@@ -155,8 +155,8 @@ test("communicates an empty authorized scope without implying safety", async () 
   render(<App />);
 
   expect(await screen.findByText("No authorized assets in selected scan")).toBeInTheDocument();
-  expect(screen.getByText("318 scan members")).toBeInTheDocument();
-  expect(screen.getByText(/Zero authorized assets is not evidence of safety/i)).toBeInTheDocument();
+  expect(screen.getByText("318 scan members · 0 authorized assets")).toBeInTheDocument();
+  expect(screen.queryByText(/Zero authorized assets is not evidence of safety/i)).not.toBeInTheDocument();
   expect(screen.queryByText("Assets needing attention")).not.toBeInTheDocument();
   expect(screen.queryByText("No matching filtered results")).not.toBeInTheDocument();
 });
@@ -201,7 +201,8 @@ test("uses backend filters and pagination and resets page when a filter changes"
   await waitFor(() => expect(getPhpRceCheck).toHaveBeenLastCalledWith({
     scan_id: 16, page: 1, limit: 25, classification: "Potential CVE",
   }));
-  expect(screen.getByText("Server-side filters · page 1 of 3")).toBeInTheDocument();
+  expect(screen.getByText("Page 1 of 3 · 51 results")).toBeInTheDocument();
+  expect(screen.queryByText(/Server-side filters/i)).not.toBeInTheDocument();
 });
 
 test("switches scan context and does not link historical results to current Asset Detail", async () => {
