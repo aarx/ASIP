@@ -117,7 +117,8 @@ class FakeRunnerCursor:
             statuses = [target["status"] for target in self.database.targets]
             self.rows = [(
                 len(statuses), statuses.count("COMPLETED"), statuses.count("FAILED"),
-                statuses.count("CANCELLED"), sum(status in {"PENDING", "RUNNING"} for status in statuses),
+                statuses.count("SKIPPED"), statuses.count("CANCELLED"),
+                sum(status in {"PENDING", "RUNNING"} for status in statuses),
             )]
 
     def fetchone(self):
@@ -169,7 +170,16 @@ class FakeRunnerDatabase:
                 "validation_source": "manual", "authorized": True,
             })
         self.results = {}
-        self.connection = FakeRunnerConnection(self)
+        self.connections = []
+
+    def new_connection(self):
+        connection = FakeRunnerConnection(self)
+        self.connections.append(connection)
+        return connection
+
+    @property
+    def connection(self):
+        return self.connections[-1]
 
     def target(self, target_id):
         return next(target for target in self.targets if target["id"] == target_id)
@@ -222,7 +232,7 @@ def service(database, resolver, transport, fingerprinter, *, clock=lambda: NOW,
     return AdhocCampaignRunner(
         policy=RunnerPolicy(enabled=True), resolver=resolver, transport=transport,
         fingerprinter=fingerprinter, operator_authorizer=lambda identity: identity == "operator",
-        conn_factory=lambda: database.connection, clock=clock,
+        conn_factory=database.new_connection, clock=clock,
     ), cancel_check
 
 
@@ -244,6 +254,8 @@ class CampaignExecutionTests(unittest.TestCase):
         self.assertTrue(stored["cve_intelligence"])
         self.assertEqual(database.targets[0]["status"], "COMPLETED")
         self.assertTrue(database.connection.closed)
+        self.assertEqual(len(database.connections), 2)
+        self.assertTrue(all(connection.closed for connection in database.connections))
         for query, _ in database.executions:
             upper = query.upper()
             if upper.lstrip().startswith(("INSERT", "UPDATE", "DELETE", "TRUNCATE")):
@@ -281,7 +293,25 @@ class CampaignExecutionTests(unittest.TestCase):
         result = runner.run_campaign(91, "operator")
         self.assertEqual(result["status"], "FAILED")
         self.assertEqual(database.results[1]["failure_code"], "authorization_revoked")
+        self.assertEqual(database.results[1]["execution_status"], "SKIPPED")
+        self.assertEqual(database.targets[0]["status"], "SKIPPED")
+        self.assertEqual(result["skipped"], 1)
         self.assertEqual(transport.plans, [])
+
+    def test_all_revoked_targets_are_skipped_and_campaign_is_not_successful(self):
+        database = FakeRunnerDatabase(domains=[(7, "one.example"), (8, "two.example")])
+        for target in database.targets:
+            target["authorized"] = False
+        runner, _ = service(
+            database, FakeResolver(), FakeTransport(response()),
+            lambda headers: [{"technology": "php", "version": "8.2.34"}],
+        )
+        result = runner.run_campaign(91, "operator")
+        self.assertEqual(result["status"], "FAILED")
+        self.assertEqual(database.campaign["failure_code"], "all_targets_skipped")
+        self.assertEqual(result["skipped"], 2)
+        self.assertEqual([target["status"] for target in database.targets], ["SKIPPED", "SKIPPED"])
+        self.assertTrue(all(item["execution_status"] == "SKIPPED" for item in database.results.values()))
 
     def test_unsafe_dns_peer_mismatch_redirect_and_timeout_are_failures(self):
         cases = (
@@ -322,9 +352,9 @@ class CampaignExecutionTests(unittest.TestCase):
         self.assertEqual(len(resolver.calls), 2)
 
     def test_cancellation_and_deadline_do_not_start_transport(self):
-        for clock, cancel_check, expected_status in (
-            (lambda: NOW, lambda: True, "CANCELLED"),
-            (lambda: datetime(2026, 10, 29, 12, 20, tzinfo=timezone.utc), None, "FAILED"),
+        for clock, cancel_check, expected_status, expected_target_status in (
+            (lambda: NOW, lambda: True, "CANCELLED", "CANCELLED"),
+            (lambda: datetime(2026, 10, 29, 12, 20, tzinfo=timezone.utc), None, "FAILED", "SKIPPED"),
         ):
             with self.subTest(expected_status=expected_status):
                 database = FakeRunnerDatabase()
@@ -336,6 +366,7 @@ class CampaignExecutionTests(unittest.TestCase):
                 )
                 runner.run_campaign(91, "operator", cancel_check=cancel_check)
                 self.assertEqual(database.campaign["status"], expected_status)
+                self.assertEqual(database.targets[0]["status"], expected_target_status)
                 self.assertEqual(transport.plans, [])
 
     def test_lock_contention_and_exception_release_lock(self):
@@ -346,6 +377,7 @@ class CampaignExecutionTests(unittest.TestCase):
         with self.assertRaises(LockUnavailable):
             runner.run_campaign(91, "operator")
         self.assertTrue(database.connection.closed)
+        self.assertTrue(all(connection.closed for connection in database.connections))
 
         database = FakeRunnerDatabase()
         database.campaign["status"] = "QUEUED"
@@ -355,6 +387,7 @@ class CampaignExecutionTests(unittest.TestCase):
         with self.assertRaises(Exception):
             runner.run_campaign(91, "operator")
         self.assertTrue(database.connection.closed)
+        self.assertTrue(all(connection.closed for connection in database.connections))
 
     def test_duplicate_execution_is_rejected(self):
         database = FakeRunnerDatabase()

@@ -525,16 +525,28 @@ class AdhocCampaignRunner:
         if not callable(self.conn_factory):
             raise RunnerExecutionUnavailable("A database connection factory is required")
 
+        # Keep the session-level exclusion lock on a dedicated connection for
+        # the complete run.  A separate work connection lets another trusted
+        # connection record cancellation while DNS/transport is in flight.
         lock_conn = acquire_runner_lock(self.conn_factory)
+        work_conn = None
         try:
-            result = self._run_locked(lock_conn, campaign_id, cancel_check)
+            work_conn = self.conn_factory()
+            result = self._run_locked(work_conn, campaign_id, cancel_check)
         except Exception:
             try:
-                lock_conn.rollback()
+                if work_conn is not None:
+                    work_conn.rollback()
             finally:
-                release_runner_lock(lock_conn)
+                if work_conn is not None:
+                    work_conn.close()
+                try:
+                    lock_conn.rollback()
+                finally:
+                    release_runner_lock(lock_conn)
             raise
-        else:  # pragma: no cover - kept for structural clarity
+        else:
+            work_conn.close()
             release_runner_lock(lock_conn)
             return result
 
@@ -547,6 +559,7 @@ class AdhocCampaignRunner:
 
         completed = 0
         failed = 0
+        skipped = 0
         cancelled = False
         deadline_expired = False
         for target_id in target_ids:
@@ -564,6 +577,8 @@ class AdhocCampaignRunner:
             outcome = self._process_target(conn, campaign_id, target_id)
             if outcome == "completed":
                 completed += 1
+            elif outcome == "skipped":
+                skipped += 1
             else:
                 failed += 1
 
@@ -574,6 +589,7 @@ class AdhocCampaignRunner:
             deadline_expired=deadline_expired,
             completed=completed,
             failed=failed,
+            skipped=skipped,
         )
 
     @staticmethod
@@ -687,6 +703,19 @@ class AdhocCampaignRunner:
                 scheme=self.policy.scheme,
                 timeout_seconds=self.policy.request_timeout_seconds,
             )
+            # This is the final authorization/state check before dispatch.
+            # Commit before transport so no SQL row lock or stale transaction
+            # remains open while the injected transport is running.
+            current = self._reload_target_for_request(conn, campaign_id, target_id)
+            validate_execution_context(
+                current,
+                now=self.clock(),
+                timeout_seconds=self.policy.campaign_timeout_seconds,
+            )
+            recheck_target_authorization(
+                conn.cursor(), current.domain_id, current.source_scan_id
+            )
+            conn.commit()
             try:
                 response = self.transport.request(plan)
             except TimeoutError as exc:
@@ -725,10 +754,12 @@ class AdhocCampaignRunner:
                 context,
                 _failure_code(exc),
                 target_status=(
-                    "CANCELLED" if isinstance(exc, CampaignCancelled) else "FAILED"
+                    "CANCELLED" if isinstance(exc, CampaignCancelled)
+                    else "SKIPPED" if isinstance(exc, (AuthorizationRevoked, CampaignDeadlineExceeded))
+                    else "FAILED"
                 ),
             )
-            return "failed"
+            return "skipped" if isinstance(exc, (AuthorizationRevoked, CampaignDeadlineExceeded)) else "failed"
 
     def _reload_target_for_request(self, conn, campaign_id, target_id):
         return load_execution_context(conn.cursor(), campaign_id, target_id)
@@ -860,19 +891,30 @@ class AdhocCampaignRunner:
             raise
 
     def _finalize_campaign(self, conn, campaign_id, *, cancelled,
-                           deadline_expired, completed, failed):
+                           deadline_expired, completed, failed, skipped):
         cur = conn.cursor()
+        cur.execute(
+            "SELECT status FROM adhoc_campaigns WHERE id = %s FOR UPDATE",
+            (campaign_id,),
+        )
+        current_status = cur.fetchone()[0]
+        if current_status in {"CANCEL_REQUESTED", "CANCELLED"}:
+            # A separate connection may request cancellation while transport
+            # is active.  Convert remaining work before final status selection.
+            self._cancel_pending_targets(conn, campaign_id, "campaign_cancelled")
+            cancelled = True
         cur.execute("""
             SELECT
                 COUNT(*),
                 COUNT(*) FILTER (WHERE target_status = 'COMPLETED'),
                 COUNT(*) FILTER (WHERE target_status = 'FAILED'),
+                COUNT(*) FILTER (WHERE target_status = 'SKIPPED'),
                 COUNT(*) FILTER (WHERE target_status = 'CANCELLED'),
                 COUNT(*) FILTER (WHERE target_status IN ('PENDING', 'RUNNING'))
             FROM adhoc_campaign_targets
             WHERE campaign_id = %s
         """, (campaign_id,))
-        total, done, failed_targets, cancelled_targets, pending = cur.fetchone()
+        total, done, failed_targets, skipped_targets, cancelled_targets, pending = cur.fetchone()
         if cancelled or cancelled_targets:
             status, failure_code = "CANCELLED", "campaign_cancelled"
         elif deadline_expired:
@@ -880,11 +922,13 @@ class AdhocCampaignRunner:
             failure_code = "campaign_deadline_exceeded"
         elif pending:
             status, failure_code = "PARTIAL", "targets_incomplete"
-        elif done == total and total:
+        elif done == total and total and not skipped_targets and not failed_targets:
             status, failure_code = "SUCCEEDED", None
-        elif failed_targets == total and total:
-            status, failure_code = "FAILED", "all_targets_failed"
-        elif done or failed_targets:
+        elif not done and skipped_targets == total and total:
+            status, failure_code = "FAILED", "all_targets_skipped"
+        elif not done and failed_targets + skipped_targets == total and total:
+            status, failure_code = "FAILED", "no_successful_evaluations"
+        elif done or failed_targets or skipped_targets:
             status, failure_code = "PARTIAL", "partial_target_failure"
         else:
             status, failure_code = "FAILED", "no_targets"
@@ -895,8 +939,9 @@ class AdhocCampaignRunner:
             "targets": total,
             "completed": done,
             "failed": failed_targets,
+            "skipped": skipped_targets,
             "cancelled": cancelled_targets,
-            "processed": completed + failed,
+            "processed": done + failed_targets + skipped_targets + cancelled_targets,
         }
 
     @staticmethod
