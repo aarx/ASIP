@@ -114,7 +114,7 @@ class RunnerGuardTests(unittest.TestCase):
         row = (
             10, "RUNNING", 16, context().created_at,
             20, "PENDING", 16, 30, "SUCCEEDED", "approved.example",
-            "CONFIRMED", True, "manual",
+            "CONFIRMED", True, "manual", "2026-10-28", "2026-10-28",
         )
         cursor = Cursor(row)
         transport = mock.Mock()
