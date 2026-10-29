@@ -157,6 +157,7 @@ test("communicates an empty authorized scope without implying safety", async () 
   expect(await screen.findByText("No authorized assets in selected scan")).toBeInTheDocument();
   expect(screen.getByText("318 scan members")).toBeInTheDocument();
   expect(screen.getByText(/Zero authorized assets is not evidence of safety/i)).toBeInTheDocument();
+  expect(screen.queryByText("Assets needing attention")).not.toBeInTheDocument();
   expect(screen.queryByText("No matching filtered results")).not.toBeInTheDocument();
 });
 
@@ -166,9 +167,15 @@ test("renders candidates, legacy leads, and expandable technical evidence", asyn
 
   expect(await screen.findByText("app.example.com")).toBeInTheDocument();
   expect(screen.getAllByText("Potential CVE").length).toBeGreaterThan(0);
-  expect(screen.getAllByText("No PHP observation").length).toBeGreaterThan(0);
-  expect(screen.getByText("Legacy PHP leads")).toBeInTheDocument();
+  const legacyRow = screen.getByText("legacy.example.com").closest("tr");
+  expect(within(legacyRow).getByText("Legacy evidence")).toBeInTheDocument();
+  expect(within(legacyRow).getByText("Version unavailable")).toBeInTheDocument();
+  expect(within(legacyRow).getByText("Not assessed")).toBeInTheDocument();
+  expect(within(legacyRow).getByText("No PHP observation")).toBeInTheDocument();
+  expect(screen.queryByText("Legacy PHP leads")).not.toBeInTheDocument();
   expect(screen.getAllByText("legacy.example.com")).toHaveLength(1);
+  expect(screen.getByText("3 MATCHING RESULTS")).toBeInTheDocument();
+  expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(4);
 
   const details = screen.getByText("Technical evidence").closest("details");
   expect(details).not.toHaveAttribute("open");

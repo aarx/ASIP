@@ -171,6 +171,7 @@ function ResultTable({ results, authoritative }) {
               <tr key={`${result.scan_id}-${result.domain}`}>
                 <td data-label="Asset">
                   {asset}
+                  {result.legacy_php_lead && <span className="adhoc-legacy-indicator">Legacy evidence</span>}
                   <span className="asset-secondary">{authoritative ? "Current authoritative scan" : "Historical scan · current detail not linked"}</span>
                 </td>
                 <td data-label="PHP version" className="technical-value">
@@ -262,11 +263,8 @@ export default function AdhocChecksPage() {
     [scanData],
   );
   const selectedScan = successfulScans.find((scan) => scan.scan_id === selectedScanId);
-  const resultRows = (checkData?.results || []).filter((result) => !result.legacy_php_lead);
+  const resultRows = checkData?.results || [];
   const totalPages = Math.max(Math.ceil((checkData?.count || 0) / RESULT_LIMIT), 1);
-  const potentialCount = filters.classification === "Potential CVE" && !filters.lifecycle && !filters.cve_status
-    ? checkData?.count
-    : null;
 
   const updateFilter = (event) => {
     setFilters((current) => ({ ...current, [event.target.name]: event.target.value }));
@@ -287,7 +285,6 @@ export default function AdhocChecksPage() {
   const hasAuthorizedAssets = scope?.authorized_assets > 0;
   const hasEvaluatedAssets = scope?.evaluated_assets > 0;
   const noFilteredResults = checkState === "ready" && checkData?.count === 0;
-  const onlyLegacyOnPage = checkState === "ready" && checkData?.count > 0 && resultRows.length === 0;
 
   return (
     <div className="adhoc-workspace">
@@ -323,12 +320,6 @@ export default function AdhocChecksPage() {
         <MetricCard label="Not evaluated" value={scope?.not_evaluated_assets ?? "—"} support="No structured PHP observation" accent="#a96f1f" />
       </section>
 
-      <div className="adhoc-attention-summary">
-        <strong>Assets needing attention</strong>
-        <span>{potentialCount == null ? "—" : potentialCount}</span>
-        <small>{potentialCount == null ? "A global attention total is not returned unless Potential CVE is the only active filter." : "Potential CVE matches under the selected scan."}</small>
-      </div>
-
       <div className="adhoc-boundary-note">
         Potential CVE is a reported-version candidate from the local advisory dataset. It is not a confirmed vulnerability, installed-runtime verification, or exploitability result. Partial coverage and unknown patch status remain explicit.
       </div>
@@ -354,31 +345,15 @@ export default function AdhocChecksPage() {
       )}
       {checkState === "ready" && hasAuthorizedAssets && !hasEvaluatedAssets && (
         <Panel title="No structured PHP observations" subtitle="Authorized assets exist, but this selected scan has no persisted structured PHP observations.">
-          <div className="adhoc-empty-copy"><strong>{scope.authorized_assets} authorized assets</strong><span>No structured observations were returned for this scan.</span><p>Legacy PHP labels, when present, remain separate leads and do not receive version or CVE applicability.</p></div>
+          <div className="adhoc-empty-copy"><strong>{scope.authorized_assets} authorized assets</strong><span>No structured observations were returned for this scan.</span><p>Legacy PHP labels remain visible in the results table as evidence-only leads without version or CVE applicability.</p></div>
         </Panel>
       )}
       {checkState === "ready" && hasAuthorizedAssets && hasEvaluatedAssets && noFilteredResults && (
         <EmptyState title="No matching filtered results" copy="No authorized results matched the selected classification, lifecycle, and CVE status filters. This does not establish that no vulnerabilities exist." />
       )}
-      {checkState === "ready" && hasAuthorizedAssets && onlyLegacyOnPage && (
-        <EmptyState title="Legacy PHP leads are listed separately" copy="The selected result page contains legacy labels without structured observations. They are shown below without version or CVE evaluation." />
-      )}
       {checkState === "ready" && resultRows.length > 0 && (
         <Panel title="PHP review results" subtitle="Evidence remains observation-based; statuses do not confirm installation or exploitability." meta={`${checkData.count} MATCHING RESULTS`}>
           <ResultTable results={resultRows} authoritative={selectedAuthoritative} />
-        </Panel>
-      )}
-
-      {checkState === "ready" && checkData?.legacy_leads?.length > 0 && (
-        <Panel title="Legacy PHP leads" subtitle="Legacy technology labels are investigation leads only and are not merged with structured observations." meta={`${checkData.legacy_leads.length} LEADS`}>
-          <div className="adhoc-legacy-list">
-            {checkData.legacy_leads.map((lead) => (
-              <div className="adhoc-legacy-row" key={`${lead.scan_id}-${lead.domain}`}>
-                <span className="technical-value">{lead.domain}</span>
-                <span>{lead.structured_observation_present ? "Structured observation also present" : "No version or CVE evaluation"}</span>
-              </div>
-            ))}
-          </div>
         </Panel>
       )}
 
