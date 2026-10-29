@@ -6,6 +6,8 @@ CREATE TABLE public.adhoc_campaigns (
     source_scan_id integer NOT NULL,
     requested_by text NOT NULL,
     idempotency_key text NOT NULL,
+    target_set jsonb NOT NULL,
+    request_fingerprint text NOT NULL,
     assessment_date date NOT NULL,
     dataset_revision text NOT NULL,
     status text NOT NULL DEFAULT 'QUEUED',
@@ -21,6 +23,10 @@ CREATE TABLE public.adhoc_campaigns (
         CHECK (btrim(requested_by) <> ''),
     CONSTRAINT adhoc_campaigns_idempotency_key_check
         CHECK (btrim(idempotency_key) <> ''),
+    CONSTRAINT adhoc_campaigns_target_set_check
+        CHECK (jsonb_typeof(target_set) = 'array' AND jsonb_array_length(target_set) > 0),
+    CONSTRAINT adhoc_campaigns_request_fingerprint_check
+        CHECK (btrim(request_fingerprint) <> ''),
     CONSTRAINT adhoc_campaigns_status_check
         CHECK (status IN (
             'QUEUED', 'RUNNING', 'CANCEL_REQUESTED', 'CANCELLED',
@@ -63,6 +69,8 @@ CREATE TABLE public.adhoc_campaign_targets (
     CONSTRAINT adhoc_campaign_targets_campaign_scan_fkey
         FOREIGN KEY (campaign_id, source_scan_id)
         REFERENCES public.adhoc_campaigns (id, source_scan_id),
+    CONSTRAINT adhoc_campaign_targets_campaign_id_key
+        UNIQUE (campaign_id, id),
     CONSTRAINT adhoc_campaign_targets_scan_domain_fkey
         FOREIGN KEY (source_scan_id, domain_id)
         REFERENCES public.scan_results (scan_id, domain_id),

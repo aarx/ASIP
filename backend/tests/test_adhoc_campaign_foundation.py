@@ -12,10 +12,12 @@ from adhoc_campaigns import (  # noqa: E402
     CampaignSchemaUnavailable,
     CAMPAIGN_STATES,
     OPERATOR_AUTHENTICATION_AVAILABLE,
+    campaign_request_fingerprint,
     create_campaign,
     get_campaign_results,
     runtime_authorization_query,
     transition_campaign,
+    normalize_target_set,
     validate_campaign_transition,
     validate_explicit_target_selection,
 )
@@ -118,8 +120,19 @@ class CampaignFoundationTests(unittest.TestCase):
         self.assertFalse(OPERATOR_AUTHENTICATION_AVAILABLE)
 
     def test_creation_is_idempotent_for_same_authorized_request(self):
+        fingerprint = campaign_request_fingerprint(
+            check_id="php-rce",
+            source_scan_id=16,
+            requested_by="analyst",
+            target_set=["approved.example"],
+            assessment_date="2026-10-28",
+            dataset_revision="2026-10-28",
+        )
         cursor = QueueCursor(
-            fetchones=[(91, "php-rce", 16, "analyst", "QUEUED")]
+            fetchones=[(
+                91, "php-rce", 16, "analyst", ["approved.example"],
+                fingerprint, "2026-10-28", "2026-10-28", "QUEUED",
+            )]
         )
         conn = FakeConnection(cursor)
         result = create_campaign(
@@ -130,11 +143,110 @@ class CampaignFoundationTests(unittest.TestCase):
             requested_by="analyst",
             idempotency_key="request-1",
             dataset_revision="2026-10-28",
+            assessment_date="2026-10-28",
             operator_authorizer=lambda subject: subject == "analyst",
         )
         self.assertEqual(result, {"campaign_id": 91, "status": "QUEUED", "idempotent": True})
         self.assertEqual(conn.commits, 1)
-        self.assertNotIn("INSERT INTO adhoc_campaigns", cursor.executions[0][0])
+        self.assertIn("pg_advisory_xact_lock", cursor.executions[0][0])
+        self.assertTrue(all("INSERT INTO adhoc_campaigns" not in sql for sql, _ in cursor.executions))
+
+    def test_same_key_conflicting_target_set_is_rejected(self):
+        fingerprint = campaign_request_fingerprint(
+            check_id="php-rce", source_scan_id=16, requested_by="analyst",
+            target_set=["other.example"], assessment_date="2026-10-28",
+            dataset_revision="2026-10-28",
+        )
+        cursor = QueueCursor(fetchones=[(
+            91, "php-rce", 16, "analyst", ["other.example"], fingerprint,
+            "2026-10-28", "2026-10-28", "QUEUED",
+        )])
+        with self.assertRaisesRegex(CampaignError, "Idempotency key conflicts"):
+            create_campaign(
+                FakeConnection(cursor), check_id="php-rce", source_scan_id=16,
+                target_domains=["approved.example"], requested_by="analyst",
+                idempotency_key="request-1", dataset_revision="2026-10-28",
+                assessment_date="2026-10-28",
+                operator_authorizer=lambda subject: subject == "analyst",
+            )
+
+    def test_same_key_conflicting_dataset_revision_is_rejected(self):
+        fingerprint = campaign_request_fingerprint(
+            check_id="php-rce", source_scan_id=16, requested_by="analyst",
+            target_set=["approved.example"], assessment_date="2026-10-28",
+            dataset_revision="old-revision",
+        )
+        cursor = QueueCursor(fetchones=[(
+            91, "php-rce", 16, "analyst", ["approved.example"], fingerprint,
+            "2026-10-28", "old-revision", "QUEUED",
+        )])
+        with self.assertRaisesRegex(CampaignError, "Idempotency key conflicts"):
+            create_campaign(
+                FakeConnection(cursor), check_id="php-rce", source_scan_id=16,
+                target_domains=["approved.example"], requested_by="analyst",
+                idempotency_key="request-1", dataset_revision="2026-10-28",
+                assessment_date="2026-10-28",
+                operator_authorizer=lambda subject: subject == "analyst",
+            )
+
+    def test_target_identity_is_order_independent_after_normalization(self):
+        self.assertEqual(
+            normalize_target_set(["B.example.", "a.example"]),
+            ("a.example", "b.example"),
+        )
+
+    def test_request_fingerprint_covers_complete_request_identity(self):
+        base = dict(
+            check_id="php-rce", source_scan_id=16, requested_by="analyst",
+            target_set=["approved.example"], assessment_date="2026-10-28",
+            dataset_revision="2026-10-28",
+        )
+        for field, value in (
+            ("check_id", "other-check"),
+            ("source_scan_id", 17),
+            ("requested_by", "different-operator"),
+            ("assessment_date", "2026-10-29"),
+            ("dataset_revision", "different-revision"),
+            ("target_set", ["other.example"]),
+        ):
+            with self.subTest(field=field):
+                variant = dict(base)
+                variant[field] = value
+                self.assertNotEqual(
+                    campaign_request_fingerprint(**base),
+                    campaign_request_fingerprint(**variant),
+                )
+
+    def test_missing_key_is_serialized_by_transaction_advisory_lock(self):
+        cursor = QueueCursor(
+            fetchones=[None, (16, "FAILED", None)]
+        )
+        with self.assertRaises(CampaignError):
+            create_campaign(
+                FakeConnection(cursor), check_id="php-rce", source_scan_id=16,
+                target_domains=["approved.example"], requested_by="analyst",
+                idempotency_key="concurrent-key", dataset_revision="2026-10-28",
+                operator_authorizer=lambda subject: True,
+            )
+        self.assertIn("pg_advisory_xact_lock", cursor.executions[0][0])
+        self.assertIsInstance(cursor.executions[0][1][0], int)
+
+    def test_failed_creation_rolls_back_before_insert(self):
+        cursor = QueueCursor(
+            fetchones=[None, (16, "SUCCEEDED", "2026-10-04")],
+            fetchalls=[[(7, "approved.example", "CANDIDATE", True, "manual")]],
+        )
+        conn = FakeConnection(cursor)
+        with self.assertRaises(CampaignError):
+            create_campaign(
+                conn, check_id="php-rce", source_scan_id=16,
+                target_domains=["approved.example"], requested_by="analyst",
+                idempotency_key="rollback-key", dataset_revision="2026-10-28",
+                operator_authorizer=lambda subject: True,
+            )
+        self.assertEqual(conn.commits, 0)
+        self.assertEqual(conn.rollbacks, 1)
+        self.assertTrue(all("INSERT INTO adhoc_campaigns" not in sql for sql, _ in cursor.executions))
 
     def test_creation_snapshots_authorized_target_in_one_transaction(self):
         cursor = QueueCursor(
@@ -167,7 +279,7 @@ class CampaignFoundationTests(unittest.TestCase):
         self.assertIn("FOR UPDATE", cursor.executions[0][0])
 
     def test_failed_source_scan_is_rejected_before_target_snapshot(self):
-        cursor = QueueCursor(fetchones=[(16, "FAILED", None)])
+        cursor = QueueCursor(fetchones=[None, (16, "FAILED", None)])
         with self.assertRaises(CampaignError):
             create_campaign(
                 FakeConnection(cursor),
@@ -179,7 +291,7 @@ class CampaignFoundationTests(unittest.TestCase):
                 dataset_revision="2026-10-28",
                 operator_authorizer=lambda subject: True,
             )
-        self.assertEqual(len(cursor.executions), 1)
+        self.assertEqual(len(cursor.executions), 3)
 
     def test_read_api_filters_before_pagination_and_hides_internal_ids(self):
         cursor = QueueCursor(
@@ -234,7 +346,10 @@ class CampaignFoundationTests(unittest.TestCase):
             "FOREIGN KEY (SOURCE_SCAN_ID, DOMAIN_ID)",
             "FOREIGN KEY (CAMPAIGN_ID, SOURCE_SCAN_ID)",
             "UNIQUE (CAMPAIGN_ID, DOMAIN_ID)",
+            "UNIQUE (CAMPAIGN_ID, ID)",
             "UNIQUE (CAMPAIGN_ID, TARGET_ID, ATTEMPT_NUMBER)",
+            "TARGET_SET JSONB",
+            "REQUEST_FINGERPRINT TEXT",
         ):
             self.assertIn(token, normalized)
         self.assertNotIn("ALTER TABLE PUBLIC.SCANS", normalized)
@@ -245,7 +360,7 @@ class CampaignFoundationTests(unittest.TestCase):
         main_source = (BACKEND / "main.py").read_text()
         self.assertNotIn('@app.post("/v2/adhoc/campaigns")', main_source)
         self.assertIn('@app.get("/v2/adhoc/campaigns")', main_source)
-        self.assertNotIn("requests", (BACKEND / "adhoc_campaigns.py").read_text())
+        self.assertNotIn("import requests", (BACKEND / "adhoc_campaigns.py").read_text())
 
 
 if __name__ == "__main__":

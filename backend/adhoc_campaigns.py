@@ -6,6 +6,8 @@ has no such middleware, so no production caller is wired to it yet.
 """
 
 from datetime import date
+import hashlib
+import json
 
 from authorization_policy import explicit_t2_authorization_sql
 
@@ -68,6 +70,56 @@ def _normalize_domain(value):
     return str(value or "").strip().lower().rstrip(".")
 
 
+def _normalize_identity(value):
+    return str(value or "").strip()
+
+
+def normalize_target_set(requested_domains, max_targets=50):
+    """Return the canonical target set used in campaign identity."""
+    if not requested_domains:
+        raise CampaignError("At least one explicit target is required")
+    normalized = tuple(sorted(_normalize_domain(value) for value in requested_domains))
+    if any(not value for value in normalized):
+        raise CampaignError("Target domains must be non-empty")
+    if len(set(normalized)) != len(normalized):
+        raise CampaignError("Target domains must be unique")
+    if len(normalized) > max_targets:
+        raise CampaignError(f"Target limit exceeded: maximum is {max_targets}")
+    return normalized
+
+
+def _normalize_assessment_date(value):
+    if value is None:
+        return date.today()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError as exc:
+        raise CampaignError("assessment_date must be an ISO date") from exc
+
+
+def campaign_request_fingerprint(
+    *, check_id, source_scan_id, requested_by, target_set,
+    assessment_date, dataset_revision,
+):
+    identity = {
+        "assessment_date": _normalize_assessment_date(assessment_date).isoformat(),
+        "check_id": _normalize_identity(check_id).lower(),
+        "dataset_revision": _normalize_identity(dataset_revision),
+        "requested_by": _normalize_identity(requested_by),
+        "source_scan_id": int(source_scan_id),
+        "target_set": list(normalize_target_set(target_set)),
+    }
+    canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _idempotency_lock_value(idempotency_key):
+    digest = hashlib.sha256(idempotency_key.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
 def _authorized_member(row):
     return (
         row[2] == "CONFIRMED"
@@ -83,16 +135,7 @@ def validate_explicit_target_selection(requested_domains, member_rows, max_targe
     scannable, validation_source)``. The returned snapshots are immutable
     request data; a future worker must recheck the live predicate.
     """
-    if not requested_domains:
-        raise CampaignError("At least one explicit target is required")
-
-    normalized = [_normalize_domain(value) for value in requested_domains]
-    if any(not value for value in normalized):
-        raise CampaignError("Target domains must be non-empty")
-    if len(set(normalized)) != len(normalized):
-        raise CampaignError("Target domains must be unique")
-    if len(normalized) > max_targets:
-        raise CampaignError(f"Target limit exceeded: maximum is {max_targets}")
+    normalized = normalize_target_set(requested_domains, max_targets)
 
     by_domain = {_normalize_domain(row[1]): row for row in member_rows}
     snapshots = []
@@ -127,6 +170,7 @@ def runtime_authorization_query(domain_id, source_scan_id):
 
 
 def _require_operator(operator_authorizer, requested_by):
+    requested_by = _normalize_identity(requested_by)
     if not callable(operator_authorizer) or not requested_by:
         raise OperatorAuthorizationRequired(
             "Campaign creation requires an authenticated operator"
@@ -141,6 +185,7 @@ def _require_operator(operator_authorizer, requested_by):
         raise OperatorAuthorizationRequired(
             "Campaign creation requires an authorized operator"
         )
+    return requested_by
 
 
 def _successful_scan(cur, source_scan_id):
@@ -186,36 +231,58 @@ def create_campaign(
     No API route currently supplies ``operator_authorizer``. Tests and a
     future authenticated adapter may provide one explicitly.
     """
-    _require_operator(operator_authorizer, requested_by)
+    requested_by = _require_operator(operator_authorizer, requested_by)
+    check_id = _normalize_identity(check_id).lower()
+    idempotency_key = _normalize_identity(idempotency_key)
+    dataset_revision = _normalize_identity(dataset_revision)
     if not check_id or not idempotency_key or not dataset_revision:
         raise CampaignError("check_id, idempotency_key, and dataset_revision are required")
-    assessment_date = assessment_date or date.today()
+    assessment_date = _normalize_assessment_date(assessment_date)
+    target_set = normalize_target_set(target_domains, max_targets)
+    request_fingerprint = campaign_request_fingerprint(
+        check_id=check_id,
+        source_scan_id=source_scan_id,
+        requested_by=requested_by,
+        target_set=target_set,
+        assessment_date=assessment_date,
+        dataset_revision=dataset_revision,
+    )
     cur = conn.cursor()
     try:
+        # A missing row cannot be locked with SELECT FOR UPDATE. The
+        # transaction-scoped advisory lock serializes first-use operations for
+        # the same key while the unique index remains the database backstop.
         cur.execute(
-            "SELECT id, check_id, source_scan_id, requested_by, status "
+            "SELECT pg_advisory_xact_lock(%s)",
+            (_idempotency_lock_value(idempotency_key),),
+        )
+        cur.execute(
+            "SELECT id, check_id, source_scan_id, requested_by, target_set, "
+            "request_fingerprint, assessment_date, dataset_revision, status "
             "FROM adhoc_campaigns WHERE idempotency_key = %s FOR UPDATE",
             (idempotency_key,),
         )
         existing = cur.fetchone()
         if existing is not None:
-            if existing[1:4] != (check_id, source_scan_id, requested_by):
+            if existing[5] != request_fingerprint:
                 raise CampaignError("Idempotency key conflicts with an existing campaign")
             conn.commit()
-            return {"campaign_id": existing[0], "status": existing[4], "idempotent": True}
+            return {"campaign_id": existing[0], "status": existing[8], "idempotent": True}
 
         scan = _successful_scan(cur, source_scan_id)
         members = _member_rows(cur, source_scan_id)
-        snapshots = validate_explicit_target_selection(target_domains, members, max_targets)
+        snapshots = validate_explicit_target_selection(target_set, members, max_targets)
 
         cur.execute("""
             INSERT INTO adhoc_campaigns(
                 check_id, source_scan_id, requested_by, idempotency_key,
-                assessment_date, dataset_revision, status
-            ) VALUES (%s, %s, %s, %s, %s, %s, 'QUEUED')
+                target_set, request_fingerprint, assessment_date,
+                dataset_revision, status
+            ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, 'QUEUED')
             RETURNING id
         """, (
             check_id, source_scan_id, requested_by, idempotency_key,
+            json.dumps(list(target_set)), request_fingerprint,
             assessment_date, dataset_revision,
         ))
         campaign_id = cur.fetchone()[0]
