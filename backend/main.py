@@ -17,9 +17,12 @@ from db import get_conn, get_latest_authoritative_scan_id, get_previous_authorit
 from risk_engine import calculate_scan_risks, get_asset_exposure_keywords
 from ownership import OWNERSHIP_CONFIRMED, OWNERSHIP_EXTERNAL, normalize_ownership_status
 from ownership_ingest import apply_ownership
+from authorization_policy import explicit_t2_authorization_sql
 from php_lifecycle import evaluate_php_lifecycle
 from php_cve_intelligence import (
     PHP_CVE_ADVISORIES,
+    PHP_CVE_COVERAGE,
+    PHP_CVE_DATASET_REVISION,
     evaluate_php_cve_applicability,
 )
 
@@ -2072,6 +2075,308 @@ def _url_hostname(value):
     except (TypeError, ValueError):
         return None
     return hostname.lower().rstrip(".") if hostname else None
+
+
+ADHOC_PHP_RCE_AUTHORIZATION_PREDICATE = explicit_t2_authorization_sql("d")
+_ADHOC_PHP_RCE_CLASSIFICATIONS = {
+    "potential_cve",
+    "not_affected_by_reported_version",
+    "insufficient_evidence",
+    "not_evaluated",
+    "unknown",
+    "no_php_observation",
+}
+_ADHOC_PHP_RCE_CVE_STATUSES = {
+    "potentially_affected",
+    "not_affected_by_version",
+    "insufficient_evidence",
+    "none",
+}
+_ADHOC_PHP_RCE_LIFECYCLE_STATUSES = {
+    "active_support",
+    "security_support",
+    "end_of_life",
+    "unknown",
+}
+
+
+def _adhoc_filter_value(value):
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _adhoc_isoformat(value):
+    return value.isoformat() if value is not None else None
+
+
+def _adhoc_cve_statuses(observations):
+    return [
+        candidate.get("applicability_status")
+        for observation in observations
+        for candidate in observation.get("cve_intelligence", {}).get("candidates", [])
+    ]
+
+
+def _adhoc_classify(observations, legacy_php_label):
+    if not observations:
+        if legacy_php_label:
+            return (
+                "Not evaluated",
+                "No PHP observation",
+                "legacy_php_label_without_structured_observation",
+            )
+        return "Not evaluated", "Not evaluated", "no_php_observation"
+
+    statuses = _adhoc_cve_statuses(observations)
+    if "potentially_affected" in statuses:
+        return "Evaluated", "Potential CVE", "potential_cve_candidate"
+    if "insufficient_evidence" in statuses:
+        return "Unknown", "Insufficient evidence", "php_version_or_branch_uncertain"
+    if statuses and all(status == "not_affected_by_version" for status in statuses):
+        return (
+            "Evaluated",
+            "Not affected by reported version",
+            "reported_version_outside_dataset_ranges",
+        )
+    return "Unknown", "Unknown", "php_intelligence_unavailable"
+
+
+def _adhoc_matches_result(result, classification=None, lifecycle=None, cve_status=None):
+    if classification and _adhoc_filter_value(result["classification"]) != classification:
+        return False
+    if lifecycle:
+        if not any(
+            observation.get("lifecycle", {}).get("status") == lifecycle
+            for observation in result["observations"]
+        ):
+            return False
+    if cve_status:
+        statuses = _adhoc_cve_statuses(result["observations"])
+        if cve_status == "none":
+            return not statuses
+        return cve_status in statuses
+    return True
+
+
+@app.get("/v2/adhoc/checks/php-rce")
+def adhoc_php_rce(
+    scan_id: int = None,
+    page: int = 1,
+    limit: int = 50,
+    classification: str = None,
+    lifecycle: str = None,
+    cve_status: str = None,
+):
+    """Return a read-only, scan-bound PHP RCE review population.
+
+    Results and all scope counts are limited to the selected successful scan.
+    ``scan_members`` counts distinct scan membership rows, while
+    ``authorized_assets`` and ``http_eligible_assets`` count only assets that
+    satisfy the existing confirmed/manual/scannable authorization predicate.
+    ``evaluated_assets`` counts authorized assets with structured PHP
+    observations; legacy labels are leads only and are never evaluated as
+    version evidence.  ``persisted_at`` is the database persistence time, not
+    the time of the original HTTP observation.
+    """
+    page = max(int(page), 1)
+    limit = min(max(int(limit), 1), 200)
+    classification = _adhoc_filter_value(classification) if classification else None
+    lifecycle = _adhoc_filter_value(lifecycle) if lifecycle else None
+    cve_status = _adhoc_filter_value(cve_status) if cve_status else None
+
+    if classification and classification not in _ADHOC_PHP_RCE_CLASSIFICATIONS:
+        raise HTTPException(status_code=400, detail="Invalid classification filter")
+    if lifecycle and lifecycle not in _ADHOC_PHP_RCE_LIFECYCLE_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid lifecycle filter")
+    if cve_status and cve_status not in _ADHOC_PHP_RCE_CVE_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid CVE status filter")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    selected_scan_id = scan_id
+    if selected_scan_id is None:
+        selected_scan_id = get_latest_authoritative_scan_id(cur)
+        if selected_scan_id is None:
+            conn.close()
+            raise HTTPException(status_code=404, detail="No successful scan exists")
+
+    cur.execute(
+        "SELECT id, status, completed_at FROM scans WHERE id = %s",
+        (selected_scan_id,),
+    )
+    scan = cur.fetchone()
+    if scan is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Scan not found")
+    if scan[1] != "SUCCEEDED":
+        conn.close()
+        raise HTTPException(status_code=409, detail="Scan is not a successful scan")
+
+    latest_authoritative_scan_id = get_latest_authoritative_scan_id(cur)
+    assessment_date = date.today()
+
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT domain_id)
+        FROM scan_results
+        WHERE scan_id = %s
+        """,
+        (selected_scan_id,),
+    )
+    scan_members = cur.fetchone()[0]
+
+    cur.execute(
+        f"""
+        SELECT sr.domain_id, d.domain,
+               CASE WHEN ds.http_status > 0 THEN TRUE ELSE FALSE END
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        LEFT JOIN domain_states ds
+          ON ds.scan_id = sr.scan_id AND ds.domain_id = sr.domain_id
+        WHERE sr.scan_id = %s
+          AND {ADHOC_PHP_RCE_AUTHORIZATION_PREDICATE}
+        ORDER BY d.domain ASC, d.id ASC
+        """,
+        (selected_scan_id,),
+    )
+    authorized_rows = cur.fetchall()
+    authorized_by_id = {
+        row[0]: {"domain": row[1], "http_eligible": bool(row[2])}
+        for row in authorized_rows
+    }
+
+    cur.execute(
+        f"""
+        SELECT dto.domain_id, dto.technology, dto.version, dto.confidence,
+               dto.evidence_type, dto.sanitized_evidence, dto.observed_url,
+               dto.detector_version, dto.created_at
+        FROM domain_technology_observations dto
+        JOIN scan_results sr
+          ON sr.scan_id = dto.scan_id AND sr.domain_id = dto.domain_id
+        JOIN domains d ON d.id = dto.domain_id
+        WHERE dto.scan_id = %s
+          AND lower(dto.technology) = 'php'
+          AND {ADHOC_PHP_RCE_AUTHORIZATION_PREDICATE}
+        ORDER BY dto.domain_id, dto.created_at, dto.technology, dto.version
+        """,
+        (selected_scan_id,),
+    )
+    observation_rows = cur.fetchall()
+    observations_by_domain = {}
+    for row in observation_rows:
+        domain_id = row[0]
+        if domain_id not in authorized_by_id:
+            continue
+        observation = {
+            "technology": row[1],
+            "version": row[2],
+            "confidence": row[3],
+            "evidence_type": row[4],
+            "sanitized_evidence": row[5],
+            "observed_url": row[6],
+            "detector_version": row[7],
+            "persisted_at": _adhoc_isoformat(row[8]),
+            "lifecycle": evaluate_php_lifecycle(row[1], row[2], assessment_date),
+            "cve_intelligence": evaluate_php_cve_applicability(
+                row[1],
+                row[2],
+                PHP_CVE_ADVISORIES,
+                assessment_date,
+            ),
+        }
+        observations_by_domain.setdefault(domain_id, []).append(observation)
+
+    cur.execute(
+        f"""
+        SELECT dt.domain_id, d.domain, dt.tech
+        FROM domain_tech dt
+        JOIN scan_results sr
+          ON sr.scan_id = dt.scan_id AND sr.domain_id = dt.domain_id
+        JOIN domains d ON d.id = dt.domain_id
+        WHERE dt.scan_id = %s
+          AND lower(dt.tech) = 'php'
+          AND {ADHOC_PHP_RCE_AUTHORIZATION_PREDICATE}
+        ORDER BY d.domain ASC
+        """,
+        (selected_scan_id,),
+    )
+    legacy_rows = cur.fetchall()
+    legacy_domain_ids = {row[0] for row in legacy_rows if row[0] in authorized_by_id}
+
+    all_results = []
+    for domain_id, asset in authorized_by_id.items():
+        observations = observations_by_domain.get(domain_id, [])
+        legacy_php_label = domain_id in legacy_domain_ids
+        evaluation_status, result_classification, reason_code = _adhoc_classify(
+            observations,
+            legacy_php_label,
+        )
+        all_results.append({
+            "domain": asset["domain"],
+            "scan_id": selected_scan_id,
+            "evaluation_status": evaluation_status,
+            "classification": result_classification,
+            "reason_code": reason_code,
+            "observations": observations,
+            "legacy_php_label": legacy_php_label,
+            "legacy_php_lead": legacy_php_label and not observations,
+            "coverage": PHP_CVE_COVERAGE,
+        })
+
+    filtered_results = [
+        result for result in all_results
+        if _adhoc_matches_result(result, classification, lifecycle, cve_status)
+    ]
+    offset = (page - 1) * limit
+    paged_results = filtered_results[offset:offset + limit]
+    legacy_leads = [
+        {
+            "domain": asset["domain"],
+            "scan_id": selected_scan_id,
+            "technology": "php",
+            "reason_code": (
+                "legacy_php_label_without_structured_observation"
+                if not observations_by_domain.get(domain_id)
+                else "legacy_php_label_with_structured_observation"
+            ),
+            "structured_observation_present": bool(observations_by_domain.get(domain_id)),
+        }
+        for domain_id, asset in authorized_by_id.items()
+        if domain_id in legacy_domain_ids
+    ]
+    conn.close()
+
+    return {
+        "check": {
+            "id": "php-rce",
+            "assessment_date": assessment_date.isoformat(),
+            "dataset_revision": PHP_CVE_DATASET_REVISION,
+            "coverage": PHP_CVE_COVERAGE,
+        },
+        "scan": {
+            "scan_id": scan[0],
+            "status": scan[1],
+            "completed_at": _adhoc_isoformat(scan[2]),
+            "authoritative": scan[0] == latest_authoritative_scan_id,
+        },
+        "scope": {
+            "scan_members": scan_members,
+            "authorized_assets": len(authorized_by_id),
+            "http_eligible_assets": sum(
+                1 for asset in authorized_by_id.values() if asset["http_eligible"]
+            ),
+            "evaluated_assets": sum(
+                1 for domain_id in authorized_by_id if observations_by_domain.get(domain_id)
+            ),
+            "not_evaluated_assets": sum(
+                1 for domain_id in authorized_by_id if not observations_by_domain.get(domain_id)
+            ),
+        },
+        "legacy_leads": legacy_leads,
+        "count": len(filtered_results),
+        "page": page,
+        "limit": limit,
+        "results": paged_results,
+    }
 
 
 @app.get("/v2/overview")
