@@ -8,14 +8,15 @@ const NAV_ITEMS = [
   ["brand", "BP", "Brand Perimeter"],
   ["scans", "SC", "Scans"],
   ["investigate", "IN", "Investigate"],
+  ["adhoc", "AC", "Adhoc Checks", "/php-rce"],
 ];
 
-function NavLink({ route, symbol, label, activeRoute }) {
+function NavLink({ route, symbol, label, activeRoute, suffix = "" }) {
   const active = route === activeRoute;
   return (
     <a
       className={`nav-link${active ? " active" : ""}`}
-      href={`#/${route}`}
+      href={`#/${route}${suffix}`}
       aria-current={active ? "page" : undefined}
       title={label}
     >
@@ -39,13 +40,14 @@ export default function AppShell({ activeRoute, routeMeta, children }) {
 
         <nav className="sidebar-nav">
           <div className="nav-section-label">Workspace</div>
-          {NAV_ITEMS.map(([route, symbol, label]) => (
+          {NAV_ITEMS.map(([route, symbol, label, suffix]) => (
             <NavLink
               key={route}
               route={route}
               symbol={symbol}
               label={label}
               activeRoute={activeRoute}
+              suffix={suffix}
             />
           ))}
         </nav>
