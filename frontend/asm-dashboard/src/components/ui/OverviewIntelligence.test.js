@@ -24,6 +24,7 @@ test("renders supported aggregate charts with their scope", () => {
     <OverviewIntelligence
       assetGrowth={growth}
       httpStatus={{ "2xx": 4, "3xx": 2, "4xx": 1, "5xx": 0, no_response: 3 }}
+      discoverySummary={{ scan_id: 42, candidate: 3, external: 2 }}
     />
   );
 
@@ -40,6 +41,35 @@ test("renders supported aggregate charts with their scope", () => {
   expect(screen.queryByText("NO_RESPONSE")).not.toBeInTheDocument();
   expect(screen.queryByText("UNKNOWN")).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /2xx|3xx|4xx|5xx/i })).not.toBeInTheDocument();
+});
+
+test("renders current unique-domain discovery totals with exact Brand Perimeter links", () => {
+  render(<OverviewIntelligence discoverySummary={{ scan_id: 42, candidate: 3, external: 2 }} />);
+
+  const panel = document.getElementById("overview-discovery-validation");
+  expect(within(panel).getByText("SCAN #42")).toBeInTheDocument();
+  expect(within(panel).getByRole("link", { name: "Open Brand Perimeter Candidate assets (3)" })).toHaveAttribute(
+    "href",
+    "#/brand?ownership=CANDIDATE"
+  );
+  expect(within(panel).getByRole("link", { name: "Open Brand Perimeter External assets (2)" })).toHaveAttribute(
+    "href",
+    "#/brand?ownership=EXTERNAL"
+  );
+  expect(within(panel).getByText(/count unique domains/i)).toBeInTheDocument();
+  expect(within(panel).getByText(/Historical discovery-only records are excluded/i)).toBeInTheDocument();
+});
+
+test("preserves zero discovery totals and handles loading or failed discovery requests", () => {
+  const { rerender } = render(<OverviewIntelligence discoverySummary={{ scan_id: 42, candidate: 0, external: 0 }} />);
+  const panel = document.getElementById("overview-discovery-validation");
+  expect(within(panel).getAllByText("0")).toHaveLength(2);
+
+  rerender(<OverviewIntelligence discoverySummaryStatus="loading" />);
+  expect(screen.getByText("Loading discovery validation")).toBeInTheDocument();
+
+  rerender(<OverviewIntelligence discoverySummaryStatus="error" />);
+  expect(screen.getByText("Discovery validation unavailable")).toBeInTheDocument();
 });
 
 test("renders loading, API failure, and insufficient-history states", () => {

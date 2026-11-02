@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
-import { getV2Overview, getV2Scans } from "./services/api";
+import { getV2BrandAssets, getV2Overview, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -48,6 +48,7 @@ beforeEach(() => {
   window.location.hash = "#/overview";
   getV2Overview.mockReset();
   getV2Scans.mockReset();
+  getV2BrandAssets.mockReset();
 });
 
 test("renders the permanent shell and authoritative overview", async () => {
@@ -60,6 +61,13 @@ test("renders the permanent shell and authoritative overview", async () => {
       { scan_id: 42, status: "SUCCEEDED", completed_at: "2026-09-26T10:00:00Z", is_current_authoritative: true },
     ],
   });
+  getV2BrandAssets.mockImplementation(({ ownership }) => Promise.resolve({
+    scan_id: 42,
+    page: 1,
+    limit: 1,
+    count: ownership === "CANDIDATE" ? 3 : 2,
+    assets: [],
+  }));
   render(<App />);
 
   expect(screen.getByText("Loading authoritative state")).toBeInTheDocument();
@@ -82,6 +90,11 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByRole("link", { name: "Open Shadow assets" })).toHaveAttribute("href", "#/shadow");
   expect(screen.getByRole("link", { name: "Open Candidate assets" })).toHaveAttribute("href", "#/brand?ownership=CANDIDATE");
   expect(screen.getByRole("link", { name: "Open External assets" })).toHaveAttribute("href", "#/brand?ownership=EXTERNAL");
+  expect(screen.getByText("Discovery & validation")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open Brand Perimeter Candidate assets (3)" })).toHaveAttribute(
+    "href",
+    "#/brand?ownership=CANDIDATE"
+  );
   Date.now.mockRestore();
 });
 

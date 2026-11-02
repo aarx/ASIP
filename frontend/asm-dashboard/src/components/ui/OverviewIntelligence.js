@@ -235,12 +235,54 @@ function CertificateHealthPanel({ value, status, scanId, now }) {
   );
 }
 
-export default function OverviewIntelligence({ assetGrowth, assetGrowthStatus = "ready", httpStatus, httpStatusStatus = "ready", certificateExpiry, certificateExpiryStatus = "ready", certificateScanId, certificateNow }) {
+function normalizeDiscoverySummary(value) {
+  const candidate = Number(value?.candidate);
+  const external = Number(value?.external);
+  if (!Number.isInteger(candidate) || candidate < 0 || !Number.isInteger(external) || external < 0) return null;
+  return { candidate, external };
+}
+
+function DiscoveryValidationPanel({ value, status, scanId }) {
+  const summary = normalizeDiscoverySummary(value);
+  let content;
+  if (status === "loading") {
+    content = <ChartState title="Loading discovery validation" copy="Reading current Candidate and External totals." />;
+  } else if (status === "error" || !summary) {
+    content = <ChartState title="Discovery validation unavailable" copy="The overview is available, but current Brand Perimeter totals could not be loaded." error />;
+  } else {
+    content = (
+      <>
+        <div className="discovery-validation-signals" aria-label="Current discovery validation totals">
+          <a className="discovery-validation-signal" href="#/brand?ownership=CANDIDATE" aria-label={`Open Brand Perimeter Candidate assets (${summary.candidate})`}>
+            <span>Candidate assets</span>
+            <strong>{summary.candidate}</strong>
+            <small>Review ownership</small>
+          </a>
+          <a className="discovery-validation-signal" href="#/brand?ownership=EXTERNAL" aria-label={`Open Brand Perimeter External assets (${summary.external})`}>
+            <span>External assets</span>
+            <strong>{summary.external}</strong>
+            <small>Outside confirmed surface</small>
+          </a>
+        </div>
+        <p className="discovery-validation-note">Current-scan Brand Perimeter totals count unique domains. Historical discovery-only records are excluded, and neither category receives organizational risk.</p>
+      </>
+    );
+  }
+
+  return (
+    <Panel id="overview-discovery-validation" title="Discovery & validation" subtitle="Current unvalidated discovery outside the confirmed organizational surface" meta={scanId != null ? `SCAN #${scanId}` : "CURRENT"} className="intelligence-panel discovery-validation-panel">
+      {content}
+    </Panel>
+  );
+}
+
+export default function OverviewIntelligence({ assetGrowth, assetGrowthStatus = "ready", httpStatus, httpStatusStatus = "ready", certificateExpiry, certificateExpiryStatus = "ready", certificateScanId, certificateNow, discoverySummary, discoverySummaryStatus = "ready" }) {
   return (
     <>
       <AssetGrowthPanel value={assetGrowth} status={assetGrowthStatus} />
       <HttpStatusPanel value={httpStatus} status={httpStatusStatus} />
       <CertificateHealthPanel value={certificateExpiry} status={certificateExpiryStatus} scanId={certificateScanId} now={certificateNow} />
+      <DiscoveryValidationPanel value={discoverySummary} status={discoverySummaryStatus} scanId={discoverySummary?.scan_id} />
     </>
   );
 }

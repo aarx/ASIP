@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getAssetGrowth, getCertExpiry, getHttpStatus, getV2Overview, getV2Scans } from "../services/api";
+import { getAssetGrowth, getCertExpiry, getHttpStatus, getV2BrandAssets, getV2Overview, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
@@ -104,6 +104,22 @@ function relativeCompletion(value) {
   return `completed ${Math.floor(hours / 24)}d ago`;
 }
 
+async function loadDiscoverySummary() {
+  const [candidate, external] = await Promise.all([
+    getV2BrandAssets({ page: 1, limit: 1, ownership: "CANDIDATE" }),
+    getV2BrandAssets({ page: 1, limit: 1, ownership: "EXTERNAL" }),
+  ]);
+  if (!candidate || candidate.scan_id == null || candidate.scan_id !== external?.scan_id) {
+    throw new Error("Discovery counts did not share one authoritative scan");
+  }
+  const candidateCount = Number(candidate.count);
+  const externalCount = Number(external.count);
+  if (!Number.isInteger(candidateCount) || candidateCount < 0 || !Number.isInteger(externalCount) || externalCount < 0) {
+    throw new Error("Discovery counts were not valid unique-domain totals");
+  }
+  return { scan_id: candidate.scan_id, candidate: candidateCount, external: externalCount };
+}
+
 export default function OverviewPage() {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
@@ -122,9 +138,13 @@ export default function OverviewPage() {
       optionalRequest(getAssetGrowth),
       optionalRequest(getHttpStatus),
       optionalRequest(getCertExpiry),
+      optionalRequest(loadDiscoverySummary),
     ])
-      .then(([result, scans, assetGrowth, httpStatus, certificateExpiry]) => {
+      .then(([result, scans, assetGrowth, httpStatus, certificateExpiry, discoverySummary]) => {
         if (active) {
+          const scopedDiscoverySummary = discoverySummary.value?.scan_id === result.current_scan_id
+            ? discoverySummary
+            : { value: null, status: "error" };
           setData({
             ...result,
             scanHistory: scans,
@@ -134,6 +154,8 @@ export default function OverviewPage() {
             httpStatusStatus: httpStatus.status,
             certificateExpiry: certificateExpiry.value,
             certificateExpiryStatus: certificateExpiry.status,
+            discoverySummary: scopedDiscoverySummary.value,
+            discoverySummaryStatus: scopedDiscoverySummary.status,
           });
           setStatus("ready");
         }
@@ -210,6 +232,8 @@ export default function OverviewPage() {
         certificateExpiry={data.certificateExpiry}
         certificateExpiryStatus={data.certificateExpiryStatus}
         certificateScanId={data.current_scan_id}
+        discoverySummary={data.discoverySummary}
+        discoverySummaryStatus={data.discoverySummaryStatus}
       />
     </div>
   );
