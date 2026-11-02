@@ -11,7 +11,6 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from db import get_conn, require_running_scan
 from config import CERTSPOTTER_API_KEY
-from http_probe import http_probe
 from recon_artifact import publish_recon_artifact
 
 
@@ -500,17 +499,9 @@ def main(seed_file, deep, expand, scan_id):
             domain_registry[d]["ip"] = ip
             domain_registry[d]["reverse_dns"] = rdns
 
-    print("[+] HTTP probing")
-
-    domains_with_ip = [d for d in domain_registry if domain_registry[d]["ip"]]
-
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as exe:
-        futures = {exe.submit(http_probe,d): d for d in domains_with_ip}
-        for f in as_completed(futures):
-            d = futures[f]
-            r = f.result()
-            if r:
-                domain_registry[d].update(r)
+    # Direct HTTP/TLS observation is intentionally deferred until after
+    # ingest, current-scan membership and scope authorization exist.  Recon
+    # remains a passive discovery producer and preserves UNKNOWN HTTP state.
 
     known = load_known()
 

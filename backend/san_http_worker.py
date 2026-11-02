@@ -1,5 +1,9 @@
 import sys
 
+from authorization_policy import (
+    active_scan_authorization_sql,
+    recheck_active_authorization,
+)
 from db import get_conn, require_running_scan
 from http_probe import http_probe
 
@@ -12,8 +16,8 @@ def main():
     cur = conn.cursor()
     require_running_scan(cur, scan_id)
 
-    cur.execute("""
-        SELECT d.id, d.domain
+    cur.execute(f"""
+        SELECT d.id, d.domain, ds.ip
         FROM domains d
         JOIN scan_results sr
           ON d.id = sr.domain_id
@@ -30,13 +34,35 @@ def main():
             AND src.scan_id = %s
             AND src.source = 'san'
         )
+        AND {active_scan_authorization_sql('d', 'HTTP_TLS_OBSERVATION')}
     """, (scan_id, scan_id, scan_id))
 
     rows = cur.fetchall()
     observed = 0
 
-    for domain_id, domain in rows:
-        result = http_probe(domain)
+    for row in rows:
+        domain_id, domain = row[:2]
+        ip = row[2] if len(row) > 2 else None
+        def authorized():
+            allowed, reason = recheck_active_authorization(
+                cur,
+                scan_id=scan_id,
+                domain_id=domain_id,
+                testing_level="HTTP_TLS_OBSERVATION",
+            )
+            conn.commit()
+            if not allowed:
+                print(f"Skipping SAN HTTP observation for {domain}: {reason}")
+            return allowed
+
+        if not authorized():
+            continue
+
+        result = http_probe(
+            domain,
+            expected_ip=ip,
+            before_request=authorized,
+        )
         if not result:
             continue
 

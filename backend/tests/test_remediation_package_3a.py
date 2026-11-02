@@ -43,15 +43,6 @@ def load_module(filename, replacements=None, argv=None):
                 sys.modules[name] = previous
 
 
-class Response:
-    def __init__(self, status_code, reason="OK", url="https://example.test", text="", history=None):
-        self.status_code = status_code
-        self.reason = reason
-        self.url = url
-        self.text = text
-        self.history = history or []
-
-
 class HttpProbeOutcomeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -59,39 +50,18 @@ class HttpProbeOutcomeTests(unittest.TestCase):
         import http_probe
         cls.http_probe = http_probe
 
-    @mock.patch("http_probe.requests.get")
-    def test_actual_response_is_responded_including_redirect_and_error_statuses(self, get):
-        for status in (200, 302, 404, 503):
-            with self.subTest(status=status):
-                get.reset_mock()
-                get.return_value = Response(status, "Observed", f"https://example.test/{status}")
+    def test_observation_requires_current_authorization(self):
+        with mock.patch.object(self.http_probe, "_observe_once") as observe:
+            result = self.http_probe.http_probe("example.test")
+        self.assertEqual(result["http_observation_status"], "UNKNOWN")
+        observe.assert_not_called()
 
-                result = self.http_probe.http_probe("example.test")
-
-                self.assertEqual(result["http_observation_status"], "RESPONDED")
-                self.assertEqual(result["http_status"], status)
-                get.assert_called_once()
-
-    @mock.patch("http_probe.requests.get")
-    def test_completed_attempts_with_no_response_are_no_response(self, get):
-        get.side_effect = [
-            self.http_probe.requests.exceptions.ConnectTimeout("timeout"),
-            self.http_probe.requests.exceptions.ConnectionError("refused"),
-        ]
-
-        result = self.http_probe.http_probe("example.test")
-
+    def test_no_response_after_authorized_attempts(self):
+        allowed = mock.Mock(return_value=True)
+        with mock.patch.object(self.http_probe, "_observe_once", side_effect=OSError("offline")):
+            result = self.http_probe.http_probe("example.test", before_request=allowed)
         self.assertEqual(result["http_observation_status"], "NO_RESPONSE")
-        self.assertEqual(result["http_status"], 0)
-        self.assertEqual(get.call_count, 2)
-
-    @mock.patch("http_probe.requests.get", side_effect=RuntimeError("internal failure"))
-    def test_internal_observation_failure_is_failed(self, get):
-        result = self.http_probe.http_probe("example.test")
-
-        self.assertEqual(result["http_observation_status"], "FAILED")
-        self.assertEqual(result["http_status"], 0)
-        self.assertEqual(get.call_count, 1)
+        self.assertEqual(allowed.call_count, 2)
 
 
 class SchemaAndIngestOutcomeTests(unittest.TestCase):
@@ -184,7 +154,7 @@ class FakeConnection:
 
 class SanHttpOutcomePersistenceTests(unittest.TestCase):
     def load_worker(self, result):
-        cursor = RecordingCursor([(7, "child.example")])
+        cursor = RecordingCursor([(7, "child.example", "192.0.2.1")])
         connection = FakeConnection(cursor)
         fake_db = types.ModuleType("db")
         fake_db.get_conn = mock.Mock(return_value=connection)
@@ -196,6 +166,9 @@ class SanHttpOutcomePersistenceTests(unittest.TestCase):
             "san_http_worker.py",
             {"db": fake_db, "http_probe": fake_probe},
             ["san_http_worker.py", "42"],
+        )
+        module.recheck_active_authorization = mock.Mock(
+            return_value=(True, "authorized")
         )
         return module, cursor, connection
 

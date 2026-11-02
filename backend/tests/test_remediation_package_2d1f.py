@@ -40,6 +40,14 @@ class PostgreSQLChronologyTests(unittest.TestCase):
                         INSERT INTO seed_domains VALUES ('example');
                         ALTER TABLE domain_san ADD UNIQUE(domain_id, scan_id);
                     """)
+                    cursor.execute(
+                        (membership.BACKEND / "migrations" /
+                         "006_add_active_scan_scopes.sql").read_text()
+                    )
+                    cursor.execute(
+                        (membership.BACKEND / "migrations" /
+                         "008_add_http_tls_observation_scope.sql").read_text()
+                    )
         finally:
             connection.close()
 
@@ -106,13 +114,24 @@ class PostgreSQLChronologyTests(unittest.TestCase):
             member_scan=scan_id,
             state_scan=scan_id,
         )
+        self.sql(
+            "UPDATE domains SET ownership_status='CONFIRMED', scannable=TRUE "
+            "WHERE domain=%s",
+            (parent,),
+        )
+        self.sql("""
+            INSERT INTO active_scan_scopes(
+                scope_domain, include_subdomains, testing_level, approved_by
+            ) VALUES (%s, FALSE, 'HTTP_TLS_OBSERVATION', 'test')
+        """, (parent,))
         observer = mock.Mock(return_value=[child])
         self.run_worker(
             "san_worker.py",
             scan_id=scan_id,
             overrides={"fetch_san_domains": observer},
         )
-        observer.assert_called_once_with(parent)
+        observer.assert_called_once()
+        self.assertEqual(observer.call_args.args[0], parent)
         return parent
 
     def test_ingest_older_observation_lowers_first_without_regressing_last(self):

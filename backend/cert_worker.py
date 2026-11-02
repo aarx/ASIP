@@ -1,13 +1,15 @@
-import socket
 import OpenSSL
 import ssl
 from datetime import datetime
 import logging
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse
+from authorization_policy import (
+    active_scan_authorization_sql,
+    recheck_active_authorization,
+)
 from db import get_conn, require_running_scan
+from http_probe import open_validated_tls_socket
 
 
 scan_id = int(sys.argv[1])
@@ -27,8 +29,8 @@ logging.basicConfig(
 
 def get_domains(cur, scan_id):
 
-    cur.execute("""
-        SELECT d.id, d.domain, ds.ip, ds.final_url
+    cur.execute(f"""
+        SELECT d.id, d.domain, ds.ip
         FROM domain_states ds
         JOIN domains d 
           ON d.id = ds.domain_id
@@ -44,58 +46,38 @@ def get_domains(cur, scan_id):
         WHERE ds.has_ip = TRUE
         AND ds.http_status > 0
         AND dc.domain_id IS NULL
+        AND {active_scan_authorization_sql('d', 'HTTP_TLS_OBSERVATION')}
     """, (scan_id, scan_id))
 
     rows = cur.fetchall()
 
     return rows    
 
-def fetch_cert_expiry(domain):
-
-    socket.setdefaulttimeout(3)
-
-    hosts = [domain]
-
-    # optional safe fallback
-    if domain.count('.') == 1:
-        hosts.append(f"www.{domain}")
-
-    for host in hosts:
-        try:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-
-            with socket.create_connection((host, 443), timeout=5) as sock:
-                with ctx.wrap_socket(sock, server_hostname=host) as ssock:
-
-                    cert_bin = ssock.getpeercert(binary_form=True)
-                    
-                    x509 = ssl.DER_cert_to_PEM_cert(cert_bin)
-                    
-                    x509_obj = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, x509)
-                    
-                    expiry = x509_obj.get_notAfter().decode("utf-8")
-                    expiry_dt = datetime.strptime(expiry, "%Y%m%d%H%M%SZ")
-
-                    days = (expiry_dt - datetime.utcnow()).days
-
-                    if days < 0:
-                        status = "expired"
-                    elif days < 15:
-                        status = "critical"
-                    elif days < 45:
-                        status = "warning"
-                    else:
-                        status = "healthy"
-
-                    return expiry_dt.date(), days, status
-
-        except Exception as e:
-            print(f"[CERT ERROR] {host} → {e}")
-            continue
-
-    return None
+def fetch_cert_expiry(domain, *, before_request=None, expected_ip=None):
+    if before_request is None or not before_request():
+        return None
+    try:
+        with open_validated_tls_socket(domain, expected_ip=expected_ip) as ssock:
+            cert_bin = ssock.getpeercert(binary_form=True)
+        x509 = ssl.DER_cert_to_PEM_cert(cert_bin)
+        x509_obj = OpenSSL.crypto.load_certificate(
+            OpenSSL.crypto.FILETYPE_PEM, x509
+        )
+        expiry = x509_obj.get_notAfter().decode("utf-8")
+        expiry_dt = datetime.strptime(expiry, "%Y%m%d%H%M%SZ")
+        days = (expiry_dt - datetime.utcnow()).days
+        if days < 0:
+            status = "expired"
+        elif days < 15:
+            status = "critical"
+        elif days < 45:
+            status = "warning"
+        else:
+            status = "healthy"
+        return expiry_dt.date(), days, status
+    except Exception as exc:
+        print(f"[CERT ERROR] {domain} → {type(exc).__name__}")
+        return None
 
 
 def main():
@@ -108,52 +90,34 @@ def main():
     print("Scan ID:", scan_id)
     print("Rows to process:", len(domains))
 
-    
-    MAX_WORKERS = 40
-    
-    def scan_cert(domain_tuple):
-    
-        domain_id, domain, ip, final_url = domain_tuple
-    
-        host = domain
-    
-        if final_url:
-            try:
-                parsed = urlparse(final_url)
-                if parsed.hostname:
-                    host = parsed.hostname
-            except:
-                pass
-    
-        cert_result = fetch_cert_expiry(host)
-    
-        return (domain_id, cert_result)
-    
-    
     total = len(domains)
-    done = 0
-    
     print(f"Cert scan for {total} domains")
-    
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as exe:
-    
-        futures = [exe.submit(scan_cert, d) for d in domains]
-    
-        for f in as_completed(futures):
-    
-            domain_id, cert_result = f.result()
-    
-            done += 1
-    
-            if done % 20 == 0:
-                print(f"[CERT PROGRESS] {done}/{total}")
+    for done, row in enumerate(domains, start=1):
+        domain_id, domain = row[:2]
+        ip = row[2] if len(row) > 2 else None
+        def authorized():
+            allowed, reason = recheck_active_authorization(
+                cur,
+                scan_id=scan_id,
+                domain_id=domain_id,
+                testing_level="HTTP_TLS_OBSERVATION",
+            )
+            conn.commit()
+            if not allowed:
+                print(f"Skipping certificate observation for {domain}: {reason}")
+            return allowed
 
-            if cert_result is None:
-                continue
-
-            expiry, days, status = cert_result
-    
-            cur.execute("""
+        cert_result = fetch_cert_expiry(
+            domain,
+            expected_ip=ip,
+            before_request=authorized,
+        )
+        if done % 20 == 0:
+            print(f"[CERT PROGRESS] {done}/{total}")
+        if cert_result is None:
+            continue
+        expiry, days, status = cert_result
+        cur.execute("""
                 INSERT INTO domain_cert(
                     domain_id,
                     scan_id,

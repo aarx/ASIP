@@ -9,6 +9,7 @@ SCOPE_TESTING_LEVELS = frozenset({
     "TECHNOLOGY_HTTP",
     "PORT_SCAN",
     "ADHOC_CHECK",
+    "HTTP_TLS_OBSERVATION",
 })
 
 _DOMAIN_RE = re.compile(
@@ -125,7 +126,8 @@ def is_authorized(
     """Apply the complete local decision without database or network access."""
     if ownership_status != "CONFIRMED" or scannable is not True:
         return False
-    if validation_source == "manual":
+    normalized_level = str(testing_level or "").strip().upper()
+    if validation_source == "manual" and normalized_level != "HTTP_TLS_OBSERVATION":
         return True
     return scope_authorizes(scopes, domain, testing_level, now)
 
@@ -156,7 +158,11 @@ def active_scan_authorization_sql(domain_alias="d", testing_level="TECHNOLOGY_HT
     scope_match = active_scope_coverage_sql(domain_alias, level)
     return (
         base
-        + f"AND ({domain_alias}.validation_source = 'manual' OR ({scope_match}))"
+        + (
+            f"AND ({domain_alias}.validation_source = 'manual' OR ({scope_match}))"
+            if level != "HTTP_TLS_OBSERVATION"
+            else f"AND ({scope_match})"
+        )
     )
 
 

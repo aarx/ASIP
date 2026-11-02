@@ -38,7 +38,10 @@ def load_worker(filename):
             sys.modules.pop("db", None)
         else:
             sys.modules["db"] = previous_db
-    if filename in ("tech_worker.py", "port_scan_worker.py"):
+    if filename in (
+        "tech_worker.py", "port_scan_worker.py", "san_worker.py",
+        "san_http_worker.py", "cert_worker.py", "http_observation_worker.py",
+    ):
         # These unit tests use a lightweight cursor without the authorization
         # schema; disposable PostgreSQL tests cover the real helper decisions.
         module.recheck_active_authorization = mock.Mock(
@@ -103,7 +106,7 @@ class SanFalseCompletionTests(unittest.TestCase):
     def run_main(self, observation, fetchones=None):
         cursor = RecordingCursor(
             fetchalls=[[], [(1, 'parent.example')]],
-            fetchones=fetchones or [(1,)],
+            fetchones=fetchones or [(1,), (1,)],
         )
         connection = FakeConnection(cursor)
         self.module.get_conn = lambda: connection
@@ -114,9 +117,11 @@ class SanFalseCompletionTests(unittest.TestCase):
 
     def test_tls_failure_returns_none_and_writes_no_completion_marker(self):
         with mock.patch.object(
-            self.module.socket, "create_connection", side_effect=socket.timeout()
+            self.module, "open_validated_tls_socket", side_effect=socket.timeout()
         ):
-            self.assertIsNone(self.module.fetch_san_domains("parent.example"))
+            self.assertIsNone(self.module.fetch_san_domains(
+                "parent.example", before_request=lambda: True
+            ))
 
         cursor = self.run_main(None)
         self.assertEqual(writes_to(cursor, "domain_san"), [])
@@ -124,15 +129,13 @@ class SanFalseCompletionTests(unittest.TestCase):
     def test_successful_empty_san_writes_completion_marker(self):
         peer = mock.Mock()
         peer.getpeercert.return_value = {"subjectAltName": [("IP Address", "192.0.2.1")]}
-        context = mock.Mock()
-        context.wrap_socket.return_value = ContextValue(peer)
         with mock.patch.object(
-            self.module.ssl, "create_default_context", return_value=context
-        ), mock.patch.object(
-            self.module.socket, "create_connection",
-            return_value=ContextValue(object()),
+            self.module, "open_validated_tls_socket",
+            return_value=ContextValue(peer),
         ):
-            self.assertEqual(self.module.fetch_san_domains("parent.example"), [])
+            self.assertEqual(self.module.fetch_san_domains(
+                "parent.example", before_request=lambda: True
+            ), [])
 
         cursor = self.run_main([])
         self.assertEqual(len(writes_to(cursor, "domain_san")), 1)
@@ -140,7 +143,7 @@ class SanFalseCompletionTests(unittest.TestCase):
     def test_san_child_membership_precedes_provenance(self):
         cursor = self.run_main(
             ["child.example"],
-            fetchones=[(1,), (2, True), ("root.example",)],
+            fetchones=[(1,), (1,), (2, True), ("root.example",)],
         )
         membership = next(
             i for i, (query, _) in enumerate(cursor.executions)
@@ -209,58 +212,54 @@ class CertificateTruthTests(unittest.TestCase):
     def test_connection_timeout_and_refusal_return_failure(self):
         for error in (socket.timeout(), ConnectionRefusedError()):
             with self.subTest(error=type(error).__name__), mock.patch.object(
-                self.module.socket, "create_connection", side_effect=error
+                self.module, "open_validated_tls_socket", side_effect=error
             ), mock.patch("builtins.print"):
-                self.assertIsNone(self.module.fetch_cert_expiry("host.example"))
+                self.assertIsNone(self.module.fetch_cert_expiry(
+                    "host.example", before_request=lambda: True
+                ))
 
     def test_tls_retrieval_parser_and_date_failures_return_failure(self):
         sock = object()
         failures = []
 
-        tls_context = mock.Mock()
-        tls_context.wrap_socket.side_effect = ssl.SSLError("handshake")
-        failures.append((tls_context, None, None))
+        failures.append((None, socket.timeout(), None))
 
         retrieval_socket = mock.Mock()
         retrieval_socket.getpeercert.side_effect = RuntimeError("retrieval")
-        retrieval_context = mock.Mock()
-        retrieval_context.wrap_socket.return_value = ContextValue(retrieval_socket)
-        failures.append((retrieval_context, None, None))
+        failures.append((ContextValue(retrieval_socket), None, None))
 
         parser_socket = mock.Mock()
         parser_socket.getpeercert.return_value = b"certificate"
-        parser_context = mock.Mock()
-        parser_context.wrap_socket.return_value = ContextValue(parser_socket)
-        failures.append((parser_context, ValueError("parser"), None))
+        failures.append((ContextValue(parser_socket), ValueError("parser"), None))
 
         date_socket = mock.Mock()
         date_socket.getpeercert.return_value = b"certificate"
-        date_context = mock.Mock()
-        date_context.wrap_socket.return_value = ContextValue(date_socket)
         bad_certificate = mock.Mock()
         bad_certificate.get_notAfter.return_value = b"not-a-date"
-        failures.append((date_context, None, bad_certificate))
+        failures.append((ContextValue(date_socket), None, bad_certificate))
 
         for context, pem_error, certificate in failures:
             with self.subTest(context=context), \
-                    mock.patch.object(self.module.ssl, "create_default_context", return_value=context), \
-                    mock.patch.object(self.module.socket, "create_connection", return_value=ContextValue(sock)), \
+                    mock.patch.object(self.module, "open_validated_tls_socket", \
+                                      side_effect=pem_error if pem_error else None, \
+                                      return_value=context), \
                     mock.patch.object(
                         self.module.ssl, "DER_cert_to_PEM_cert",
-                        side_effect=pem_error if pem_error else None,
                         return_value="PEM",
                     ), mock.patch.object(
                         self.module.OpenSSL.crypto, "load_certificate",
                         return_value=certificate,
                     ), mock.patch("builtins.print"):
-                self.assertIsNone(self.module.fetch_cert_expiry("host.example"))
+                self.assertIsNone(self.module.fetch_cert_expiry(
+                    "host.example", before_request=lambda: True
+                ))
 
     def test_valid_certificate_metadata_is_persisted(self):
         expected = (datetime.date(2030, 1, 2), 1200, "healthy")
         cursor = RecordingCursor(fetchalls=[[(1, "host.example", "192.0.2.1", None)]])
         connection = FakeConnection(cursor)
         self.module.get_conn = lambda: connection
-        self.module.fetch_cert_expiry = lambda domain: expected
+        self.module.fetch_cert_expiry = lambda domain, **kwargs: expected
         with mock.patch("builtins.print"):
             self.module.main()
 
@@ -277,15 +276,15 @@ class CertificateTruthTests(unittest.TestCase):
         certificate = mock.Mock()
         certificate.get_notAfter.return_value = expiry.strftime("%Y%m%d%H%M%SZ").encode()
         with mock.patch.object(
-            self.module.ssl, "create_default_context", return_value=context
-        ), mock.patch.object(
-            self.module.socket, "create_connection", return_value=ContextValue(object())
+            self.module, "open_validated_tls_socket", return_value=ContextValue(peer)
         ), mock.patch.object(
             self.module.ssl, "DER_cert_to_PEM_cert", return_value="PEM"
         ), mock.patch.object(
             self.module.OpenSSL.crypto, "load_certificate", return_value=certificate
         ):
-            expiry_date, days, status = self.module.fetch_cert_expiry("host.example")
+            expiry_date, days, status = self.module.fetch_cert_expiry(
+                "host.example", before_request=lambda: True
+            )
 
         self.assertEqual(expiry_date, expiry.date())
         self.assertIn(days, (89, 90))
@@ -295,7 +294,7 @@ class CertificateTruthTests(unittest.TestCase):
         cursor = RecordingCursor(fetchalls=[[(1, "host.example", "192.0.2.1", None)]])
         connection = FakeConnection(cursor)
         self.module.get_conn = lambda: connection
-        self.module.fetch_cert_expiry = lambda domain: None
+        self.module.fetch_cert_expiry = lambda domain, **kwargs: None
         with mock.patch("builtins.print"):
             self.module.main()
         self.assertEqual(writes_to(cursor, "domain_cert"), [])
@@ -655,27 +654,27 @@ class TakeoverTruthTests(unittest.TestCase):
     def test_both_transports_fail_without_observation(self):
         with mock.patch.object(
             self.module.requests, "get", side_effect=RuntimeError("offline")
-        ):
+        ) as get:
             self.assertIsNone(self.module.check_takeover("host.example"))
+        get.assert_not_called()
 
-    def test_https_failure_then_http_response_is_observed(self):
-        response = self.response(404, "real response")
+    def test_takeover_http_is_disabled_without_explicit_permission(self):
         with mock.patch.object(
             self.module.requests, "get",
-            side_effect=[RuntimeError("tls"), response],
         ) as get:
             result = self.module.check_takeover("host.example")
-        self.assertEqual(result, {"body": "real response", "status": 404, "length": 13})
-        self.assertEqual(get.call_count, 2)
+        self.assertIsNone(result)
+        get.assert_not_called()
 
-    def run_main(self, observation, live_cname="target.github.io"):
+    def run_main(self, observation, live_cname="target.github.io", override_check=True):
         cursor = RecordingCursor(
             fetchalls=[[(1, "host.example", "target.github.io")]]
         )
         connection = FakeConnection(cursor)
         self.module.get_conn = lambda: connection
         self.module.get_live_cname = mock.Mock(return_value=live_cname)
-        self.module.check_takeover = mock.Mock(return_value=observation)
+        if override_check:
+            self.module.check_takeover = mock.Mock(return_value=observation)
         with mock.patch("builtins.print"):
             self.module.main()
         return cursor
@@ -687,7 +686,7 @@ class TakeoverTruthTests(unittest.TestCase):
         )
         self.assertEqual(writes_to(cursor, "domain_findings"), [])
 
-    def test_real_responses_preserve_existing_finding_rules(self):
+    def test_disabled_takeover_http_creates_no_findings(self):
         cases = (
             ({"body": "There isn't a GitHub Pages site here", "status": 200, "length": 38},
              "dangling_dns", "HIGH"),
@@ -698,10 +697,10 @@ class TakeoverTruthTests(unittest.TestCase):
         )
         for observation, finding, severity in cases:
             with self.subTest(finding=finding, severity=severity):
-                writes = writes_to(self.run_main(observation), "domain_findings")
-                self.assertEqual(len(writes), 1)
-                params = writes[0][1]
-                self.assertEqual(params[2:4], (finding, severity))
+                writes = writes_to(self.run_main(
+                    observation, override_check=False
+                ), "domain_findings")
+                self.assertEqual(writes, [])
 
 
 if __name__ == "__main__":

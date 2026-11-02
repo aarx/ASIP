@@ -168,10 +168,11 @@ class SanPipelineTests(unittest.TestCase):
             BACKEND / "san_http_worker.py",
             ["san_http_worker.py", "42"]
         )
-        cursor = RecordingCursor(fetchalls=[[(20, "child.example")]])
+        cursor = RecordingCursor(fetchalls=[[(20, "child.example", "192.0.2.1")]])
         connection = FakeConnection(cursor)
         module.get_conn = lambda: connection
-        module.http_probe = lambda domain: {
+        module.recheck_active_authorization = mock.Mock(return_value=(True, "authorized"))
+        module.http_probe = lambda domain, **kwargs: {
             "http_observation_status": "RESPONDED",
             "http_status": 301,
             "http_reason": "Moved Permanently",
@@ -184,7 +185,7 @@ class SanPipelineTests(unittest.TestCase):
         module.main()
 
         select_sql = cursor.executions[0][0]
-        self.assertNotIn("scannable", select_sql.lower())
+        self.assertIn("scannable", select_sql.lower())
         self.assertIn("src.source = 'san'", select_sql)
         self.assertIn("ds.has_ip = TRUE", select_sql)
         update_sql, update_params = cursor.executions[1]
@@ -197,10 +198,11 @@ class SanPipelineTests(unittest.TestCase):
             BACKEND / "san_http_worker.py",
             ["san_http_worker.py", "42"]
         )
-        cursor = RecordingCursor(fetchalls=[[(20, "child.example")]])
+        cursor = RecordingCursor(fetchalls=[[(20, "child.example", "192.0.2.1")]])
         connection = FakeConnection(cursor)
         module.get_conn = lambda: connection
-        module.http_probe = lambda domain: None
+        module.recheck_active_authorization = mock.Mock(return_value=(True, "authorized"))
+        module.http_probe = lambda domain, **kwargs: None
 
         module.main()
 
@@ -210,7 +212,7 @@ class SanPipelineTests(unittest.TestCase):
     def test_orchestration_places_san_http_after_dns_before_cert(self):
         source = (BACKEND / "orchestration.py").read_text()
         dns = source.index('("DNS Resolution"')
-        san_http = source.index('("SAN HTTP Observation"')
+        san_http = source.index('("HTTP/TLS Observation"')
         cert = source.index('("Cert Worker"')
         self.assertLess(dns, san_http)
         self.assertLess(san_http, cert)

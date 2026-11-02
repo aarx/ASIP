@@ -1,9 +1,12 @@
-import ssl
-import socket
 import logging
 import os
 import sys
+from authorization_policy import (
+    active_scan_authorization_sql,
+    recheck_active_authorization,
+)
 from db import get_conn, require_running_scan
+from http_probe import open_validated_tls_socket
 
 scan_id = int(sys.argv[1])
 
@@ -19,12 +22,12 @@ logging.basicConfig(
 )
 
 
-def fetch_san_domains(domain):
+def fetch_san_domains(domain, before_request=None):
+    if before_request is None or not before_request():
+        return None
     try:
-        ctx = ssl.create_default_context()
-        with socket.create_connection((domain, 443), timeout=1.5) as sock:
-            with ctx.wrap_socket(sock, server_hostname=domain) as ssock:
-                cert = ssock.getpeercert()
+        with open_validated_tls_socket(domain) as ssock:
+            cert = ssock.getpeercert()
 
         san = cert.get("subjectAltName", [])
         return [entry[1] for entry in san if entry[0] == "DNS"]
@@ -66,7 +69,7 @@ def main():
     
     print("Loaded known domains:", len(known_set))
 
-    cur.execute("""
+    cur.execute(f"""
     SELECT DISTINCT ON (d.id) d.id, d.domain
     FROM domains d
     JOIN scan_results sr
@@ -81,6 +84,7 @@ def main():
       AND dsan.scan_id = %s
       
     WHERE dsan.domain_id IS NULL
+      AND {active_scan_authorization_sql('d', 'HTTP_TLS_OBSERVATION')}
     ORDER BY d.id, ds.scan_id DESC
     """, (scan_id, scan_id, scan_id))
     
@@ -105,12 +109,39 @@ def main():
         if cur.fetchone() is None:
             print(f"Skipping non-member SAN parent: {domain}")
             continue
+
+        def authorized():
+            allowed, reason = recheck_active_authorization(
+                cur,
+                scan_id=scan_id,
+                domain_id=domain_id,
+                testing_level="HTTP_TLS_OBSERVATION",
+            )
+            conn.commit()
+            if not allowed:
+                print(f"Skipping SAN TLS observation for {domain}: {reason}")
+            return allowed
+
+        if not authorized():
+            continue
     
         if i % 50 == 0:
             print(f"[{i}/{len(rows)}] Processing: {domain}")
     
-        san_observation = fetch_san_domains(domain)
+        san_observation = fetch_san_domains(domain, before_request=authorized)
         if san_observation is None:
+            continue
+
+        # Do not recreate a scan membership that disappeared while the TLS
+        # observation was in flight.
+        cur.execute("""
+            SELECT 1
+              FROM scan_results
+             WHERE scan_id = %s
+               AND domain_id = %s
+        """, (scan_id, domain_id))
+        if cur.fetchone() is None:
+            print(f"Skipping SAN writes for non-member parent: {domain}")
             continue
 
         san_domains = list(set(san_observation))

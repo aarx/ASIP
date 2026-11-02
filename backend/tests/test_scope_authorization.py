@@ -123,6 +123,16 @@ class AuthorizationDecisionTests(unittest.TestCase):
         self.assertIn("FROM active_scan_scopes scope_block", sql)
         self.assertIn("LOWER(TRIM(TRAILING '.' FROM d.domain))", sql)
 
+    def test_http_tls_observation_requires_scope_and_does_not_expand_manual_path(self):
+        sql = active_scan_authorization_sql("d", "HTTP_TLS_OBSERVATION")
+        self.assertNotIn("d.validation_source = 'manual'", sql)
+        self.assertIn("scope_allow.testing_level = 'HTTP_TLS_OBSERVATION'", sql)
+        self.assertFalse(is_authorized(
+            ownership_status="CONFIRMED", scannable=True,
+            validation_source="manual", domain="app.example.com",
+            testing_level="HTTP_TLS_OBSERVATION", scopes=[], now=NOW,
+        ))
+
 
 class ScopeAdministrationTests(unittest.TestCase):
     def test_scope_creation_requires_a_trusted_operator_callback(self):

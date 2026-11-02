@@ -48,6 +48,10 @@ FINGERPRINTS = {
     ],
 }
 
+# Direct takeover HTTP is intentionally disabled until a dedicated policy
+# permission is approved.  Passive DNS/CNAME analysis remains available.
+TAKEOVER_HTTP_ENABLED = False
+
 
 def identify_provider(cname):
 
@@ -80,6 +84,9 @@ def identify_provider(cname):
 
 
 def check_takeover(target):
+
+    if not TAKEOVER_HTTP_ENABLED:
+        return None
 
     for scheme in ["https", "http"]:
         try:

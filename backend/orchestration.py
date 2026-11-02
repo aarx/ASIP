@@ -522,13 +522,17 @@ def run_pipeline():
             ("Ingest", f"python -u ingest.py {scan_id}"),
 
             # EXPANSION
+            # The first eligibility pass authorizes existing confirmed
+            # inventory before SAN TLS expansion.  SAN children are synced,
+            # then evaluated again before any later active stage.
+            ("Automatic Eligibility", f"python -u eligibility_worker.py {scan_id}"),
             ("SAN Expansion", f"python -u san_worker.py {scan_id}"),
             ("SAN State Sync", f"python -u san_state_sync.py {scan_id}"),
             ("Automatic Eligibility", f"python -u eligibility_worker.py {scan_id}"),
 
             # DNS
             ("DNS Resolution", f"python -u dns_worker.py {scan_id}"),
-            ("SAN HTTP Observation", f"python -u san_http_worker.py {scan_id}"),
+            ("HTTP/TLS Observation", f"python -u http_observation_worker.py {scan_id}"),
 
             # ENRICHMENT
             ("Cert Worker", f"python -u cert_worker.py {scan_id}"),

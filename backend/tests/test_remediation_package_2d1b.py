@@ -407,6 +407,7 @@ class WriterWiringTests(unittest.TestCase):
         "san_state_sync.py": "INSERT INTO domain_states(",
         "dns_worker.py": "INSERT INTO domain_dns",
         "san_http_worker.py": "UPDATE domain_states",
+        "http_observation_worker.py": "UPDATE domain_states",
         "cert_worker.py": "INSERT INTO domain_cert(",
         "port_scan_worker.py": "INSERT INTO domain_ports(",
         "tech_worker.py": "INSERT INTO domain_tech(",
@@ -455,7 +456,7 @@ class WriterWiringTests(unittest.TestCase):
     def test_orchestration_and_artifact_match_authorized_package_baselines(self):
         expected = {
             "orchestration.py": (
-                "e47a243b93133e1a494b602b5272ce4f5febe701f2d81eafdaa895373adb6a79"
+                "52c160660b53719d7f8c305f6ee3d3b569bb4ea4780021664f02672366ee02d1"
             ),
             "recon_artifact.py": (
                 "096c44848356e2f4b7f0587e5a26f8008724531101edf405098ed708916bb370"

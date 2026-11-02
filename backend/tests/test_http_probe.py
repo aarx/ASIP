@@ -10,81 +10,63 @@ sys.path.insert(0, str(BACKEND))
 import http_probe
 
 
-class Response:
-    def __init__(self, status_code, reason, url, text="", history=None):
-        self.status_code = status_code
-        self.reason = reason
-        self.url = url
-        self.text = text
-        self.history = history or []
-
-
 class HttpProbeTests(unittest.TestCase):
-    @mock.patch("http_probe.requests.get")
-    def test_preserves_recon_probe_redirect_and_title_behavior(self, get):
-        original = Response(301, "Moved Permanently", "https://example.test")
-        get.return_value = Response(
-            200,
-            "OK",
-            "https://www.example.test/final",
-            "<title> Example\n  Title </title>",
-            [original]
-        )
+    def test_requires_fresh_authorization_callback(self):
+        with mock.patch.object(http_probe, "_observe_once") as observe:
+            result = http_probe.http_probe("example.test")
+        self.assertEqual(result["http_observation_status"], "UNKNOWN")
+        observe.assert_not_called()
 
-        result = http_probe.http_probe("example.test")
-
-        self.assertEqual(result, {
+    def test_valid_observation_does_not_follow_redirects(self):
+        response = {
             "http_observation_status": "RESPONDED",
-            "http_status": 301,
-            "http_reason": "Moved Permanently",
-            "final_url": "https://www.example.test/final",
-            "final_status": 200,
+            "http_status": 302,
+            "http_reason": "Found",
+            "final_url": "https://outside.example/secret",
+            "final_status": 302,
             "redirect_count": 1,
-            "title": "Example Title"
-        })
-        get.assert_called_once_with(
-            "https://example.test",
-            timeout=8,
-            allow_redirects=True,
-            verify=False
-        )
+            "title": "",
+        }
+        authorized = mock.Mock(return_value=True)
+        with mock.patch.object(http_probe, "_observe_once", return_value=response) as observe:
+            result = http_probe.http_probe("example.test", before_request=authorized)
+        self.assertEqual(result, response)
+        observe.assert_called_once_with("example.test", "https", expected_ip=None)
+        authorized.assert_called_once_with()
 
-    @mock.patch("http_probe.requests.get")
-    def test_falls_back_from_https_to_http(self, get):
-        get.side_effect = [
-            http_probe.requests.exceptions.SSLError("TLS failed"),
-            Response(204, "No Content", "http://example.test")
-        ]
-
-        result = http_probe.http_probe("example.test")
-
-        self.assertEqual(result["http_observation_status"], "RESPONDED")
+    def test_https_to_http_fallback_rechecks_authorization(self):
+        authorized = mock.Mock(return_value=True)
+        with mock.patch.object(
+            http_probe,
+            "_observe_once",
+            side_effect=[OSError("tls"), {
+                "http_observation_status": "RESPONDED",
+                "http_status": 204,
+                "http_reason": "No Content",
+                "final_url": "http://example.test/",
+                "final_status": 204,
+                "redirect_count": 0,
+                "title": "",
+            }],
+        ) as observe:
+            result = http_probe.http_probe("example.test", before_request=authorized)
         self.assertEqual(result["http_status"], 204)
-        self.assertEqual(
-            [call.args[0] for call in get.call_args_list],
-            ["https://example.test", "http://example.test"]
-        )
+        self.assertEqual(authorized.call_count, 2)
+        self.assertEqual(observe.call_count, 2)
 
-    @mock.patch("http_probe.requests.get")
-    def test_returns_no_response_when_neither_scheme_responds(self, get):
-        get.side_effect = [
-            http_probe.requests.exceptions.ConnectTimeout("offline"),
-            http_probe.requests.exceptions.ConnectionError("refused"),
-        ]
+    def test_revocation_between_attempts_stops_fallback(self):
+        authorized = mock.Mock(side_effect=[True, False])
+        with mock.patch.object(http_probe, "_observe_once", side_effect=OSError("tls")) as observe:
+            result = http_probe.http_probe("example.test", before_request=authorized)
+        self.assertEqual(result["http_observation_status"], "UNKNOWN")
+        self.assertEqual(observe.call_count, 1)
 
-        result = http_probe.http_probe("example.test")
-
-        self.assertEqual(result["http_observation_status"], "NO_RESPONSE")
-        self.assertEqual(result["http_status"], 0)
-        self.assertEqual(get.call_count, 2)
-
-    @mock.patch("http_probe.requests.get", side_effect=RuntimeError("broken"))
-    def test_returns_failed_for_internal_observation_failure(self, get):
-        result = http_probe.http_probe("example.test")
-
-        self.assertEqual(result["http_observation_status"], "FAILED")
-        self.assertEqual(result["http_status"], 0)
-        self.assertEqual(get.call_count, 1)
+    def test_private_and_reserved_destinations_are_rejected(self):
+        for address in ("127.0.0.1", "10.0.0.1", "192.0.2.1", "::1"):
+            with self.subTest(address=address):
+                self.assertEqual(http_probe._resolve_allowed_addresses(
+                    "example.test", 443, expected_ip=address
+                ), [])
 
 
 if __name__ == "__main__":

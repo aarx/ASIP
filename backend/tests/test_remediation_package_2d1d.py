@@ -13,7 +13,7 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 
 PROTECTED_SHA256 = {
     "ingest.py": "71f27393e1db6e90a33961f50b464681a108e490f2c0cdb7fdd85ca157bb398b",
-    "orchestration.py": "e47a243b93133e1a494b602b5272ce4f5febe701f2d81eafdaa895373adb6a79",
+    "orchestration.py": "52c160660b53719d7f8c305f6ee3d3b569bb4ea4780021664f02672366ee02d1",
     "discovery_validator.py": "545dfad14226f1b2b1e2b609b49d7ae9f2738502e3dc68756c243f5d73e3ae81",
     "main.py": "1c4f7138e5c57138b2e805bd699363c0abec7ead921f189fed9526925bae3bfa",
 }
@@ -121,7 +121,7 @@ class StaticMembershipContractTests(unittest.TestCase):
         text = source("san_worker.py")
         loop = text.index("for i, (domain_id, domain)")
         membership = text.index("scan_results", loop)
-        network = text.index("fetch_san_domains(domain)", loop)
+        network = text.index("fetch_san_domains(", loop)
         san_write = text.index("INSERT INTO domain_san", loop)
         self.assertLess(membership, network)
         self.assertLess(membership, san_write)
@@ -236,6 +236,12 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                             revoked_at timestamptz,
                             revocation_reason text
                         );
+                        ALTER TABLE active_scan_scopes
+                            ADD CONSTRAINT active_scan_scopes_testing_level
+                            CHECK (testing_level IN (
+                                'TECHNOLOGY_HTTP', 'PORT_SCAN', 'ADHOC_CHECK',
+                                'HTTP_TLS_OBSERVATION'
+                            ));
                     """)
         finally:
             connection.close()
@@ -420,6 +426,34 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.assertEqual(self.sql("SELECT scannable FROM domains WHERE id=%s", (member,)), [(True,)])
         self.assertTrue(any('D.SCANNABLE IS NOT TRUE' in normalized_sql(query) for query, _, _ in second))
 
+    def test_http_tls_scope_migration_is_repeatable_and_preserves_rows(self):
+        self.authorize_scope('example.com', 'TECHNOLOGY_HTTP')
+        self.sql("""
+            ALTER TABLE active_scan_scopes
+                DROP CONSTRAINT active_scan_scopes_testing_level;
+            ALTER TABLE active_scan_scopes
+                ADD CONSTRAINT active_scan_scopes_testing_level
+                CHECK (testing_level IN (
+                    'TECHNOLOGY_HTTP', 'PORT_SCAN', 'ADHOC_CHECK'
+                ));
+        """)
+        migration = (BACKEND / 'migrations' /
+                     '008_add_http_tls_observation_scope.sql').read_text()
+        for _ in range(2):
+            self.sql(migration)
+        self.assertEqual(self.sql(
+            "SELECT count(*) FROM active_scan_scopes"
+        ), [(1,)])
+        self.sql("""
+            INSERT INTO active_scan_scopes(
+                scope_domain, include_subdomains, testing_level, approved_by
+            ) VALUES ('tls.example.com', TRUE, 'HTTP_TLS_OBSERVATION', 'test')
+        """)
+        self.assertEqual(self.sql(
+            "SELECT testing_level FROM active_scan_scopes "
+            "WHERE scope_domain='tls.example.com'"
+        ), [('HTTP_TLS_OBSERVATION',)])
+
     def test_legacy_ingest_insert_supplies_ownership_status_explicitly(self):
         source = (BACKEND / 'ingest_scan.py').read_text(encoding='utf-8')
         insert = source[source.index('INSERT INTO domains'):source.index('domain_id = cur.fetchone()[0]')]
@@ -444,6 +478,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         parent = self.domain('parent.example', 42)
         historic = self.domain('historic.example', 41, state_scan=41)
         previous = self.sql('SELECT to_jsonb(t)::text FROM domain_states t WHERE scan_id=41')
+        self.authorize_scope('example', 'HTTP_TLS_OBSERVATION')
         self.run_worker('san_worker.py', overrides={
             'fetch_san_domains': mock.Mock(return_value=['new.example', 'historic.example'])
         })
@@ -490,6 +525,8 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                                          has_ip=filename != 'dns_worker.py')
                     if filename in ('port_scan_worker.py', 'tech_worker.py'):
                         self.sql("UPDATE domains SET validation_source='manual' WHERE id=%s", (member,))
+                    if filename in ('san_worker.py', 'san_http_worker.py', 'cert_worker.py'):
+                        self.authorize_scope('example', 'HTTP_TLS_OBSERVATION')
                     self.sql("INSERT INTO domain_sources VALUES (%s,42,'san','root.example')", (member,))
                     self.sql("INSERT INTO domain_dns VALUES (%s,42,'CNAME','target.github.io')", (member,))
                     self.sql("INSERT INTO domain_asn VALUES (%s,42,'AS1','192.0.2.1','AS1 Amazon')", (member,))
@@ -519,6 +556,8 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                 member = self.domain('member.example', 42)
                 if filename == 'port_scan_worker.py':
                     self.sql("UPDATE domains SET validation_source='manual' WHERE id=%s", (member,))
+                elif filename == 'cert_worker.py':
+                    self.authorize_scope('example', 'HTTP_TLS_OBSERVATION')
                 def remove_member(cur, query, params):
                     cur.execute('DELETE FROM scan_results WHERE scan_id=42 AND domain_id=%s', (member,))
                 executions, _ = self.run_worker(filename, before_write=remove_member)
@@ -531,6 +570,8 @@ class PostgreSQLMembershipTests(unittest.TestCase):
             with self.subTest(worker=filename):
                 self.setUp()
                 ids = [self.domain(f'd{i:03}.example',42) for i in range(count+1)]
+                if filename == 'san_worker.py':
+                    self.authorize_scope('example', 'HTTP_TLS_OBSERVATION')
                 removed = []
                 def after_commit():
                     if not removed:
@@ -651,6 +692,24 @@ class PostgreSQLMembershipTests(unittest.TestCase):
             (False, "authorization check failed"),
         )
         self.assertEqual(cursor.connection.rollbacks, 1)
+
+    def test_http_tls_worker_requires_current_scope_and_uses_mocked_observer(self):
+        domain_id = self.domain('observe.example.com', 42, http_status=0)
+        self.authorize_scope('example.com', 'HTTP_TLS_OBSERVATION')
+        _, observers = self.run_worker('http_observation_worker.py')
+        observers['http_probe'].assert_called_once()
+        self.assertEqual(self.runtime_check(
+            domain_id, 'HTTP_TLS_OBSERVATION'
+        ), (True, 'authorized'))
+
+        self.sql("""
+            UPDATE active_scan_scopes
+               SET status='REVOKED', revoked_by='test',
+                   revoked_at=CURRENT_TIMESTAMP
+        """)
+        self.assertFalse(self.runtime_check(
+            domain_id, 'HTTP_TLS_OBSERVATION'
+        )[0])
 
     def test_technology_worker_rechecks_before_network_after_scope_revocation(self):
         domain_id = self.domain("tech.example.com", 42)
