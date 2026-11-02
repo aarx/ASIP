@@ -318,28 +318,30 @@ export default function AdhocChecksPage() {
         <MetricCard label="Not evaluated" value={scope?.not_evaluated_assets ?? "—"} support="No structured PHP observation" accent="#a96f1f" />
       </section>
 
-      <form className="adhoc-filter-panel" onSubmit={(event) => event.preventDefault()}>
-        <div className="adhoc-filter-grid">
-          {FILTERS.map(([name, label, values]) => (
-            <FilterControl key={name} name={name} label={label} values={values} value={filters[name]} onChange={updateFilter} />
-          ))}
-        </div>
-        {(filters.classification || filters.lifecycle || filters.cve_status) && (
-          <div className="adhoc-filter-meta">
-            <Button type="button" size="small" variant="text" onClick={() => { setFilters({ classification: "", lifecycle: "", cve_status: "" }); setPage(1); }}>Clear filters</Button>
+      {(checkState !== "ready" || hasAuthorizedAssets) && (
+        <form className="adhoc-filter-panel" onSubmit={(event) => event.preventDefault()}>
+          <div className="adhoc-filter-grid">
+            {FILTERS.map(([name, label, values]) => (
+              <FilterControl key={name} name={name} label={label} values={values} value={filters[name]} onChange={updateFilter} />
+            ))}
           </div>
-        )}
-      </form>
+          {(filters.classification || filters.lifecycle || filters.cve_status) && (
+            <div className="adhoc-filter-meta">
+              <Button type="button" size="small" variant="text" onClick={() => { setFilters({ classification: "", lifecycle: "", cve_status: "" }); setPage(1); }}>Clear filters</Button>
+            </div>
+          )}
+        </form>
+      )}
 
       {checkState === "loading" && <LoadingState title="Loading PHP review" copy="Applying the selected scan and server-side filters." />}
       {checkState === "error" && <ErrorState title="PHP RCE review unavailable" copy="The selected scan review could not be loaded. No values have been inferred." onRetry={retryCheck} />}
       {checkState === "ready" && !hasAuthorizedAssets && (
-        <Panel title="No authorized assets in selected scan">
+        <Panel title="No authorized assets in selected scan" className="adhoc-empty-panel">
           <div className="adhoc-empty-copy"><strong>{scope?.scan_members ?? 0} scan members · 0 authorized assets</strong></div>
         </Panel>
       )}
       {checkState === "ready" && hasAuthorizedAssets && !hasEvaluatedAssets && (
-        <Panel title="No structured PHP observations">
+        <Panel title="No structured PHP observations" className="adhoc-empty-panel">
           <div className="adhoc-empty-copy"><strong>{scope.authorized_assets} authorized assets</strong></div>
         </Panel>
       )}

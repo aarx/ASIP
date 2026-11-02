@@ -63,7 +63,7 @@ beforeEach(() => {
   getV2AssetAssistant.mockReset();
 });
 
-test("analyst selects an asset, reviews authoritative evidence, and runs all grounded actions", async () => {
+test("selects the first queue asset by default and runs grounded actions without auto-running AI", async () => {
   getInvestigationAssets.mockResolvedValue(investigationList);
   getV2AssetDetail.mockResolvedValue(selectedAsset);
   getV2AssetAssistant.mockImplementation((domain, action) => Promise.resolve({
@@ -76,8 +76,10 @@ test("analyst selects an asset, reviews authoritative evidence, and runs all gro
 
   render(<App />);
 
-  fireEvent.click(await screen.findByRole("button", { name: /investigate\.example\.com/i }));
   expect(await screen.findByText("Authoritative ShadowRecon evidence")).toBeInTheDocument();
+  expect(window.location.hash).toBe("#/investigate?domain=investigate.example.com");
+  expect(screen.getByLabelText("Search assets")).toBeInTheDocument();
+  expect(getV2AssetAssistant).not.toHaveBeenCalled();
   expect(screen.getByText("192.0.2.10")).toBeInTheDocument();
   expect(screen.getByText("RESPONDED")).toBeInTheDocument();
   expect(screen.getByText("443")).toBeInTheDocument();
@@ -105,6 +107,34 @@ test("analyst selects an asset, reviews authoritative evidence, and runs all gro
   expect(screen.queryByText(/Its prose is not an ASM observation/)).not.toBeInTheDocument();
   expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Gemma|Ollama|Qwen|gemma3:4b/i)).not.toBeInTheDocument();
+});
+
+test("preserves an explicitly requested domain over the default queue selection", async () => {
+  window.location.hash = "#/investigate?domain=explicit.example.com";
+  getInvestigationAssets.mockResolvedValue(investigationList);
+  getV2AssetDetail.mockResolvedValue({ ...selectedAsset, domain: "explicit.example.com" });
+
+  render(<App />);
+
+  expect(await screen.findByText("Authoritative ShadowRecon evidence")).toBeInTheDocument();
+  expect(window.location.hash).toBe("#/investigate?domain=explicit.example.com");
+  expect(getV2AssetDetail).toHaveBeenCalledWith("explicit.example.com");
+  expect(getV2AssetAssistant).not.toHaveBeenCalled();
+});
+
+test("does not replace a user selection while the investigation queue is loading", async () => {
+  let resolveList;
+  getInvestigationAssets.mockReturnValue(new Promise((resolve) => { resolveList = resolve; }));
+  getV2AssetDetail.mockResolvedValue({ ...selectedAsset, domain: "user-selected.example.com" });
+
+  render(<App />);
+  window.location.hash = "#/investigate?domain=user-selected.example.com";
+  fireEvent(window, new HashChangeEvent("hashchange"));
+  resolveList({ ...investigationList, assets: [{ ...investigationList.assets[0], domain: "first.example.com" }] });
+
+  expect(await screen.findByText("Authoritative ShadowRecon evidence")).toBeInTheDocument();
+  expect(window.location.hash).toBe("#/investigate?domain=user-selected.example.com");
+  expect(getV2AssetDetail).toHaveBeenCalledWith("user-selected.example.com");
 });
 
 test("Candidate assets retain the no-organizational-risk boundary", async () => {
@@ -142,6 +172,7 @@ test("Investigation workspace exposes loading, empty, and request-error states",
   getInvestigationAssets.mockResolvedValueOnce({ page: 1, limit: 20, count: 0, assets: [] });
   const empty = render(<App />);
   expect(await screen.findByText("No investigation assets")).toBeInTheDocument();
+  expect(window.location.hash).toBe("#/investigate");
   empty.unmount();
 
   getInvestigationAssets.mockRejectedValueOnce(new Error("offline"));

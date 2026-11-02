@@ -159,6 +159,8 @@ test("communicates an empty authorized scope without implying safety", async () 
   expect(screen.queryByText(/Zero authorized assets is not evidence of safety/i)).not.toBeInTheDocument();
   expect(screen.queryByText("Assets needing attention")).not.toBeInTheDocument();
   expect(screen.queryByText("No matching filtered results")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Classification")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Potential CVE is a reported-version candidate/i)).not.toBeInTheDocument();
 });
 
 test("renders candidates, legacy leads, and expandable technical evidence", async () => {
@@ -173,6 +175,8 @@ test("renders candidates, legacy leads, and expandable technical evidence", asyn
   expect(within(legacyRow).getByText("Not assessed")).toBeInTheDocument();
   expect(within(legacyRow).getByText("No PHP observation")).toBeInTheDocument();
   expect(screen.queryByText("Legacy PHP leads")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Offline intelligence from authorized scan observations/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Evidence remains observation-based/i)).not.toBeInTheDocument();
   expect(screen.getAllByText("legacy.example.com")).toHaveLength(1);
   expect(screen.getByText("3 MATCHING RESULTS")).toBeInTheDocument();
   expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(4);

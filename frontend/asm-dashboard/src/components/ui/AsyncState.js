@@ -36,9 +36,10 @@ export function ErrorState({
 export function EmptyState({
   title = "No authoritative scan yet",
   copy = "Overview data will appear after a scan completes successfully. Running or failed scans are not treated as current state.",
+  className = "",
 }) {
   return (
-    <div className="state-card">
+    <div className={`state-card ${className}`.trim()}>
       <div>
         <div className="state-icon" aria-hidden="true">—</div>
         <h2 className="state-title">{title}</h2>
