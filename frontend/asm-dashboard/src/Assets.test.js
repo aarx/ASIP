@@ -216,6 +216,55 @@ test("overview drill-down filters are consumed by the asset explorer", async () 
   expect(screen.getByText("priority: High")).toBeInTheDocument();
 });
 
+test("HTTP no-response drill-down preserves the confirmed ownership boundary", async () => {
+  window.location.hash = "#/assets?ownership=CONFIRMED&http_observation_status=NO_RESPONSE&limit=25";
+  getV2Assets.mockResolvedValue(assetPage);
+  render(<App />);
+
+  await screen.findByText("app.example.com");
+  expect(getV2Assets).toHaveBeenCalledWith({
+    page: 1,
+    limit: 25,
+    ownership: "CONFIRMED",
+    http_observation_status: "NO_RESPONSE",
+    sort_by: "domain",
+    sort_dir: "asc",
+  });
+  expect(screen.getByText("ownership: CONFIRMED")).toBeInTheDocument();
+  expect(screen.getByText("http observation status: NO_RESPONSE")).toBeInTheDocument();
+});
+
+test("asset drill-down routes respond to hash navigation in both directions", async () => {
+  const noResponseHash = "#/assets?ownership=CONFIRMED&http_observation_status=NO_RESPONSE&limit=25";
+  const respondedHash = "#/assets?ownership=CONFIRMED&http_observation_status=RESPONDED&limit=25";
+  window.location.hash = noResponseHash;
+  getV2Assets.mockResolvedValue(assetPage);
+  render(<App />);
+
+  await screen.findByText("app.example.com");
+  window.history.pushState({}, "", respondedHash);
+  fireEvent(window, new Event("hashchange"));
+  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 1,
+    limit: 25,
+    ownership: "CONFIRMED",
+    http_observation_status: "RESPONDED",
+    sort_by: "domain",
+    sort_dir: "asc",
+  }));
+
+  window.history.pushState({}, "", noResponseHash);
+  fireEvent(window, new Event("hashchange"));
+  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 1,
+    limit: 25,
+    ownership: "CONFIRMED",
+    http_observation_status: "NO_RESPONSE",
+    sort_by: "domain",
+    sort_dir: "asc",
+  }));
+});
+
 test("asset explorer exports the complete filtered authoritative dataset", async () => {
   window.location.hash = "#/assets?asset_class=SHADOW&provider=Example%20Cloud&limit=25";
   getV2Assets.mockResolvedValue(assetPage);

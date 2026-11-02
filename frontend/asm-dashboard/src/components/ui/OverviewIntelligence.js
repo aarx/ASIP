@@ -10,6 +10,10 @@ const STATUS_GROUPS = [
   { key: "no_response", label: "No response", color: "#7e91a8" },
 ];
 
+export const HTTP_STATUS_DRILLDOWNS = {
+  no_response: "#/assets?ownership=CONFIRMED&http_observation_status=NO_RESPONSE&limit=25",
+};
+
 const chartTooltipStyle = {
   background: "#ffffff",
   border: "1px solid #cbd5e1",
@@ -42,6 +46,20 @@ function ChartState({ title, copy, error = false }) {
       <strong>{title}</strong>
       <span>{copy}</span>
     </div>
+  );
+}
+
+function HttpStatusDrilldown({ entry }) {
+  const href = HTTP_STATUS_DRILLDOWNS[entry.key];
+  if (!href || entry.count === 0) return null;
+  return (
+    <a
+      className="overview-chart-drilldown"
+      href={href}
+      aria-label={`Open confirmed assets with ${entry.label.toLowerCase()}`}
+    >
+      Open {entry.label} assets ({entry.count}) <span aria-hidden="true">→</span>
+    </a>
   );
 }
 
@@ -110,6 +128,7 @@ function HttpStatusPanel({ value, status }) {
           </BarChart>
         </ResponsiveContainer>
         <p className="overview-chart-note">No response is separate from an observed HTTP status.</p>
+        <HttpStatusDrilldown entry={data.find(({ key }) => key === "no_response")} />
       </div>
     );
   }
