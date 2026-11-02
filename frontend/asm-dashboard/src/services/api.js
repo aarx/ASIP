@@ -105,6 +105,11 @@ export const getHttpStatus = async () => {
   return res.data;
 };
 
+export const getAssetGrowth = async () => {
+  const res = await axios.get(`${API_URL}/asset-growth`);
+  return res.data;
+};
+
 export async function getRiskLeaderboard() {
   const res = await fetch("http://127.0.0.1:8555/risk-leaderboard");
   return res.json();

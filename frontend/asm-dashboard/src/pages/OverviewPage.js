@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { getV2Overview, getV2Scans } from "../services/api";
+import { getAssetGrowth, getHttpStatus, getV2Overview, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import RiskDistributionChart, { RISK_COLORS } from "../components/ui/RiskDistributionChart";
 import AssetLink from "../components/ui/AssetLink";
+import OverviewIntelligence from "../components/ui/OverviewIntelligence";
 
 const OWNERSHIP_COLORS = {
   Known: "#4655a6",
@@ -110,14 +111,27 @@ export default function OverviewPage() {
 
   useEffect(() => {
     let active = true;
+    const optionalRequest = (request) => Promise.resolve()
+      .then(request)
+      .then((value) => ({ value, status: "ready" }))
+      .catch(() => ({ value: null, status: "error" }));
     setStatus("loading");
     Promise.all([
       getV2Overview(),
       Promise.resolve(getV2Scans(100)).catch(() => null),
+      optionalRequest(getAssetGrowth),
+      optionalRequest(getHttpStatus),
     ])
-      .then(([result, scans]) => {
+      .then(([result, scans, assetGrowth, httpStatus]) => {
         if (active) {
-          setData({ ...result, scanHistory: scans });
+          setData({
+            ...result,
+            scanHistory: scans,
+            assetGrowth: assetGrowth.value,
+            assetGrowthStatus: assetGrowth.status,
+            httpStatus: httpStatus.value,
+            httpStatusStatus: httpStatus.status,
+          });
           setStatus("ready");
         }
       })
@@ -184,6 +198,13 @@ export default function OverviewPage() {
       <Panel title="Ownership & asset composition" subtitle="Organizational surface and adjacent Brand Perimeter" className="ownership-panel">
         <OwnershipComposition counts={counts} />
       </Panel>
+
+      <OverviewIntelligence
+        assetGrowth={data.assetGrowth}
+        assetGrowthStatus={data.assetGrowthStatus}
+        httpStatus={data.httpStatus}
+        httpStatusStatus={data.httpStatusStatus}
+      />
     </div>
   );
 }
