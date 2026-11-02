@@ -398,7 +398,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                     self.setUp()
                     member = self.domain('parent.example', 42, http_status=0 if filename in ('dns_worker.py','san_http_worker.py') else 200,
                                          has_ip=filename != 'dns_worker.py')
-                    if filename == 'port_scan_worker.py':
+                    if filename in ('port_scan_worker.py', 'tech_worker.py'):
                         self.sql("UPDATE domains SET validation_source='manual' WHERE id=%s", (member,))
                     self.sql("INSERT INTO domain_sources VALUES (%s,42,'san','root.example')", (member,))
                     self.sql("INSERT INTO domain_dns VALUES (%s,42,'CNAME','target.github.io')", (member,))
