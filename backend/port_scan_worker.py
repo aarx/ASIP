@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 from db import get_conn, require_running_scan
-from authorization_policy import explicit_t2_authorization_sql
+from authorization_policy import active_scan_authorization_sql
 
 scan_id = int(sys.argv[1])
 
@@ -38,7 +38,7 @@ def get_resolving_domains(cur, scan_id):
     
     WHERE s.has_ip = TRUE
     AND dp.domain_id IS NULL
-    AND {explicit_t2_authorization_sql("d")}
+    AND {active_scan_authorization_sql("d", "PORT_SCAN")}
     ORDER BY d.id, s.scan_id DESC
     """, (scan_id, scan_id))
 

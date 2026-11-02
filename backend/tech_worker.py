@@ -6,7 +6,7 @@ import sys
 
 import requests
 
-from authorization_policy import explicit_t2_authorization_sql
+from authorization_policy import active_scan_authorization_sql
 from db import get_conn, require_running_scan
 
 scan_id = int(sys.argv[1])
@@ -24,7 +24,9 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 DETECTOR_VERSION = "sr-tech-02"
-TECH_AUTHORIZATION_PREDICATE = explicit_t2_authorization_sql("d")
+TECH_AUTHORIZATION_PREDICATE = active_scan_authorization_sql(
+    "d", "TECHNOLOGY_HTTP"
+)
 
 TECH_HEADERS = {
     "nginx": "nginx",

@@ -9,7 +9,7 @@ from datetime import date
 import hashlib
 import json
 
-from authorization_policy import explicit_t2_authorization_sql
+from authorization_policy import active_scan_authorization_sql
 
 
 OPERATOR_AUTHENTICATION_AVAILABLE = False
@@ -165,7 +165,7 @@ def runtime_authorization_query(domain_id, source_scan_id):
           ON sr.domain_id = d.id
          AND sr.scan_id = %s
         WHERE d.id = %s
-          AND {explicit_t2_authorization_sql('d')}
+          AND {active_scan_authorization_sql('d', 'ADHOC_CHECK')}
     """, (source_scan_id, domain_id)
 
 
@@ -208,6 +208,7 @@ def _member_rows(cur, source_scan_id):
         FROM scan_results sr
         JOIN domains d ON d.id = sr.domain_id
         WHERE sr.scan_id = %s
+          AND {active_scan_authorization_sql('d', 'ADHOC_CHECK')}
         ORDER BY d.domain, d.id
     """, (source_scan_id,))
     return cur.fetchall()

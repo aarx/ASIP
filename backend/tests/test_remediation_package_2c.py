@@ -211,7 +211,7 @@ class AuthorizationSeparationTests(unittest.TestCase):
         text = source("port_scan_worker.py")
         norm = normalized(text)
 
-        self.assertIn("EXPLICIT_T2_AUTHORIZATION_SQL(\"D\")", norm)
+        self.assertIn("ACTIVE_SCAN_AUTHORIZATION_SQL(\"D\", \"PORT_SCAN\")", norm)
         self.assertNotIn("D.IS_KNOWN = TRUE", norm)
         self.assertNotIn("CONFIDENCE_LABEL", norm)
         self.assertNotIn("CONFIDENCE_SCORE", norm)

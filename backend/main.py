@@ -17,7 +17,7 @@ from db import get_conn, get_latest_authoritative_scan_id, get_previous_authorit
 from risk_engine import calculate_scan_risks, get_asset_exposure_keywords
 from ownership import OWNERSHIP_CONFIRMED, OWNERSHIP_EXTERNAL, normalize_ownership_status
 from ownership_ingest import apply_ownership
-from authorization_policy import explicit_t2_authorization_sql
+from authorization_policy import active_scan_authorization_sql
 from php_lifecycle import evaluate_php_lifecycle
 from php_cve_intelligence import (
     PHP_CVE_ADVISORIES,
@@ -2084,7 +2084,9 @@ def _url_hostname(value):
     return hostname.lower().rstrip(".") if hostname else None
 
 
-ADHOC_PHP_RCE_AUTHORIZATION_PREDICATE = explicit_t2_authorization_sql("d")
+ADHOC_PHP_RCE_AUTHORIZATION_PREDICATE = active_scan_authorization_sql(
+    "d", "ADHOC_CHECK"
+)
 _ADHOC_PHP_RCE_CLASSIFICATIONS = {
     "potential_cve",
     "not_affected_by_reported_version",
