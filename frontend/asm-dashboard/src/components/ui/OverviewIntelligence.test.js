@@ -27,13 +27,14 @@ test("renders supported aggregate charts with their scope", () => {
   expect(screen.getByTestId("overview-asset-growth-chart")).toHaveClass("overview-chart-canvas");
   expect(screen.getByText("Current authoritative confirmed-organizational scan")).toBeInTheDocument();
   expect(screen.getByTestId("overview-http-status-chart")).toHaveClass("overview-chart-canvas");
-  expect(screen.getByText("No response is separate from an observed HTTP status.")).toBeInTheDocument();
-  const noResponseLink = screen.getByRole("link", { name: "Open confirmed assets with no response" });
-  expect(noResponseLink).toHaveAttribute(
-    "href",
-    "#/assets?ownership=CONFIRMED&http_observation_status=NO_RESPONSE&limit=25"
+  expect(screen.getByText(/not the explicit NO_RESPONSE observation enum/i)).toBeInTheDocument();
+  expect(screen.getByTestId("overview-http-status-chart")).toHaveAttribute(
+    "aria-label",
+    expect.stringContaining("No recorded HTTP status")
   );
-  expect(noResponseLink.tagName).toBe("A");
+  expect(screen.queryByRole("link", { name: /Open confirmed assets with no response/i })).not.toBeInTheDocument();
+  expect(screen.queryByText("NO_RESPONSE")).not.toBeInTheDocument();
+  expect(screen.queryByText("UNKNOWN")).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /2xx|3xx|4xx|5xx/i })).not.toBeInTheDocument();
 });
 
@@ -53,8 +54,4 @@ test("renders loading, API failure, and insufficient-history states", () => {
   rerender(<OverviewIntelligence assetGrowth={growth.slice(0, 1)} httpStatus={{ no_response: 2 }} />);
   expect(screen.getByText("A trend appears after two successful scans.")).toBeInTheDocument();
   expect(screen.getByTestId("overview-http-status-chart")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open confirmed assets with no response" })).toHaveAttribute(
-    "href",
-    "#/assets?ownership=CONFIRMED&http_observation_status=NO_RESPONSE&limit=25"
-  );
 });

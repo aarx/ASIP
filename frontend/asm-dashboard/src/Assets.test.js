@@ -216,7 +216,7 @@ test("overview drill-down filters are consumed by the asset explorer", async () 
   expect(screen.getByText("priority: High")).toBeInTheDocument();
 });
 
-test("HTTP no-response drill-down preserves the confirmed ownership boundary", async () => {
+test("Asset Explorer preserves its explicit HTTP observation filter", async () => {
   window.location.hash = "#/assets?ownership=CONFIRMED&http_observation_status=NO_RESPONSE&limit=25";
   getV2Assets.mockResolvedValue(assetPage);
   render(<App />);

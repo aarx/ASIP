@@ -7,12 +7,8 @@ const STATUS_GROUPS = [
   { key: "3xx", label: "3xx", color: "#327d80" },
   { key: "4xx", label: "4xx", color: "#e7a84b" },
   { key: "5xx", label: "5xx", color: "#f06467" },
-  { key: "no_response", label: "No response", color: "#7e91a8" },
+  { key: "no_response", label: "No recorded HTTP status", color: "#7e91a8" },
 ];
-
-export const HTTP_STATUS_DRILLDOWNS = {
-  no_response: "#/assets?ownership=CONFIRMED&http_observation_status=NO_RESPONSE&limit=25",
-};
 
 const chartTooltipStyle = {
   background: "#ffffff",
@@ -46,20 +42,6 @@ function ChartState({ title, copy, error = false }) {
       <strong>{title}</strong>
       <span>{copy}</span>
     </div>
-  );
-}
-
-function HttpStatusDrilldown({ entry }) {
-  const href = HTTP_STATUS_DRILLDOWNS[entry.key];
-  if (!href || entry.count === 0) return null;
-  return (
-    <a
-      className="overview-chart-drilldown"
-      href={href}
-      aria-label={`Open confirmed assets with ${entry.label.toLowerCase()}`}
-    >
-      Open {entry.label} assets ({entry.count}) <span aria-hidden="true">→</span>
-    </a>
   );
 }
 
@@ -115,7 +97,7 @@ function HttpStatusPanel({ value, status }) {
     content = <ChartState title="No HTTP observations" copy="No observed status data is available for the current confirmed surface." />;
   } else {
     content = (
-      <div className="overview-chart-canvas" data-testid="overview-http-status-chart" aria-label="HTTP status distribution chart">
+      <div className="overview-chart-canvas" data-testid="overview-http-status-chart" aria-label="HTTP status distribution chart: 2xx, 3xx, 4xx, 5xx, No recorded HTTP status">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 4, right: 12, bottom: 4, left: 0 }}>
             <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
@@ -127,8 +109,7 @@ function HttpStatusPanel({ value, status }) {
             </Bar>
           </BarChart>
         </ResponsiveContainer>
-        <p className="overview-chart-note">No response is separate from an observed HTTP status.</p>
-        <HttpStatusDrilldown entry={data.find(({ key }) => key === "no_response")} />
+        <p className="overview-chart-note">Aggregate bucket for assets without a recognized numeric HTTP status; not the explicit NO_RESPONSE observation enum.</p>
       </div>
     );
   }

@@ -139,9 +139,6 @@
 .overview-chart-state { min-height: 220px; display: grid; place-content: center; gap: 6px; padding: 12px; color: var(--asip-text-muted); font-size: 11px; line-height: 1.45; text-align: center; }
 .overview-chart-state strong { color: var(--asip-text-primary); font-size: 12px; }
 .overview-chart-note { margin: 4px 0 0; color: var(--asip-text-muted); font-size: 10px; line-height: 1.4; }
-.overview-chart-drilldown { display: inline-flex; gap: 5px; align-items: center; margin-top: 7px; color: var(--asip-accent-bright); font-size: 10px; font-weight: 650; text-decoration: none; }
-.overview-chart-drilldown:hover { color: var(--asip-text-primary); text-decoration: underline; }
-.overview-chart-drilldown:focus-visible { border-radius: 3px; outline: 2px solid var(--asip-accent-bright); outline-offset: 3px; }
 
 .state-card { min-height: 320px; display: grid; place-items: center; padding: 38px; border: 1px solid var(--asip-border); border-radius: var(--asip-radius); background: rgba(16, 29, 47, .8); text-align: center; }
 .state-card-compact { min-height: 0; place-items: start; padding: 16px 18px; text-align: left; }
