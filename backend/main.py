@@ -1745,7 +1745,7 @@ def cert_expiry():
         JOIN domains d ON d.id = dc.domain_id
         WHERE dc.scan_id = %s
         AND d.ownership_status = 'CONFIRMED'
-        ORDER BY dc.days_to_expiry ASC NULLS LAST
+        ORDER BY dc.expiry_date ASC NULLS LAST, d.domain ASC
         LIMIT 50
     """, (scan_id,))
 
