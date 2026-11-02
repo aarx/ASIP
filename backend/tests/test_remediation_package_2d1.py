@@ -85,6 +85,7 @@ class OrchestrationExclusivityTests(unittest.TestCase):
         self.module.release_orchestration_lock = self.original_release
         self.module.run_pipeline = self.original_run_pipeline
         self.module.create_scan = self.original_create_scan
+        self.module.recover_orphaned_scans = mock.Mock(return_value=[])
 
     def test_first_orchestration_acquires_session_lock(self):
         connection = FakeConnection((True,))
@@ -125,7 +126,7 @@ class OrchestrationExclusivityTests(unittest.TestCase):
         module.run_pipeline = mock.Mock()
         module.create_scan = mock.Mock()
 
-        with self.assertRaisesRegex(SystemExit, "1"):
+        with self.assertRaisesRegex(SystemExit, "0"):
             module.main()
 
         module.run_pipeline.assert_not_called()

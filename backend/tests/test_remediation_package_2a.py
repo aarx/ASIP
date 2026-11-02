@@ -103,6 +103,7 @@ class ScanLifecycleUnitTests(unittest.TestCase):
         module.setup_logging = self.original_setup_logging
         module.run_step = self.original_run_step
         module.mark_scan_terminal = self.original_mark_scan_terminal
+        module.recover_orphaned_scans = lambda connection: []
         module.acquire_orchestration_lock = lambda: object()
         module.release_orchestration_lock = lambda connection: None
 
@@ -116,7 +117,8 @@ class ScanLifecycleUnitTests(unittest.TestCase):
         self.assertIn("status", sql)
         self.assertIn("'RUNNING'", sql)
         self.assertIn("NULL", sql)
-        self.assertIsNone(params)
+        self.assertEqual(len(params), 1)
+        self.assertRegex(params[0], r"^[0-9a-f-]{36}$")
         self.assertTrue(connection.committed)
         self.assertFalse(connection.rolled_back)
         self.assertTrue(connection.closed)
@@ -132,7 +134,7 @@ class ScanLifecycleUnitTests(unittest.TestCase):
         self.assertIn("status = %s", sql)
         self.assertIn("completed_at = NOW()", sql)
         self.assertIn("status = 'RUNNING'", sql)
-        self.assertEqual(params, ("FAILED", 42))
+        self.assertEqual(params, ("FAILED", None, 42))
         self.assertTrue(connection.committed)
 
     def test_terminal_transition_refuses_non_running_scan(self):

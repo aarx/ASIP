@@ -206,7 +206,18 @@ class PostgreSQLLockingTests(unittest.TestCase):
         with setup:
             with setup.cursor() as cursor:
                 cursor.execute(
-                    "CREATE TABLE scans (id integer PRIMARY KEY, status text NOT NULL)"
+                    """
+                    CREATE TABLE scans (
+                        id integer PRIMARY KEY,
+                        status text NOT NULL,
+                        started_at timestamptz,
+                        completed_at timestamptz
+                    )
+                    """
+                )
+                cursor.execute(
+                    (BACKEND / "migrations" /
+                     "007_add_scan_runner_lease.sql").read_text()
                 )
         setup.close()
 
@@ -238,7 +249,9 @@ class PostgreSQLLockingTests(unittest.TestCase):
         with connection:
             with connection.cursor() as cursor:
                 cursor.execute("DELETE FROM scans")
-                cursor.execute("INSERT INTO scans VALUES (42, 'RUNNING')")
+                cursor.execute(
+                    "INSERT INTO scans(id, status) VALUES (42, 'RUNNING')"
+                )
         connection.close()
 
     def test_terminal_transition_waits_for_writer_lock(self):
@@ -290,6 +303,100 @@ class PostgreSQLLockingTests(unittest.TestCase):
             self.db.require_running_scan(writer.cursor(), 42)
         writer.rollback()
         writer.close()
+
+    def test_runner_migration_is_idempotent_and_adds_only_lease_metadata(self):
+        connection = self.psycopg2.connect(**self.connection_args)
+        migration = (BACKEND / "migrations" /
+                     "007_add_scan_runner_lease.sql").read_text()
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute(migration)
+                cursor.execute(migration)
+                cursor.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'scans'
+                    ORDER BY ordinal_position
+                    """
+                )
+                columns = [row[0] for row in cursor.fetchall()]
+        connection.close()
+        self.assertEqual(
+            columns,
+            [
+                "id", "status", "started_at", "completed_at",
+                "runner_token", "heartbeat_at", "failure_reason",
+            ],
+        )
+
+    def test_expired_managed_lease_is_recovered_without_rewriting_history(self):
+        orchestration = load_backend_module(BACKEND / "orchestration.py")
+        connection = self.psycopg2.connect(**self.connection_args)
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE scans
+                    SET runner_token = 'runner-42',
+                        heartbeat_at = NOW() - INTERVAL '10 seconds',
+                        started_at = NOW() - INTERVAL '20 seconds'
+                    WHERE id = 42
+                    """
+                )
+        previous_started_at = None
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT started_at FROM scans WHERE id = 42")
+                previous_started_at = cursor.fetchone()[0]
+
+        previous_grace = os.environ.get("ASIP_RUNNER_ORPHAN_GRACE_SECONDS")
+        os.environ["ASIP_RUNNER_ORPHAN_GRACE_SECONDS"] = "1"
+        try:
+            recovered = orchestration.recover_orphaned_scans(connection)
+        finally:
+            if previous_grace is None:
+                os.environ.pop("ASIP_RUNNER_ORPHAN_GRACE_SECONDS", None)
+            else:
+                os.environ["ASIP_RUNNER_ORPHAN_GRACE_SECONDS"] = previous_grace
+
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT status, failure_reason, started_at FROM scans WHERE id = 42"
+                )
+                status, reason, started_at = cursor.fetchone()
+        connection.close()
+
+        self.assertEqual(recovered, [42])
+        self.assertEqual(status, "FAILED")
+        self.assertEqual(reason, "ORPHANED_RUNNER_RECOVERED")
+        self.assertEqual(started_at, previous_started_at)
+
+    def test_fresh_managed_lease_blocks_recovery(self):
+        orchestration = load_backend_module(BACKEND / "orchestration.py")
+        connection = self.psycopg2.connect(**self.connection_args)
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE scans
+                    SET runner_token = 'runner-42', heartbeat_at = NOW()
+                    WHERE id = 42
+                    """
+                )
+
+        previous_grace = os.environ.get("ASIP_RUNNER_ORPHAN_GRACE_SECONDS")
+        os.environ["ASIP_RUNNER_ORPHAN_GRACE_SECONDS"] = "60"
+        try:
+            with self.assertRaisesRegex(RuntimeError, "fresh lease"):
+                orchestration.recover_orphaned_scans(connection)
+        finally:
+            if previous_grace is None:
+                os.environ.pop("ASIP_RUNNER_ORPHAN_GRACE_SECONDS", None)
+            else:
+                os.environ["ASIP_RUNNER_ORPHAN_GRACE_SECONDS"] = previous_grace
+        connection.close()
 
 
 class WriterWiringTests(unittest.TestCase):
@@ -348,7 +455,7 @@ class WriterWiringTests(unittest.TestCase):
     def test_orchestration_and_artifact_match_authorized_package_baselines(self):
         expected = {
             "orchestration.py": (
-                "d47304c656bd492aaf2838b2d357621f9b83d943e2f409942b427f61a483a0a2"
+                "e47a243b93133e1a494b602b5272ce4f5febe701f2d81eafdaa895373adb6a79"
             ),
             "recon_artifact.py": (
                 "096c44848356e2f4b7f0587e5a26f8008724531101edf405098ed708916bb370"

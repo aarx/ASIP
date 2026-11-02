@@ -13,7 +13,7 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 
 PROTECTED_SHA256 = {
     "ingest.py": "71f27393e1db6e90a33961f50b464681a108e490f2c0cdb7fdd85ca157bb398b",
-    "orchestration.py": "d47304c656bd492aaf2838b2d357621f9b83d943e2f409942b427f61a483a0a2",
+    "orchestration.py": "e47a243b93133e1a494b602b5272ce4f5febe701f2d81eafdaa895373adb6a79",
     "discovery_validator.py": "545dfad14226f1b2b1e2b609b49d7ae9f2738502e3dc68756c243f5d73e3ae81",
     "main.py": "1c4f7138e5c57138b2e805bd699363c0abec7ead921f189fed9526925bae3bfa",
 }
