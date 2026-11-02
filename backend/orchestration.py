@@ -18,6 +18,9 @@ OVERLAP_SKIP_EXIT_CODE = 0
 DEFAULT_STAGE_TIMEOUT_SECONDS = 1800
 DEFAULT_RUNNER_HEARTBEAT_INTERVAL_SECONDS = 15
 DEFAULT_RUNNER_ORPHAN_GRACE_SECONDS = 120
+PROCESS_GROUP_POLL_INTERVAL_SECONDS = 0.05
+
+_ACTIVE_STAGE_PROCESS = None
 
 
 class StageExecutionError(RuntimeError):
@@ -310,22 +313,10 @@ def mark_scan_terminal(scan_id, status, failure_reason=None, runner_token=None):
 # RUN STEP
 # -------------------------
 def stop_active_child(process):
-    """Terminate and reap the subprocess group after parent interruption."""
+    """Terminate the whole stage group, then escalate and reap the leader."""
+    process_group_id = process.pid
     try:
-        returncode = process.poll()
-    except Exception:
-        logging.exception("Child cleanup could not poll the active process")
-        returncode = None
-
-    if returncode is not None:
-        try:
-            process.wait(timeout=0)
-        except Exception:
-            logging.exception("Child cleanup could not reap the exited process")
-        return
-
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
+        os.killpg(process_group_id, signal.SIGTERM)
     except ProcessLookupError:
         pass
     except OSError:
@@ -337,22 +328,33 @@ def stop_active_child(process):
         except Exception:
             logging.exception("Child cleanup fallback terminate failed")
 
-    try:
-        process.wait(timeout=CHILD_TERMINATE_GRACE_SECONDS)
-        return
-    except subprocess.TimeoutExpired:
-        logging.warning("Child did not exit after SIGTERM; escalating to SIGKILL")
-    except Exception:
-        logging.exception("Child cleanup wait after SIGTERM failed")
+    deadline = time.monotonic() + CHILD_TERMINATE_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(process_group_id, 0)
+        except ProcessLookupError:
+            break
+        except OSError:
+            # If existence cannot be established, continue to the bounded
+            # SIGKILL attempt rather than assuming descendants are gone.
+            break
+        try:
+            process.poll()
+        except Exception:
+            logging.exception("Child cleanup could not poll the stage leader")
+        time.sleep(PROCESS_GROUP_POLL_INTERVAL_SECONDS)
+    else:
+        logging.warning("Stage process group persisted after SIGTERM; escalating")
 
     try:
-        os.killpg(process.pid, signal.SIGKILL)
+        os.killpg(process_group_id, signal.SIGKILL)
     except ProcessLookupError:
         pass
     except OSError:
         logging.exception("Child cleanup could not kill the process group")
         try:
-            process.kill()
+            if process.poll() is None:
+                process.kill()
         except ProcessLookupError:
             pass
         except Exception:
@@ -362,6 +364,12 @@ def stop_active_child(process):
         process.wait(timeout=CHILD_TERMINATE_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
         logging.error("Child cleanup timed out while reaping after SIGKILL")
+        try:
+            process.wait(timeout=CHILD_TERMINATE_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            logging.error("Child leader remains unreaped after bounded SIGKILL wait")
+        except Exception:
+            logging.exception("Child cleanup final reap failed")
     except Exception:
         logging.exception("Child cleanup final reap failed")
 
@@ -373,6 +381,7 @@ def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None):
     logging.info(f"Command: {cmd}")
 
     start = time.time()
+    global _ACTIVE_STAGE_PROCESS
     process = None
 
     try:
@@ -385,6 +394,7 @@ def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None):
             bufsize=1,
             start_new_session=True
         )
+        _ACTIVE_STAGE_PROCESS = process
 
         timeout_seconds = timeout_seconds or stage_timeout_seconds(name)
         try:
@@ -436,6 +446,8 @@ def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None):
         logging.exception(f"ERROR in step: {name} attempt {attempt}/{max_attempts}")
         raise
     finally:
+        if _ACTIVE_STAGE_PROCESS is process:
+            _ACTIVE_STAGE_PROCESS = None
         try:
             stdout = getattr(process, "stdout", None) if process is not None else None
             if stdout is not None and hasattr(stdout, "close"):
@@ -622,23 +634,34 @@ def run_pipeline():
 
 
 def main():
-    lock_conn = acquire_orchestration_lock()
-
-    if lock_conn is None:
-        logging.error(
-            "SKIPPED_OVERLAP: another ShadowRecon orchestration pipeline "
-            "is already running; no scan was created"
-        )
-        sys.exit(OVERLAP_SKIP_EXIT_CODE)
-
+    previous_handlers = {}
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        previous_handlers[signum] = signal.getsignal(signum)
+        signal.signal(signum, _handle_shutdown_signal)
+    lock_conn = None
     try:
+        lock_conn = acquire_orchestration_lock()
+        if lock_conn is None:
+            logging.error(
+                "SKIPPED_OVERLAP: another ShadowRecon orchestration pipeline "
+                "is already running; no scan was created"
+            )
+            sys.exit(OVERLAP_SKIP_EXIT_CODE)
         recover_orphaned_scans(lock_conn)
         run_pipeline()
     finally:
-        try:
-            release_orchestration_lock(lock_conn)
-        except Exception:
-            logging.exception("Failed to explicitly release orchestration lock")
+        if lock_conn is not None:
+            try:
+                release_orchestration_lock(lock_conn)
+            except Exception:
+                logging.exception("Failed to explicitly release orchestration lock")
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+
+def _handle_shutdown_signal(signum, _frame):
+    """Route handled termination through the normal scan-failure path."""
+    raise KeyboardInterrupt(f"received signal {signum}")
 
 
 # -------------------------

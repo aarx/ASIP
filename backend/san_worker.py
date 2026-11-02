@@ -26,7 +26,9 @@ def fetch_san_domains(domain, before_request=None):
     if before_request is None or not before_request():
         return None
     try:
-        with open_validated_tls_socket(domain) as ssock:
+        with open_validated_tls_socket(
+            domain, before_request=before_request
+        ) as ssock:
             cert = ssock.getpeercert()
 
         san = cert.get("subjectAltName", [])

@@ -10,7 +10,8 @@ def get_conn():
         host=DB_HOST,
         dbname=DB_NAME,
         user=DB_USER,
-        password=DB_PASSWORD
+        password=DB_PASSWORD,
+        connect_timeout=DB_CONNECT_TIMEOUT_SECONDS,
     )
 
 

@@ -15,6 +15,11 @@ from unittest import mock
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 
 
+def group_gone_after_term(_pid, sig):
+    if sig == 0:
+        raise ProcessLookupError()
+
+
 def load_orchestration():
     module_name = f"pkg2d1e1_orchestration_{len(sys.modules)}"
     spec = importlib.util.spec_from_file_location(
@@ -75,6 +80,15 @@ class FakeProcess:
 
     def poll(self):
         return self.returncode
+
+    def communicate(self, timeout=None):
+        if self.stdout.interrupt:
+            raise KeyboardInterrupt()
+        if timeout is not None and self.timeout_once:
+            self.timeout_once = False
+            raise __import__("subprocess").TimeoutExpired("worker", timeout)
+        self.returncode = self.final_returncode
+        return "", None
 
     def wait(self, timeout=None):
         self.wait_calls.append(timeout)
@@ -215,12 +229,15 @@ class RequiredStageRetryTests(unittest.TestCase):
 
     def test_interrupt_cleanup_escalates_and_reaps(self):
         process = FakeProcess(returncode=-9, interrupt=True, timeout_once=True)
-        with mock.patch.object(self.module.os, "killpg") as killpg:
+        with mock.patch.object(
+            self.module.os, "killpg", side_effect=group_gone_after_term
+        ) as killpg:
             self.module.stop_active_child(process)
 
         self.assertEqual(
             killpg.call_args_list,
             [mock.call(process.pid, signal.SIGTERM),
+             mock.call(process.pid, 0),
              mock.call(process.pid, signal.SIGKILL)],
         )
         self.assertEqual(
@@ -245,11 +262,13 @@ class RequiredStageRetryTests(unittest.TestCase):
         process.wait = mock.Mock(side_effect=OSError("wait failed"))
         with mock.patch.object(
             self.module.subprocess, "Popen", return_value=process
-        ), mock.patch.object(self.module.os, "killpg"):
+        ), mock.patch.object(
+            self.module.os, "killpg", side_effect=group_gone_after_term
+        ):
             with self.assertRaises(KeyboardInterrupt):
                 self.module.run_step("Stage", "command", 1, 2)
 
-        self.assertEqual(process.wait.call_count, 2)
+        self.assertEqual(process.wait.call_count, 1)
 
     def test_cleanup_kill_failures_do_not_mask_keyboard_interrupt(self):
         process = FakeProcess(returncode=-15, interrupt=True, timeout_once=True)
@@ -258,7 +277,7 @@ class RequiredStageRetryTests(unittest.TestCase):
             self.module.subprocess, "Popen", return_value=process
         ), mock.patch.object(
             self.module.os, "killpg",
-            side_effect=[None, OSError("group kill failed")],
+            side_effect=[None, ProcessLookupError(), OSError("group kill failed")],
         ):
             with self.assertRaises(KeyboardInterrupt):
                 self.module.run_step("Stage", "command", 1, 2)
@@ -268,7 +287,9 @@ class RequiredStageRetryTests(unittest.TestCase):
         process.stdout.close_error = OSError("close failed")
         with mock.patch.object(
             self.module.subprocess, "Popen", return_value=process
-        ), mock.patch.object(self.module.os, "killpg"):
+        ), mock.patch.object(
+            self.module.os, "killpg", side_effect=group_gone_after_term
+        ):
             with self.assertRaises(KeyboardInterrupt):
                 self.module.run_step("Stage", "command", 1, 2)
 
@@ -291,6 +312,7 @@ class PipelineOutcomeTests(unittest.TestCase):
         self.module.acquire_orchestration_lock = mock.Mock(
             return_value=self.lock_connection
         )
+        self.module.recover_orphaned_scans = mock.Mock(return_value=[])
         self.module.release_orchestration_lock = mock.Mock()
 
     def test_retry_keeps_running_then_allows_later_stage_and_success(self):
@@ -357,7 +379,7 @@ class PipelineOutcomeTests(unittest.TestCase):
 
         self.module.main()
 
-        self.assertEqual(len(names), 14)
+        self.assertEqual(len(names), 16)
         self.assertEqual(names[0], "Recon")
         self.assertEqual(names[-1], "Risk Scoring")
         self.assertEqual(self.transitions, [(42, "SUCCEEDED")])
@@ -366,12 +388,19 @@ class PipelineOutcomeTests(unittest.TestCase):
         process = FakeProcess(returncode=-15, interrupt=True)
         with mock.patch.object(
             self.module.subprocess, "Popen", return_value=process
-        ) as popen, mock.patch.object(self.module.os, "killpg") as killpg:
+        ) as popen, mock.patch.object(
+            self.module.os, "killpg", side_effect=group_gone_after_term
+        ) as killpg:
             with self.assertRaises(KeyboardInterrupt):
                 self.module.main()
 
         popen.assert_called_once()
-        killpg.assert_called_once_with(process.pid, signal.SIGTERM)
+        self.assertEqual(
+            killpg.call_args_list,
+            [mock.call(process.pid, signal.SIGTERM),
+             mock.call(process.pid, 0),
+             mock.call(process.pid, signal.SIGKILL)],
+        )
         self.assertEqual(self.transitions, [(42, "FAILED")])
         self.module.release_orchestration_lock.assert_called_once_with(
             self.lock_connection
@@ -383,7 +412,9 @@ class PipelineOutcomeTests(unittest.TestCase):
         second = FakeProcess(returncode=-15, interrupt=True)
         with mock.patch.object(
             self.module.subprocess, "Popen", side_effect=[first, second]
-        ) as popen, mock.patch.object(self.module.os, "killpg"):
+        ) as popen, mock.patch.object(
+            self.module.os, "killpg", side_effect=group_gone_after_term
+        ):
             with self.assertRaises(KeyboardInterrupt):
                 self.module.main()
 
@@ -402,7 +433,7 @@ class PipelineOutcomeTests(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             self.module.main()
 
-        self.assertEqual(self.module.run_step.call_count, 14)
+        self.assertEqual(self.module.run_step.call_count, 16)
         self.assertEqual(
             self.module.mark_scan_terminal.call_args_list,
             [mock.call(42, "SUCCEEDED"), mock.call(42, "FAILED")],

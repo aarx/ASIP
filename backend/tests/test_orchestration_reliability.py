@@ -2,8 +2,11 @@ import importlib.util
 import os
 import pathlib
 import shlex
+import signal
+import subprocess
 import sys
 import types
+import time
 import unittest
 from unittest import mock
 
@@ -49,6 +52,110 @@ class OrchestrationTimeoutTests(unittest.TestCase):
             "Hung Stage", command, 1, 2, timeout_seconds=0.1
         )
         self.assertEqual(result, self.module.STAGE_TIMEOUT_EXIT_CODE)
+
+    def test_timeout_kills_grandchild_that_ignores_sigterm(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "survived"
+            grandchild_code = (
+                "import signal,time,pathlib; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "time.sleep(1.2); pathlib.Path(" + repr(str(marker)) + ").touch()"
+            )
+            parent_code = (
+                "import subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c'," + repr(grandchild_code) + "]); "
+                "time.sleep(30)"
+            )
+            command = f"{shlex.quote(sys.executable)} -c {shlex.quote(parent_code)}"
+            with mock.patch.object(
+                self.module, "CHILD_TERMINATE_GRACE_SECONDS", 0.15
+            ):
+                result = self.module.run_step(
+                    "Grandchild Stage", command, 1, 1, timeout_seconds=0.4
+                )
+            self.assertEqual(result, self.module.STAGE_TIMEOUT_EXIT_CODE)
+            time.sleep(1.3)
+            self.assertFalse(marker.exists())
+
+    def test_handled_sigterm_cleans_stage_grandchild(self):
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ready = root / "stage-ready"
+            marker = root / "grandchild-survived"
+            child_pid = root / "stage-pid"
+            grandchild_code = (
+                "import signal,time,pathlib; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "time.sleep(2); pathlib.Path(" + repr(str(marker)) + ").touch()"
+            )
+            stage_code = (
+                "import pathlib,subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c'," + repr(grandchild_code) + "]); "
+                "pathlib.Path(" + repr(str(ready)) + ").touch(); time.sleep(30)"
+            )
+            stage_command = (
+                f"{shlex.quote(sys.executable)} -c {shlex.quote(stage_code)}"
+            )
+            helper_code = (
+                "import pathlib,signal,subprocess,sys,types\n"
+                f"sys.path.insert(0,{str(BACKEND)!r})\n"
+                "fake=types.ModuleType('db'); fake.get_conn=lambda:None\n"
+                "sys.modules['db']=fake; import orchestration\n"
+                "real=orchestration.subprocess.Popen\n"
+                "def tracked(*a, **k):\n"
+                "    p=real(*a, **k)\n"
+                f"    pathlib.Path({str(child_pid)!r}).write_text(str(p.pid))\n"
+                "    return p\n"
+                "orchestration.subprocess.Popen=tracked\n"
+                "orchestration.CHILD_TERMINATE_GRACE_SECONDS=0.2\n"
+                "signal.signal(signal.SIGTERM,orchestration._handle_shutdown_signal)\n"
+                "try:\n"
+                f"    orchestration.run_step('signal-test',{stage_command!r},1,1,20)\n"
+                "except KeyboardInterrupt:\n"
+                "    raise SystemExit(37)\n"
+            )
+            parent = subprocess.Popen(
+                [sys.executable, "-c", helper_code],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not ready.exists():
+                if parent.poll() is not None:
+                    self.fail("orchestration helper exited before stage became ready")
+                time.sleep(0.02)
+            self.assertTrue(ready.exists(), "stage did not reach its ready point")
+            parent.terminate()
+            self.assertEqual(parent.wait(timeout=4), 37)
+            time.sleep(2.1)
+            self.assertFalse(marker.exists())
+
+    def test_shutdown_signals_raise_into_pipeline_cleanup(self):
+        for signum in (self.module.signal.SIGTERM, self.module.signal.SIGINT):
+            with self.subTest(signum=signum), self.assertRaises(KeyboardInterrupt):
+                self.module._handle_shutdown_signal(signum, None)
+
+    def test_main_installs_handled_termination_signals(self):
+        self.module.acquire_orchestration_lock = mock.Mock(return_value=None)
+        with mock.patch.object(self.module.signal, "signal", wraps=signal.signal) as install:
+            with self.assertRaises(SystemExit):
+                self.module.main()
+
+        installed = [call.args[:2] for call in install.call_args_list]
+        self.assertIn(
+            (self.module.signal.SIGTERM, self.module._handle_shutdown_signal),
+            installed,
+        )
+        self.assertIn(
+            (self.module.signal.SIGINT, self.module._handle_shutdown_signal),
+            installed,
+        )
 
     def test_timeout_is_a_terminal_stage_failure_not_an_infinite_retry(self):
         with mock.patch.object(

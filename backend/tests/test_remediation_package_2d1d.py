@@ -13,7 +13,7 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 
 PROTECTED_SHA256 = {
     "ingest.py": "71f27393e1db6e90a33961f50b464681a108e490f2c0cdb7fdd85ca157bb398b",
-    "orchestration.py": "52c160660b53719d7f8c305f6ee3d3b569bb4ea4780021664f02672366ee02d1",
+    "orchestration.py": "fc1ff6cbeadfb9be515d2f64110427b69d120f444abc472c428762924b219ee1",
     "discovery_validator.py": "545dfad14226f1b2b1e2b609b49d7ae9f2738502e3dc68756c243f5d73e3ae81",
     "main.py": "1c4f7138e5c57138b2e805bd699363c0abec7ead921f189fed9526925bae3bfa",
 }
@@ -710,6 +710,44 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.assertFalse(self.runtime_check(
             domain_id, 'HTTP_TLS_OBSERVATION'
         )[0])
+
+    def test_unknown_recon_http_state_is_ingested_then_updated_by_authorized_observer(self):
+        self.sql("INSERT INTO seed_domains VALUES ('example.com')")
+        self.authorize_scope('example.com', 'HTTP_TLS_OBSERVATION')
+        self.ingest(42, [{
+            'Domain': 'app.example.com',
+            'Source': 'subfinder',
+            'Seed': 'example.com',
+            'IP': '8.8.8.8',
+            'HTTP_Status': 0,
+            'HTTP_Observation_Status': 'UNKNOWN',
+        }])
+        domain_id = self.sql(
+            "SELECT id FROM domains WHERE domain='app.example.com'"
+        )[0][0]
+        self.assertEqual(self.sql(
+            "SELECT http_status, http_observation_status FROM domain_states "
+            "WHERE domain_id=%s AND scan_id=42", (domain_id,)
+        ), [(0, 'UNKNOWN')])
+
+        self.run_worker('eligibility_worker.py')
+        observed = mock.Mock(return_value={
+            'http_observation_status': 'RESPONDED',
+            'http_status': 200,
+            'http_reason': 'OK',
+            'final_url': 'https://app.example.com/',
+            'final_status': 200,
+            'title': 'Authorized observation',
+        })
+        self.run_worker('http_observation_worker.py', overrides={
+            'http_probe': observed,
+        })
+
+        self.assertEqual(self.sql(
+            "SELECT http_status, http_observation_status, title FROM domain_states "
+            "WHERE domain_id=%s AND scan_id=42", (domain_id,)
+        ), [(200, 'RESPONDED', 'Authorized observation')])
+        observed.assert_called_once()
 
     def test_technology_worker_rechecks_before_network_after_scope_revocation(self):
         domain_id = self.domain("tech.example.com", 42)

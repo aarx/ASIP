@@ -120,6 +120,18 @@ class DirectTargetAuthorizationTests(unittest.TestCase):
         self.assertTrue(any("HTTP_TLS_OBSERVATION" in sql for sql, _ in cursor.executions))
         self.assertGreaterEqual(connection.commits, 2)
 
+    def test_observation_worker_database_authorization_error_fails_closed(self):
+        module, _, _ = load_worker(
+            "http_observation_worker.py", [(1, "denied.example.com", "203.0.113.4")]
+        )
+        module.recheck_active_authorization = mock.Mock(
+            side_effect=RuntimeError("database unavailable")
+        )
+        module.http_probe = mock.Mock()
+        with self.assertRaisesRegex(RuntimeError, "database unavailable"):
+            module.main()
+        module.http_probe.assert_not_called()
+
     def test_takeover_http_is_disabled_until_its_own_permission_exists(self):
         module, _, _ = load_worker("takeover_worker.py", [])
         with mock.patch.object(module.requests, "get") as request:

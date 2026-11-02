@@ -1,13 +1,8 @@
 import pandas as pd
-import psycopg2
+from db import get_conn
 from ownership import ownership_for_discovery
 
-conn = psycopg2.connect(
-    host="db",
-    dbname="asm_db",
-    user="asm",
-    password="asm123"
-)
+conn = get_conn()
 
 cur = conn.cursor()
 

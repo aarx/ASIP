@@ -14,6 +14,10 @@ HTTP_FAILED = "FAILED"
 HTTP_UNKNOWN = "UNKNOWN"
 
 
+class AuthorizationDeniedError(RuntimeError):
+    """A fresh policy check denied a direct target operation."""
+
+
 def _empty_result(status):
     return {
         "http_observation_status": status,
@@ -56,6 +60,11 @@ def _resolve_allowed_addresses(domain, port, expected_ip=None):
             if address not in addresses:
                 addresses.append(address)
 
+    # Reject the entire DNS answer if any destination is unsafe.  Filtering
+    # only the unsafe records could hide an unstable or mixed answer set.
+    if any(_prohibited_address(address) for address in addresses):
+        return []
+
     if expected_ip is not None:
         try:
             expected = str(ipaddress.ip_address(expected_ip))
@@ -65,14 +74,15 @@ def _resolve_allowed_addresses(domain, port, expected_ip=None):
             return []
         addresses = [expected]
 
-    return [address for address in addresses if not _prohibited_address(address)]
+    return addresses
 
 
 def _connect_pinned(domain, scheme, address):
     port = 443 if scheme == "https" else 80
     raw = socket.create_connection((address, port), timeout=TIMEOUT)
     try:
-        if raw.getpeername()[0] != address:
+        peer_ip = ipaddress.ip_address(raw.getpeername()[0])
+        if peer_ip != ipaddress.ip_address(address):
             raise OSError("connected destination changed during validation")
         if scheme == "https":
             return ssl.create_default_context().wrap_socket(
@@ -84,15 +94,21 @@ def _connect_pinned(domain, scheme, address):
         raise
 
 
-def open_validated_tls_socket(domain, *, expected_ip=None):
+def open_validated_tls_socket(domain, *, expected_ip=None, before_request=None):
     """Open one validated TLS connection for SAN/certificate observation."""
+    if before_request is None:
+        raise AuthorizationDeniedError("authorization check is required")
     addresses = _resolve_allowed_addresses(domain, 443, expected_ip)
     if not addresses:
         raise OSError("no permitted TLS destination address")
     last_error = None
     for address in addresses:
+        if not before_request():
+            raise AuthorizationDeniedError("authorization is no longer valid")
         try:
             return _connect_pinned(domain, "https", address)
+        except AuthorizationDeniedError:
+            raise
         except Exception as exc:
             last_error = exc
     raise last_error or OSError("TLS observation failed")
@@ -103,7 +119,9 @@ def _title(text):
     return re.sub(r"\s+", " ", match.group(1)).strip() if match else ""
 
 
-def _observe_once(domain, scheme, expected_ip=None):
+def _observe_once(domain, scheme, expected_ip=None, before_request=None):
+    if before_request is None:
+        raise AuthorizationDeniedError("authorization check is required")
     port = 443 if scheme == "https" else 80
     addresses = _resolve_allowed_addresses(domain, port, expected_ip)
     if not addresses:
@@ -111,7 +129,10 @@ def _observe_once(domain, scheme, expected_ip=None):
 
     last_error = None
     for address in addresses:
+        if not before_request():
+            raise AuthorizationDeniedError("authorization is no longer valid")
         connection = None
+        sock = None
         try:
             sock = _connect_pinned(domain, scheme, address)
             connection = http.client.HTTPConnection(domain, timeout=TIMEOUT)
@@ -138,12 +159,19 @@ def _observe_once(domain, scheme, expected_ip=None):
                 "redirect_count": 1 if location else 0,
                 "title": _title(body),
             }
+        except AuthorizationDeniedError:
+            raise
         except Exception as exc:
             last_error = exc
         finally:
             if connection is not None:
                 try:
                     connection.close()
+                except Exception:
+                    pass
+            elif sock is not None:
+                try:
+                    sock.close()
                 except Exception:
                     pass
     raise last_error or OSError("observation failed")
@@ -156,11 +184,21 @@ def http_probe(domain, *, before_request=None, expected_ip=None):
 
     attempted = False
     for scheme in ("https", "http"):
+        # Keep policy failures outside the transport exception handler.  A
+        # transient database error must stop this target rather than allowing
+        # a later fallback authorization query to initiate network traffic.
+        if not before_request():
+            return _empty_result(HTTP_UNKNOWN)
+        attempted = True
         try:
-            if not before_request():
-                return _empty_result(HTTP_UNKNOWN)
-            attempted = True
-            return _observe_once(domain, scheme, expected_ip=expected_ip)
+            return _observe_once(
+                domain,
+                scheme,
+                expected_ip=expected_ip,
+                before_request=before_request,
+            )
+        except AuthorizationDeniedError:
+            return _empty_result(HTTP_UNKNOWN)
         except Exception:
             continue
     return _empty_result(HTTP_NO_RESPONSE if attempted else HTTP_UNKNOWN)

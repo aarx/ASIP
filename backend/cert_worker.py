@@ -57,7 +57,11 @@ def fetch_cert_expiry(domain, *, before_request=None, expected_ip=None):
     if before_request is None or not before_request():
         return None
     try:
-        with open_validated_tls_socket(domain, expected_ip=expected_ip) as ssock:
+        with open_validated_tls_socket(
+            domain,
+            expected_ip=expected_ip,
+            before_request=before_request,
+        ) as ssock:
             cert_bin = ssock.getpeercert(binary_form=True)
         x509 = ssl.DER_cert_to_PEM_cert(cert_bin)
         x509_obj = OpenSSL.crypto.load_certificate(

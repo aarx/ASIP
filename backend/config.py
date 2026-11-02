@@ -8,6 +8,12 @@ DB_HOST = os.getenv("DB_HOST", "db")
 DB_NAME = os.getenv("DB_NAME", "asm_db")
 DB_USER = os.getenv("DB_USER", "asm")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
+try:
+    DB_CONNECT_TIMEOUT_SECONDS = max(
+        1, int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "5"))
+    )
+except (TypeError, ValueError):
+    DB_CONNECT_TIMEOUT_SECONDS = 5
 
 # ==========================
 # LLM
