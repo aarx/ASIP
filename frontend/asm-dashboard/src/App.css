@@ -80,7 +80,7 @@
 .page-content-investigate, .page-content-adhoc { padding-top: 20px; }
 
 .overview-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
-.kpi-strip { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.kpi-strip { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 
 .metric-card { position: relative; min-height: 124px; overflow: hidden; border: 1px solid var(--asip-border); border-radius: var(--asip-radius); background: linear-gradient(145deg, rgba(20, 34, 54, .96), rgba(14, 26, 43, .96)); box-shadow: var(--asip-shadow); }
 .metric-card-link { color: inherit; text-decoration: none; transition: border-color 120ms ease, transform 120ms ease; }
@@ -95,8 +95,8 @@
 .panel-title { margin: 0; color: var(--asip-text-primary); font-size: 14px; font-weight: 680; }
 .panel-subtitle { margin: 4px 0 0; color: var(--asip-text-muted); font-size: 11px; line-height: 1.45; }
 .panel-body { padding: 18px 20px 20px; }
-.change-panel { grid-column: span 4; }
-.attention-panel { grid-column: span 8; }
+.change-panel, .certificate-health-panel { grid-column: span 6; }
+.attention-panel, .discovery-validation-panel { grid-column: 1 / -1; }
 .risk-panel, .ownership-panel { grid-column: span 6; }
 .intelligence-panel { grid-column: span 6; }
 .scan-context { color: var(--asip-text-muted); font-family: var(--asip-font-mono); font-size: 10px; white-space: nowrap; }
@@ -512,7 +512,8 @@
 
 @media (max-width: 1180px) {
   .kpi-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .change-panel, .attention-panel { grid-column: span 6; }
+  .change-panel, .certificate-health-panel { grid-column: span 6; }
+  .attention-panel, .discovery-validation-panel { grid-column: 1 / -1; }
   .operation-panel-third, .operation-panel-wide { grid-column: span 6; }
   .adhoc-scan-context { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .adhoc-scan-context p { grid-column: 1 / -1; padding: 12px 0 0; border-top: 1px solid var(--asip-border); border-left: 0; }

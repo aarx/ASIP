@@ -98,7 +98,7 @@ function ChartState({ title, copy, error = false }) {
   );
 }
 
-function AssetGrowthPanel({ value, status }) {
+export function AssetGrowthPanel({ value, status }) {
   const data = normalizeGrowth(value);
   let content;
   if (status === "loading") {
@@ -133,7 +133,7 @@ function AssetGrowthPanel({ value, status }) {
   );
 }
 
-function HttpStatusPanel({ value, status }) {
+export function HttpStatusPanel({ value, status }) {
   const data = STATUS_GROUPS.map(({ key, label, color }) => ({
     key,
     label,
@@ -184,7 +184,7 @@ function CertificateStatus({ record }) {
   return <span className={`certificate-status certificate-status-${record.bucket}`}>{record.status}</span>;
 }
 
-function CertificateHealthPanel({ value, status, scanId, now }) {
+export function CertificateHealthPanel({ value, status, scanId, now }) {
   const records = normalizeCertificateRecords(value, now);
   const counts = {
     expired: records.filter((record) => record.bucket === "expired").length,
@@ -229,7 +229,7 @@ function CertificateHealthPanel({ value, status, scanId, now }) {
   }
 
   return (
-    <Panel title="Certificate health" subtitle="Current confirmed assets · up to 50 certificate observations" meta={scanId != null ? `SCAN #${scanId}` : "CURRENT"} className="intelligence-panel">
+    <Panel title="Certificate health" subtitle="Current confirmed assets · up to 50 certificate observations" meta={scanId != null ? `SCAN #${scanId}` : "CURRENT"} className="intelligence-panel certificate-health-panel">
       {content}
     </Panel>
   );
@@ -242,7 +242,7 @@ function normalizeDiscoverySummary(value) {
   return { candidate, external };
 }
 
-function DiscoveryValidationPanel({ value, status, scanId }) {
+export function DiscoveryValidationPanel({ value, status, scanId }) {
   const summary = normalizeDiscoverySummary(value);
   let content;
   if (status === "loading") {
@@ -295,7 +295,7 @@ export function normalizeNamingExposure(value) {
     .sort((left, right) => left.keyword.localeCompare(right.keyword));
 }
 
-function NamingExposurePanel({ value, status, scanId }) {
+export function NamingExposurePanel({ value, status, scanId }) {
   const categories = normalizeNamingExposure(value);
   let content;
   if (status === "loading") {
@@ -330,10 +330,10 @@ function NamingExposurePanel({ value, status, scanId }) {
 export default function OverviewIntelligence({ assetGrowth, assetGrowthStatus = "ready", httpStatus, httpStatusStatus = "ready", certificateExpiry, certificateExpiryStatus = "ready", certificateScanId, certificateNow, discoverySummary, discoverySummaryStatus = "ready", namingExposure, namingExposureStatus = "ready" }) {
   return (
     <>
-      <AssetGrowthPanel value={assetGrowth} status={assetGrowthStatus} />
-      <HttpStatusPanel value={httpStatus} status={httpStatusStatus} />
       <CertificateHealthPanel value={certificateExpiry} status={certificateExpiryStatus} scanId={certificateScanId} now={certificateNow} />
       <DiscoveryValidationPanel value={discoverySummary} status={discoverySummaryStatus} scanId={discoverySummary?.scan_id} />
+      <AssetGrowthPanel value={assetGrowth} status={assetGrowthStatus} />
+      <HttpStatusPanel value={httpStatus} status={httpStatusStatus} />
       <NamingExposurePanel value={namingExposure} status={namingExposureStatus} scanId={certificateScanId} />
     </>
   );

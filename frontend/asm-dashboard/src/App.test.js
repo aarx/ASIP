@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { getNamingAssetExposure, getV2BrandAssets, getV2Overview, getV2Scans } from "./services/api";
+import { getCertExpiry, getNamingAssetExposure, getV2BrandAssets, getV2Overview, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -51,6 +51,7 @@ beforeEach(() => {
   getV2Scans.mockReset();
   getV2BrandAssets.mockReset();
   getNamingAssetExposure.mockReset();
+  getCertExpiry.mockReset();
 });
 
 test("renders the permanent shell and authoritative overview", async () => {
@@ -74,13 +75,20 @@ test("renders the permanent shell and authoritative overview", async () => {
     { keyword: "DEV", count: 2 },
     { keyword: "STAGE", count: 1 },
   ]);
+  getCertExpiry.mockResolvedValue([]);
   render(<App />);
 
   expect(screen.getByText("Loading authoritative state")).toBeInTheDocument();
   expect(await screen.findByText("alpha.example")).toBeInTheDocument();
   expect(screen.getByText("ShadowRecon")).toBeInTheDocument();
-  expect(screen.getByText("Organizational assets")).toBeInTheDocument();
-  expect(screen.getByText("Brand perimeter")).toBeInTheDocument();
+  const kpiStrip = screen.getByRole("region", { name: "Overview metrics" });
+  expect([...kpiStrip.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
+    "Organizational assets",
+    "High risk",
+    "Shadow assets",
+    "New assets",
+  ]);
+  expect(within(kpiStrip).queryByText("Brand perimeter")).not.toBeInTheDocument();
   expect(screen.getByText("scan 41 → 42")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
   expect(screen.getByRole("link", { name: "Assets" })).toBeInTheDocument();
@@ -96,6 +104,18 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByRole("link", { name: "Open Shadow assets" })).toHaveAttribute("href", "#/shadow");
   expect(screen.getByRole("link", { name: "Open Candidate assets" })).toHaveAttribute("href", "#/brand?ownership=CANDIDATE");
   expect(screen.getByRole("link", { name: "Open External assets" })).toHaveAttribute("href", "#/brand?ownership=EXTERNAL");
+  const attentionPanel = screen.getByText("Needs attention").closest("section");
+  const certificatePanel = screen.getByText("Certificate health").closest("section");
+  const changedPanel = screen.getByText("What changed").closest("section");
+  const discoveryPanel = screen.getByText("Discovery & validation").closest("section");
+  expect(attentionPanel).toHaveClass("attention-panel", "primary-attention-panel");
+  expect(certificatePanel).toHaveClass("certificate-health-panel");
+  expect(changedPanel).toHaveClass("change-panel");
+  expect(discoveryPanel).toHaveClass("discovery-validation-panel");
+  expect(attentionPanel.compareDocumentPosition(certificatePanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(certificatePanel.compareDocumentPosition(changedPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(changedPanel.compareDocumentPosition(discoveryPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(getCertExpiry).toHaveBeenCalledTimes(1);
   expect(screen.getByText("Discovery & validation")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open Brand Perimeter Candidate assets (3)" })).toHaveAttribute(
     "href",

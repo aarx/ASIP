@@ -6,7 +6,13 @@ import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import RiskDistributionChart, { RISK_COLORS } from "../components/ui/RiskDistributionChart";
 import AssetLink from "../components/ui/AssetLink";
-import OverviewIntelligence from "../components/ui/OverviewIntelligence";
+import {
+  AssetGrowthPanel,
+  CertificateHealthPanel,
+  DiscoveryValidationPanel,
+  HttpStatusPanel,
+  NamingExposurePanel,
+} from "../components/ui/OverviewIntelligence";
 
 const OWNERSHIP_COLORS = {
   Known: "#4655a6",
@@ -181,7 +187,6 @@ export default function OverviewPage() {
     external: data.counts?.external ?? 0,
   };
   const highRisk = data.risk_distribution?.High ?? 0;
-  const perimeter = counts.candidate + counts.external;
   const scanContext = data.previous_scan_id == null
     ? `scan ${data.current_scan_id} · no prior baseline`
     : `scan ${data.previous_scan_id} → ${data.current_scan_id}`;
@@ -203,11 +208,21 @@ export default function OverviewPage() {
       </a>
       <section className="kpi-strip" aria-label="Overview metrics">
         <MetricCard label="Organizational assets" value={counts.organizational} support="Current confirmed surface" accent="#4655a6" href="#/assets" />
-        <MetricCard label="Shadow assets" value={counts.shadow} support="Confirmed, outside inventory" accent="#7e91a8" href="#/shadow" />
         <MetricCard label="High risk" value={highRisk} support="Canonical priority" accent={RISK_COLORS.High} href="#/risk" />
+        <MetricCard label="Shadow assets" value={counts.shadow} support="Confirmed, outside inventory" accent="#7e91a8" href="#/shadow" />
         <MetricCard label="New assets" value={data.changes?.new_assets ?? 0} support="Since previous successful scan" accent="#327d80" href="#/changes?view=new" />
-        <MetricCard label="Brand perimeter" value={perimeter} support={`${counts.candidate} candidate · ${counts.external} external`} accent="#9a79d6" href="#/brand" />
       </section>
+
+      <Panel title="Needs attention" subtitle="Highest deterministic risk scores in the current surface" meta="TOP 10" className="attention-panel primary-attention-panel">
+        <AttentionTable assets={data.needs_attention || []} />
+      </Panel>
+
+      <CertificateHealthPanel
+        value={data.certificateExpiry}
+        status={data.certificateExpiryStatus}
+        scanId={data.current_scan_id}
+        now={data.certificateNow}
+      />
 
       <Panel title="What changed" subtitle="Exact membership delta between successful scans" meta={scanContext} className="change-panel">
         <a className="change-row change-row-link" href="#/changes?view=new"><span className="change-label">New organizational assets</span><span className="change-value">+{data.changes?.new_assets ?? 0}</span></a>
@@ -215,9 +230,11 @@ export default function OverviewPage() {
         <div className="change-row"><span className="change-label">Current authoritative scan</span><span className="change-value">#{data.current_scan_id}</span></div>
       </Panel>
 
-      <Panel title="Needs attention" subtitle="Highest deterministic risk scores in the current surface" meta="TOP 10" className="attention-panel">
-        <AttentionTable assets={data.needs_attention || []} />
-      </Panel>
+      <DiscoveryValidationPanel
+        value={data.discoverySummary}
+        status={data.discoverySummaryStatus}
+        scanId={data.discoverySummary?.scan_id}
+      />
 
       <Panel title="Risk distribution" subtitle="Canonical priorities across confirmed organizational assets" className="risk-panel">
         <RiskDistributionChart distribution={data.risk_distribution} priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}&limit=25`} />
@@ -227,19 +244,9 @@ export default function OverviewPage() {
         <OwnershipComposition counts={counts} />
       </Panel>
 
-      <OverviewIntelligence
-        assetGrowth={data.assetGrowth}
-        assetGrowthStatus={data.assetGrowthStatus}
-        httpStatus={data.httpStatus}
-        httpStatusStatus={data.httpStatusStatus}
-        certificateExpiry={data.certificateExpiry}
-        certificateExpiryStatus={data.certificateExpiryStatus}
-        certificateScanId={data.current_scan_id}
-        discoverySummary={data.discoverySummary}
-        discoverySummaryStatus={data.discoverySummaryStatus}
-        namingExposure={data.namingExposure}
-        namingExposureStatus={data.namingExposureStatus}
-      />
+      <AssetGrowthPanel value={data.assetGrowth} status={data.assetGrowthStatus} />
+      <HttpStatusPanel value={data.httpStatus} status={data.httpStatusStatus} />
+      <NamingExposurePanel value={data.namingExposure} status={data.namingExposureStatus} scanId={data.current_scan_id} />
     </div>
   );
 }
