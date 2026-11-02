@@ -110,6 +110,11 @@ export const getAssetGrowth = async () => {
   return res.data;
 };
 
+export const getCertExpiry = async () => {
+  const res = await axios.get(`${API_URL}/cert-expiry`);
+  return res.data;
+};
+
 export async function getRiskLeaderboard() {
   const res = await fetch("http://127.0.0.1:8555/risk-leaderboard");
   return res.json();

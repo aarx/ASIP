@@ -1,6 +1,7 @@
 import React from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import Panel from "./Panel";
+import AssetLink from "./AssetLink";
 
 const STATUS_GROUPS = [
   { key: "2xx", label: "2xx", color: "#398261" },
@@ -9,6 +10,58 @@ const STATUS_GROUPS = [
   { key: "5xx", label: "5xx", color: "#f06467" },
   { key: "no_response", label: "No recorded HTTP status", color: "#7e91a8" },
 ];
+
+export function parseCertificateExpiry(value) {
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const [, year, month, day] = match.map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year
+    || parsed.getUTCMonth() !== month - 1
+    || parsed.getUTCDate() !== day
+  ) return null;
+  return parsed;
+}
+
+function certificateDaysUntil(expiryDate, now) {
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  return Math.round((expiryDate.getTime() - today.getTime()) / 86400000);
+}
+
+export function classifyCertificateExpiry(value, now = new Date()) {
+  const expiryDate = parseCertificateExpiry(value);
+  if (!expiryDate) return { bucket: "unknown", status: "Unknown", days: null, expiryDate: null };
+  const days = certificateDaysUntil(expiryDate, now);
+  if (days < 0) return { bucket: "expired", status: "Expired", days, expiryDate };
+  if (days <= 7) return { bucket: "within7", status: "Expiring within 7 days", days, expiryDate };
+  if (days <= 30) return { bucket: "within30", status: "Expiring within 8–30 days", days, expiryDate };
+  return { bucket: "healthy", status: "Beyond 30 days", days, expiryDate };
+}
+
+export function normalizeCertificateRecords(value, now = new Date()) {
+  if (!Array.isArray(value)) return [];
+  const byDomain = new Map();
+  value.forEach((row) => {
+    const domain = String(row?.domain || "").trim();
+    if (!domain) return;
+    const classification = classifyCertificateExpiry(row?.expiry, now);
+    const record = { domain, expiry: row?.expiry || null, ...classification };
+    const existing = byDomain.get(domain);
+    if (
+      !existing
+      || (record.expiryDate && !existing.expiryDate)
+      || (record.expiryDate && existing.expiryDate && record.expiryDate < existing.expiryDate)
+    ) byDomain.set(domain, record);
+  });
+  const urgency = { expired: 0, within7: 1, within30: 2, unknown: 3, healthy: 4 };
+  return [...byDomain.values()].sort((left, right) => (
+    (urgency[left.bucket] - urgency[right.bucket])
+    || ((left.expiryDate?.getTime() ?? Number.MAX_SAFE_INTEGER) - (right.expiryDate?.getTime() ?? Number.MAX_SAFE_INTEGER))
+    || left.domain.localeCompare(right.domain)
+  ));
+}
 
 const chartTooltipStyle = {
   background: "#ffffff",
@@ -121,11 +174,73 @@ function HttpStatusPanel({ value, status }) {
   );
 }
 
-export default function OverviewIntelligence({ assetGrowth, assetGrowthStatus = "ready", httpStatus, httpStatusStatus = "ready" }) {
+function certificateDaysLabel(days) {
+  if (days == null) return "Unavailable";
+  if (days < 0) return `${Math.abs(days)}d overdue`;
+  return `${days}d remaining`;
+}
+
+function CertificateStatus({ record }) {
+  return <span className={`certificate-status certificate-status-${record.bucket}`}>{record.status}</span>;
+}
+
+function CertificateHealthPanel({ value, status, scanId, now }) {
+  const records = normalizeCertificateRecords(value, now);
+  const counts = {
+    expired: records.filter((record) => record.bucket === "expired").length,
+    within7: records.filter((record) => record.bucket === "within7").length,
+    within30: records.filter((record) => record.bucket === "within30").length,
+    unknown: records.filter((record) => record.bucket === "unknown").length,
+  };
+  const urgent = records.filter((record) => ["expired", "within7", "within30"].includes(record.bucket)).slice(0, 12);
+  let content;
+  if (status === "loading") {
+    content = <ChartState title="Loading certificate observations" copy="Reading the current confirmed-asset certificate set." />;
+  } else if (status === "error") {
+    content = <ChartState title="Certificate health unavailable" copy="The overview is available, but certificate observations could not be loaded." error />;
+  } else if (!records.length) {
+    content = <ChartState title="No certificate observations" copy="No current certificate evidence was returned." />;
+  } else {
+    content = (
+      <>
+        <div className="certificate-health-summary" aria-label="Certificate health summary">
+          <div className="certificate-health-stat certificate-health-stat-expired"><span>Expired</span><strong>{counts.expired}</strong></div>
+          <div className="certificate-health-stat certificate-health-stat-within7"><span>Within 7 days</span><strong>{counts.within7}</strong></div>
+          <div className="certificate-health-stat certificate-health-stat-within30"><span>Within 8–30 days</span><strong>{counts.within30}</strong></div>
+          <div className="certificate-health-stat certificate-health-stat-unknown"><span>Unknown expiry</span><strong>{counts.unknown}</strong></div>
+        </div>
+        {urgent.length ? (
+          <div className="dense-table-wrap">
+            <table className="dense-table certificate-health-table" aria-label="Certificate health priority observations">
+              <thead><tr><th>Domain</th><th>Expiry date</th><th>Days remaining / overdue</th><th>Status</th></tr></thead>
+              <tbody>{urgent.map((record) => (
+                <tr key={record.domain}>
+                  <td><AssetLink domain={record.domain} returnTo="overview" /></td>
+                  <td><span className="technical-value">{record.expiry || "Unavailable"}</span></td>
+                  <td><span className="technical-value">{certificateDaysLabel(record.days)}</span></td>
+                  <td><CertificateStatus record={record} /></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ) : <p className="panel-subtitle">No dated certificate observations are within 30 days. Missing expiry evidence is not treated as healthy.</p>}
+      </>
+    );
+  }
+
+  return (
+    <Panel title="Certificate health" subtitle="Current confirmed assets · up to 50 certificate observations" meta={scanId != null ? `SCAN #${scanId}` : "CURRENT"} className="intelligence-panel">
+      {content}
+    </Panel>
+  );
+}
+
+export default function OverviewIntelligence({ assetGrowth, assetGrowthStatus = "ready", httpStatus, httpStatusStatus = "ready", certificateExpiry, certificateExpiryStatus = "ready", certificateScanId, certificateNow }) {
   return (
     <>
       <AssetGrowthPanel value={assetGrowth} status={assetGrowthStatus} />
       <HttpStatusPanel value={httpStatus} status={httpStatusStatus} />
+      <CertificateHealthPanel value={certificateExpiry} status={certificateExpiryStatus} scanId={certificateScanId} now={certificateNow} />
     </>
   );
 }

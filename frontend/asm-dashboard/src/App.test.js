@@ -5,6 +5,7 @@ import { getV2Overview, getV2Scans } from "./services/api";
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
   getAssetGrowth: jest.fn(),
+  getCertExpiry: jest.fn(),
   getHttpStatus: jest.fn(),
   getV2Assets: jest.fn(),
   getV2AssetDetail: jest.fn(),

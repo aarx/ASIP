@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getAssetGrowth, getHttpStatus, getV2Overview, getV2Scans } from "../services/api";
+import { getAssetGrowth, getCertExpiry, getHttpStatus, getV2Overview, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
@@ -121,8 +121,9 @@ export default function OverviewPage() {
       Promise.resolve(getV2Scans(100)).catch(() => null),
       optionalRequest(getAssetGrowth),
       optionalRequest(getHttpStatus),
+      optionalRequest(getCertExpiry),
     ])
-      .then(([result, scans, assetGrowth, httpStatus]) => {
+      .then(([result, scans, assetGrowth, httpStatus, certificateExpiry]) => {
         if (active) {
           setData({
             ...result,
@@ -131,6 +132,8 @@ export default function OverviewPage() {
             assetGrowthStatus: assetGrowth.status,
             httpStatus: httpStatus.value,
             httpStatusStatus: httpStatus.status,
+            certificateExpiry: certificateExpiry.value,
+            certificateExpiryStatus: certificateExpiry.status,
           });
           setStatus("ready");
         }
@@ -204,6 +207,9 @@ export default function OverviewPage() {
         assetGrowthStatus={data.assetGrowthStatus}
         httpStatus={data.httpStatus}
         httpStatusStatus={data.httpStatusStatus}
+        certificateExpiry={data.certificateExpiry}
+        certificateExpiryStatus={data.certificateExpiryStatus}
+        certificateScanId={data.current_scan_id}
       />
     </div>
   );
