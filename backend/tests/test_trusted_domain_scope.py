@@ -187,11 +187,65 @@ class EligibilityAndAuthorizationTests(unittest.TestCase):
         resolve.assert_not_called()
         self.assertEqual(result["http_observation_status"], "UNKNOWN")
 
-    def test_recon_keeps_file_seeds_but_uses_database_inventory_as_trust(self):
-        recon = (BACKEND / "recon.py").read_text(encoding="utf-8")
-        self.assertIn("file_seeds", recon)
-        self.assertIn("load_trusted_domains", recon)
-        self.assertIn("[*file_seeds, *sorted(trusted_roots)]", recon)
+    def test_recon_uses_only_seed_file_with_large_known_inventory(self):
+        import os
+        import tempfile
+        import recon
+
+        class InventoryCursor:
+            def __init__(self):
+                self.statements = []
+
+            def execute(self, statement, *_args):
+                self.statements.append(statement)
+
+            def fetchall(self):
+                return [(f"host-{index}.inventory.test",) for index in range(10_000)]
+
+        class InventoryConnection:
+            def __init__(self, cursor):
+                self.test_cursor = cursor
+
+            def cursor(self):
+                return self.test_cursor
+
+            def commit(self):
+                pass
+
+            def close(self):
+                pass
+
+            def rollback(self):
+                pass
+
+        cursor = InventoryCursor()
+        connection = InventoryConnection(cursor)
+        roots_started = []
+        recon.domain_registry.clear()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            seed_path = os.path.join(temp_dir, "seeds.txt")
+            os.makedirs(os.path.join(temp_dir, "data"))
+            with open(seed_path, "w", encoding="utf-8") as seed_file:
+                seed_file.write("Example.com\nexample.COM\nsecond.example.org\n")
+            previous_dir = os.getcwd()
+            try:
+                os.chdir(temp_dir)
+                with mock.patch.object(recon, "get_conn", return_value=connection), \
+                     mock.patch.object(recon, "require_running_scan"), \
+                     mock.patch.object(recon, "publish_recon_artifact"), \
+                     mock.patch.object(recon, "load_known", return_value=set()), \
+                     mock.patch.object(
+                         recon, "run_subdomain_enum",
+                         side_effect=lambda root, _deep: roots_started.append(root),
+                     ), \
+                     mock.patch("builtins.print"):
+                    recon.main(seed_path, deep=False, expand=False, scan_id=987)
+            finally:
+                os.chdir(previous_dir)
+
+        self.assertEqual(roots_started, ["example.com", "second.example.org"])
+        self.assertEqual(cursor.statements, [])
+        self.assertEqual(len(cursor.fetchall()), 10_000)
         self.assertIn("trusted_domains=trusted_domains", (BACKEND / "ingest.py").read_text())
         self.assertIn("trusted_domains=trusted_domains", (BACKEND / "san_worker.py").read_text())
 
