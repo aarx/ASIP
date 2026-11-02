@@ -131,6 +131,25 @@ class RunnerGuardTests(unittest.TestCase):
         self.assertIn("d.ownership_status = 'CONFIRMED'", cursor.executions[-1][0])
         transport.request.assert_not_called()
 
+    def test_scope_authorized_context_is_allowed_until_live_recheck(self):
+        row = (
+            10, "RUNNING", 16, context().created_at,
+            20, "PENDING", 16, 30, "SUCCEEDED", "scoped.example",
+            "CONFIRMED", True, None, "2026-10-28", "scope-revision",
+        )
+        cursor = Cursor(row)
+        runner = AdhocCampaignRunner(
+            policy=RunnerPolicy(enabled=True),
+            transport=mock.Mock(),
+            operator_authorizer=lambda identity: identity == "operator",
+        )
+        prepared = runner.prepare_target(
+            Connection(cursor), 10, 20, "operator",
+            now=datetime(2026, 10, 29, 12, 1, tzinfo=timezone.utc),
+        )
+        self.assertEqual(prepared.validation_source, None)
+        self.assertIn("active_scan_scopes", cursor.executions[-1][0])
+
     def test_missing_target_is_rejected_by_scan_bound_query(self):
         cursor = Cursor()
         with self.assertRaises(TargetNotFound):
@@ -146,8 +165,12 @@ class RunnerGuardTests(unittest.TestCase):
             validate_execution_context(context(ownership_status="CANDIDATE"))
         with self.assertRaises(AuthorizationRevoked):
             validate_execution_context(context(scannable=False))
-        with self.assertRaises(AuthorizationRevoked):
-            validate_execution_context(context(validation_source="discovery"))
+        # Scope authorization is checked by the live database recheck, not by
+        # this pure technical-eligibility context guard.
+        self.assertTrue(validate_execution_context(
+            context(validation_source="discovery"),
+            now=datetime(2026, 10, 29, 12, 1, tzinfo=timezone.utc),
+        ))
 
     def test_cancellation_and_deadline_guards_are_cooperative(self):
         with self.assertRaises(CampaignCancelled):

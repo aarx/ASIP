@@ -153,15 +153,39 @@ def active_scan_authorization_sql(domain_alias="d", testing_level="TECHNOLOGY_HT
         f"{domain_alias}.ownership_status = 'CONFIRMED' "
         f"AND {domain_alias}.scannable IS TRUE "
     )
+    scope_match = active_scope_coverage_sql(domain_alias, level)
+    return (
+        base
+        + f"AND ({domain_alias}.validation_source = 'manual' OR ({scope_match}))"
+    )
+
+
+def active_scope_coverage_sql(domain_alias="d", testing_level=None):
+    """Return SQL for active scope coverage with exclusions applied.
+
+    This deliberately excludes ownership and scannability predicates so the
+    automatic eligibility pass can use the same scope semantics before a row
+    becomes technically eligible.  A testing level may be supplied for a
+    worker-specific authorization decision; ``None`` means any supported
+    active testing level.
+    """
+    level = None if testing_level is None else str(testing_level or "").strip().upper()
+    if level is not None and level not in SCOPE_TESTING_LEVELS:
+        raise ScopePolicyError("unsupported scope testing level")
+
     canonical_domain = f"LOWER(TRIM(TRAILING '.' FROM {domain_alias}.domain))"
-    scope_match = f"""
+    level_filter = "" if level is None else f"AND scope_allow.testing_level = '{level}'"
+    block_level_filter = (
+        "AND scope_block.testing_level = scope_allow.testing_level"
+    )
+    return f"""
         EXISTS (
             SELECT 1
             FROM active_scan_scopes scope_allow
             WHERE scope_allow.status = 'ACTIVE'
               AND (scope_allow.expires_at IS NULL
                    OR scope_allow.expires_at > CURRENT_TIMESTAMP)
-              AND scope_allow.testing_level = '{level}'
+              {level_filter}
               AND (
                     {canonical_domain} = scope_allow.scope_domain
                     OR (
@@ -170,29 +194,25 @@ def active_scan_authorization_sql(domain_alias="d", testing_level="TECHNOLOGY_HT
                             = '.' || scope_allow.scope_domain
                     )
               )
-        )
-        AND NOT EXISTS (
-            SELECT 1
-            FROM active_scan_scopes scope_block
-            WHERE scope_block.status = 'ACTIVE'
-              AND (scope_block.expires_at IS NULL
-                   OR scope_block.expires_at > CURRENT_TIMESTAMP)
-              AND scope_block.testing_level = '{level}'
-              AND (
-                    {canonical_domain} = scope_block.scope_domain
-                    OR (
-                        scope_block.include_subdomains
-                        AND RIGHT({canonical_domain}, LENGTH(scope_block.scope_domain) + 1)
-                            = '.' || scope_block.scope_domain
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM active_scan_scopes scope_block
+                  WHERE scope_block.status = 'ACTIVE'
+                    AND (scope_block.expires_at IS NULL
+                         OR scope_block.expires_at > CURRENT_TIMESTAMP)
+                    {block_level_filter}
+                    AND (
+                          {canonical_domain} = scope_block.scope_domain
+                          OR (
+                              scope_block.include_subdomains
+                              AND RIGHT({canonical_domain}, LENGTH(scope_block.scope_domain) + 1)
+                                  = '.' || scope_block.scope_domain
+                          )
                     )
+                    AND {canonical_domain} = ANY(scope_block.excluded_domains)
               )
-              AND {canonical_domain} = ANY(scope_block.excluded_domains)
         )
     """
-    return (
-        base
-        + f"AND ({domain_alias}.validation_source = 'manual' OR ({scope_match}))"
-    )
 
 
 def recheck_active_authorization(

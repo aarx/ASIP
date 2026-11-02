@@ -297,6 +297,7 @@ def run_pipeline():
             # EXPANSION
             ("SAN Expansion", f"python -u san_worker.py {scan_id}"),
             ("SAN State Sync", f"python -u san_state_sync.py {scan_id}"),
+            ("Automatic Eligibility", f"python -u eligibility_worker.py {scan_id}"),
 
             # DNS
             ("DNS Resolution", f"python -u dns_worker.py {scan_id}"),

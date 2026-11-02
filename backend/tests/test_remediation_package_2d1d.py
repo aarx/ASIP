@@ -13,7 +13,7 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 
 PROTECTED_SHA256 = {
     "ingest.py": "71f27393e1db6e90a33961f50b464681a108e490f2c0cdb7fdd85ca157bb398b",
-    "orchestration.py": "1c7944aa2ed3b1f2991ff01875c8136fb6ed75e5bc80ab8c174e1d6abe97a8fc",
+    "orchestration.py": "d47304c656bd492aaf2838b2d357621f9b83d943e2f409942b427f61a483a0a2",
     "discovery_validator.py": "545dfad14226f1b2b1e2b609b49d7ae9f2738502e3dc68756c243f5d73e3ae81",
     "main.py": "1c4f7138e5c57138b2e805bd699363c0abec7ead921f189fed9526925bae3bfa",
 }
@@ -351,6 +351,80 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.run_worker('san_state_sync.py')
         self.assertEqual(self.sql('SELECT domain_id,scan_id,ip,has_ip,http_status,http_live FROM domain_states'),
                          [(member, 42, '', False, 0, False)])
+
+    def test_automatic_eligibility_updates_only_current_scoped_confirmed_members(self):
+        self.sql("INSERT INTO seed_domains VALUES ('example.com')")
+        self.sql("INSERT INTO known_domains(domain) VALUES ('known.example.net')")
+        member = self.domain('app.example.com', 42, state_scan=None, scannable=False)
+        known = self.domain('known.example.net', 42, state_scan=None, scannable=False)
+        historical = self.domain('old.example.com', 41, state_scan=None, scannable=False)
+        outside = self.domain('outside.example.net', 42, state_scan=None, scannable=False)
+        self.authorize_scope('example.com', 'TECHNOLOGY_HTTP')
+        self.authorize_scope('example.net', 'TECHNOLOGY_HTTP')
+
+        self.run_worker('eligibility_worker.py')
+
+        self.assertEqual(
+            self.sql("SELECT domain, scannable FROM domains WHERE id IN (%s,%s,%s,%s) ORDER BY id",
+                     (member, known, historical, outside)),
+            [('app.example.com', True), ('known.example.net', True),
+             ('old.example.com', False), ('outside.example.net', False)],
+        )
+
+    def test_automatic_eligibility_preserves_manual_decisions_and_zero_scope_behavior(self):
+        self.sql("INSERT INTO seed_domains VALUES ('example.com')")
+        manual_approved = self.domain('approved.example.com', 42, state_scan=None, scannable=True)
+        manual_rejected = self.domain('rejected.example.com', 42, state_scan=None, scannable=False)
+        automatic = self.domain('automatic.example.com', 42, state_scan=None, scannable=False)
+        self.sql("UPDATE domains SET validation_source='manual' WHERE id IN (%s,%s)",
+                 (manual_approved, manual_rejected))
+
+        self.run_worker('eligibility_worker.py')
+        self.assertEqual(
+            self.sql("SELECT scannable FROM domains WHERE id IN (%s,%s,%s) ORDER BY id",
+                     (manual_approved, manual_rejected, automatic)),
+            [(True,), (False,), (False,)],
+        )
+
+        self.authorize_scope('example.com', 'PORT_SCAN')
+        self.run_worker('eligibility_worker.py')
+        self.assertEqual(self.sql("SELECT scannable FROM domains WHERE id=%s", (automatic,)), [(True,)])
+
+    def test_automatic_eligibility_rejects_lookalikes_candidates_exclusions_and_expiry(self):
+        self.sql("INSERT INTO seed_domains VALUES ('example.com')")
+        self.sql("INSERT INTO seed_domains VALUES ('expired.example')")
+        lookalike = self.domain('evil-example.com', 42, state_scan=None, scannable=False)
+        candidate = self.domain('candidate.example.com', 42, state_scan=None, scannable=False)
+        external = self.domain('external.example.com', 42, state_scan=None, scannable=False)
+        excluded = self.domain('blocked.example.com', 42, state_scan=None, scannable=False)
+        expired = self.domain('child.expired.example', 42, state_scan=None, scannable=False)
+        self.sql("UPDATE domains SET ownership_status='CANDIDATE' WHERE id=%s", (candidate,))
+        self.sql("UPDATE domains SET ownership_status='EXTERNAL' WHERE id=%s", (external,))
+        self.authorize_scope('example.com', 'TECHNOLOGY_HTTP', excluded_domains=['blocked.example.com'])
+        self.authorize_scope('expired.example', 'TECHNOLOGY_HTTP', expires_at='2000-01-01T00:00:00Z')
+        self.run_worker('eligibility_worker.py')
+        self.assertEqual(
+            self.sql("SELECT scannable FROM domains WHERE id IN (%s,%s,%s,%s,%s) ORDER BY id",
+                     (lookalike, candidate, external, excluded, expired)),
+            [(False,), (False,), (False,), (False,), (False,)],
+        )
+
+    def test_automatic_eligibility_is_idempotent_and_does_not_require_http_or_dns(self):
+        self.sql("INSERT INTO seed_domains VALUES ('example.com')")
+        member = self.domain('no-evidence.example.com', 42, state_scan=None, scannable=False)
+        self.authorize_scope('example.com', 'PORT_SCAN')
+        first, _ = self.run_worker('eligibility_worker.py')
+        second, _ = self.run_worker('eligibility_worker.py')
+        self.assertTrue(any('UPDATE DOMAINS D' in normalized_sql(query) for query, _, _ in first))
+        self.assertEqual(self.sql("SELECT scannable FROM domains WHERE id=%s", (member,)), [(True,)])
+        self.assertEqual(self.sql("SELECT scannable FROM domains WHERE id=%s", (member,)), [(True,)])
+        self.assertTrue(any('D.SCANNABLE IS NOT TRUE' in normalized_sql(query) for query, _, _ in second))
+
+    def test_legacy_ingest_insert_supplies_ownership_status_explicitly(self):
+        source = (BACKEND / 'ingest_scan.py').read_text(encoding='utf-8')
+        insert = source[source.index('INSERT INTO domains'):source.index('domain_id = cur.fetchone()[0]')]
+        self.assertIn('ownership_status', insert)
+        self.assertIn('ownership_for_discovery', source)
 
     def test_other_orphans_are_preserved_and_authorize_nothing(self):
         orphan = self.domain('orphan.example', 41)

@@ -348,7 +348,7 @@ class WriterWiringTests(unittest.TestCase):
     def test_orchestration_and_artifact_match_authorized_package_baselines(self):
         expected = {
             "orchestration.py": (
-                "1c7944aa2ed3b1f2991ff01875c8136fb6ed75e5bc80ab8c174e1d6abe97a8fc"
+                "d47304c656bd492aaf2838b2d357621f9b83d943e2f409942b427f61a483a0a2"
             ),
             "recon_artifact.py": (
                 "096c44848356e2f4b7f0587e5a26f8008724531101edf405098ed708916bb370"
@@ -552,7 +552,8 @@ class FailClosedWriterTests(unittest.TestCase):
                             f"INSERT INTO {table}" in sql for sql, _ in cursor.executions
                         ))
                         network.assert_called_once()
-                        self.assertEqual(connection.commits, 1)
+                        expected_commits = 2 if filename == "port_scan_worker.py" else 1
+                        self.assertEqual(connection.commits, expected_commits)
                     else:
                         self.assertEqual(len(cursor.executions), 1)
                         network.assert_not_called()

@@ -215,9 +215,11 @@ def validate_execution_context(context, *, now=None, deadline_at=None,
     if (
         context.ownership_status != "CONFIRMED"
         or context.scannable is not True
-        or context.validation_source != "manual"
     ):
-        raise AuthorizationRevoked("Target no longer satisfies the authorization predicate")
+        raise AuthorizationRevoked("Target no longer satisfies technical eligibility")
+    # Direct manual authorization and approved-scope authorization are both
+    # checked by recheck_target_authorization immediately before transport.
+    # This context guard must not reintroduce the legacy manual-only rule.
     if cancellation_requested:
         raise CampaignCancelled("Campaign cancellation was requested")
 
