@@ -1,16 +1,15 @@
 """Evaluate automatic technical eligibility for one running scan.
 
-This stage is deliberately separate from active authorization.  It only
-updates currently unscannable, non-manual rows that have confirmed ownership
-evidence and are covered by an active approved scope.  Worker-specific
-prerequisites and the live authorization recheck remain authoritative before
-any network operation.
+This stage is deliberately separate from active authorization. It updates
+only current-scan rows inside the trusted operator inventory, while preserving
+manual decisions. Worker-specific testing-level permission and live policy
+rechecks remain authoritative before any network operation.
 """
 
 import sys
 
-from authorization_policy import active_scope_coverage_sql
 from db import get_conn, require_running_scan
+from ownership import trusted_boundary_sql
 
 
 scan_id = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else None
@@ -18,38 +17,41 @@ scan_id = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else N
 
 def automatic_eligibility_sql():
     """Return the idempotent current-scan eligibility update."""
-    canonical = "LOWER(TRIM(TRAILING '.' FROM d.domain))"
-    scope_coverage = active_scope_coverage_sql("d")
+    trusted = trusted_boundary_sql("d.domain")
     return f"""
         UPDATE domains d
-        SET scannable = TRUE
+        SET ownership_status = 'CONFIRMED',
+            scannable = TRUE
         FROM scan_results sr
         WHERE sr.scan_id = %s
           AND sr.domain_id = d.id
-          AND d.scannable IS NOT TRUE
           AND d.validation_source IS NULL
-          AND d.ownership_status = 'CONFIRMED'
-          AND {canonical} = d.domain
-          AND {canonical} ~ '^[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?)+$'
+          AND d.ownership_status <> 'EXTERNAL'
+          AND {trusted}
           AND (
-              EXISTS (
-                  SELECT 1
-                  FROM known_domains kd
-                  WHERE LOWER(TRIM(TRAILING '.' FROM kd.domain)) = {canonical}
-              )
-              OR EXISTS (
-                  SELECT 1
-                  FROM seed_domains root
-                  WHERE {canonical} = LOWER(TRIM(TRAILING '.' FROM root.domain))
-                     OR {canonical} LIKE '%%.' || LOWER(TRIM(TRAILING '.' FROM root.domain))
-              )
+              d.scannable IS NOT TRUE
+              OR d.ownership_status <> 'CONFIRMED'
           )
-          AND {scope_coverage}
+    """
+
+
+def automatic_ineligibility_sql():
+    """Clear stale automatic eligibility for current-scan out-of-scope rows."""
+    trusted = trusted_boundary_sql("d.domain")
+    return f"""
+        UPDATE domains d
+        SET scannable = FALSE
+        FROM scan_results sr
+        WHERE sr.scan_id = %s
+          AND sr.domain_id = d.id
+          AND d.scannable IS TRUE
+          AND NOT {trusted}
     """
 
 
 def apply_automatic_eligibility(cur, scan_id):
-    """Mark only newly eligible current-scan rows and return update count."""
+    """Reconcile automatic eligibility for current-scan members only."""
+    cur.execute(automatic_ineligibility_sql(), (scan_id,))
     cur.execute(automatic_eligibility_sql(), (scan_id,))
     return cur.rowcount
 

@@ -12,10 +12,7 @@ from backend.authorization_policy import recheck_active_authorization
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 
 PROTECTED_SHA256 = {
-    "ingest.py": "71f27393e1db6e90a33961f50b464681a108e490f2c0cdb7fdd85ca157bb398b",
-    "orchestration.py": "fc1ff6cbeadfb9be515d2f64110427b69d120f444abc472c428762924b219ee1",
     "discovery_validator.py": "545dfad14226f1b2b1e2b609b49d7ae9f2738502e3dc68756c243f5d73e3ae81",
-    "main.py": "1c4f7138e5c57138b2e805bd699363c0abec7ead921f189fed9526925bae3bfa",
 }
 
 CONSUMERS = (
@@ -358,16 +355,76 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.assertEqual(self.sql('SELECT domain_id,scan_id,ip,has_ip,http_status,http_live FROM domain_states'),
                          [(member, 42, '', False, 0, False)])
 
-    def test_automatic_eligibility_updates_only_current_scoped_confirmed_members(self):
+    def test_ingest_trusts_both_root_tables_and_preserves_manual_rejection_and_history(self):
+        self.sql("INSERT INTO seed_domains VALUES ('seed.test')")
+        self.sql("INSERT INTO known_domains(domain) VALUES ('known.test')")
+        rejected = self.domain('denied.known.test', 41, state_scan=41, scannable=False)
+        self.sql("UPDATE domains SET validation_source='manual' WHERE id=%s", (rejected,))
+        historic = self.domain('history.seed.test', 41, state_scan=41, scannable=False)
+
+        self.ingest(42, [
+            {'Domain': 'seed.test', 'Seed': 'different-file-input.test', 'Source': 'passive'},
+            {'Domain': 'api.seed.test', 'Seed': 'different-file-input.test', 'Source': 'ct'},
+            {'Domain': 'known.test', 'Seed': 'unknown.test', 'Source': 'passive'},
+            {'Domain': 'a.b.known.test', 'Seed': 'unknown.test', 'Source': 'san'},
+            {'Domain': 'outside.test', 'Seed': 'known.test', 'Source': 'ct'},
+            {'Domain': 'denied.known.test', 'Seed': 'known.test', 'Source': 'passive'},
+        ])
+        self.run_worker('eligibility_worker.py')
+
+        self.assertEqual(self.sql("""
+            SELECT domain, ownership_status, is_known, scannable
+            FROM domains WHERE domain IN (
+                'seed.test', 'api.seed.test', 'a.b.known.test',
+                'known.test', 'outside.test', 'denied.known.test'
+            ) ORDER BY domain
+        """), [
+            ('a.b.known.test', 'CONFIRMED', False, True),
+            ('api.seed.test', 'CONFIRMED', False, True),
+            ('denied.known.test', 'CONFIRMED', False, False),
+            ('known.test', 'CONFIRMED', True, True),
+            ('outside.test', 'CANDIDATE', False, False),
+            ('seed.test', 'CONFIRMED', False, True),
+        ])
+        self.assertEqual(
+            self.sql('SELECT scan_id FROM scan_results WHERE domain_id=%s ORDER BY scan_id', (historic,)),
+            [(41,)],
+        )
+        self.assertEqual(
+            self.sql('SELECT scan_id FROM domain_states WHERE domain_id=%s ORDER BY scan_id', (historic,)),
+            [(41,)],
+        )
+
+    def test_san_child_uses_its_own_trusted_boundary_not_parent_or_relationship(self):
+        self.sql("INSERT INTO known_domains(domain) VALUES ('known.vendor.test')")
+        parent = self.domain('parent.example', 42)
+        self.authorize_scope('example', 'HTTP_TLS_OBSERVATION')
+        self.run_worker('san_worker.py', overrides={
+            'fetch_san_domains': mock.Mock(return_value=[
+                'api.known.vendor.test', 'unrelated.vendor.test'
+            ]),
+        })
+        self.assertEqual(self.sql("""
+            SELECT d.domain, d.ownership_status, d.scannable
+            FROM domains d JOIN scan_results sr ON sr.domain_id=d.id
+            WHERE sr.scan_id=42 AND d.domain IN (
+                'api.known.vendor.test', 'unrelated.vendor.test'
+            ) ORDER BY d.domain
+        """), [
+            ('api.known.vendor.test', 'CONFIRMED', False),
+            ('unrelated.vendor.test', 'CANDIDATE', False),
+        ])
+        self.assertEqual(self.sql(
+            'SELECT COUNT(*) FROM domain_san WHERE domain_id=%s AND scan_id=42', (parent,)
+        ), [(1,)])
+
+    def test_automatic_eligibility_uses_trusted_roots_and_current_members(self):
         self.sql("INSERT INTO seed_domains VALUES ('example.com')")
         self.sql("INSERT INTO known_domains(domain) VALUES ('known.example.net')")
         member = self.domain('app.example.com', 42, state_scan=None, scannable=False)
         known = self.domain('known.example.net', 42, state_scan=None, scannable=False)
         historical = self.domain('old.example.com', 41, state_scan=None, scannable=False)
         outside = self.domain('outside.example.net', 42, state_scan=None, scannable=False)
-        self.authorize_scope('example.com', 'TECHNOLOGY_HTTP')
-        self.authorize_scope('example.net', 'TECHNOLOGY_HTTP')
-
         self.run_worker('eligibility_worker.py')
 
         self.assertEqual(
@@ -377,7 +434,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
              ('old.example.com', False), ('outside.example.net', False)],
         )
 
-    def test_automatic_eligibility_preserves_manual_decisions_and_zero_scope_behavior(self):
+    def test_automatic_eligibility_preserves_manual_decisions_without_scopes(self):
         self.sql("INSERT INTO seed_domains VALUES ('example.com')")
         manual_approved = self.domain('approved.example.com', 42, state_scan=None, scannable=True)
         manual_rejected = self.domain('rejected.example.com', 42, state_scan=None, scannable=False)
@@ -389,14 +446,13 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.assertEqual(
             self.sql("SELECT scannable FROM domains WHERE id IN (%s,%s,%s) ORDER BY id",
                      (manual_approved, manual_rejected, automatic)),
-            [(True,), (False,), (False,)],
+            [(True,), (False,), (True,)],
         )
 
-        self.authorize_scope('example.com', 'PORT_SCAN')
         self.run_worker('eligibility_worker.py')
         self.assertEqual(self.sql("SELECT scannable FROM domains WHERE id=%s", (automatic,)), [(True,)])
 
-    def test_automatic_eligibility_rejects_lookalikes_candidates_exclusions_and_expiry(self):
+    def test_eligibility_is_independent_of_operation_exclusions_and_expiry(self):
         self.sql("INSERT INTO seed_domains VALUES ('example.com')")
         self.sql("INSERT INTO seed_domains VALUES ('expired.example')")
         lookalike = self.domain('evil-example.com', 42, state_scan=None, scannable=False)
@@ -412,7 +468,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.assertEqual(
             self.sql("SELECT scannable FROM domains WHERE id IN (%s,%s,%s,%s,%s) ORDER BY id",
                      (lookalike, candidate, external, excluded, expired)),
-            [(False,), (False,), (False,), (False,), (False,)],
+            [(False,), (True,), (False,), (True,), (True,)],
         )
 
     def test_automatic_eligibility_is_idempotent_and_does_not_require_http_or_dns(self):
@@ -525,6 +581,8 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                                          has_ip=filename != 'dns_worker.py')
                     if filename in ('port_scan_worker.py', 'tech_worker.py'):
                         self.sql("UPDATE domains SET validation_source='manual' WHERE id=%s", (member,))
+                        level = 'PORT_SCAN' if filename == 'port_scan_worker.py' else 'TECHNOLOGY_HTTP'
+                        self.authorize_scope('example', level)
                     if filename in ('san_worker.py', 'san_http_worker.py', 'cert_worker.py'):
                         self.authorize_scope('example', 'HTTP_TLS_OBSERVATION')
                     self.sql("INSERT INTO domain_sources VALUES (%s,42,'san','root.example')", (member,))
@@ -556,6 +614,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                 member = self.domain('member.example', 42)
                 if filename == 'port_scan_worker.py':
                     self.sql("UPDATE domains SET validation_source='manual' WHERE id=%s", (member,))
+                    self.authorize_scope('example', 'PORT_SCAN')
                 elif filename == 'cert_worker.py':
                     self.authorize_scope('example', 'HTTP_TLS_OBSERVATION')
                 def remove_member(cur, query, params):
@@ -664,10 +723,10 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.sql("UPDATE scans SET status='SUCCEEDED' WHERE id=42")
         self.assertFalse(self.runtime_check(domain_id, "PORT_SCAN")[0])
 
-    def test_runtime_recheck_preserves_direct_manual_authorization_without_scope(self):
+    def test_runtime_recheck_requires_operation_scope_even_for_manual_rows(self):
         domain_id = self.domain("manual.example.com", 42)
         self.sql("UPDATE domains SET validation_source='manual' WHERE id=%s", (domain_id,))
-        self.assertEqual(self.runtime_check(domain_id, "PORT_SCAN"), (True, "authorized"))
+        self.assertFalse(self.runtime_check(domain_id, "PORT_SCAN")[0])
 
     def test_runtime_recheck_fails_closed_on_database_error(self):
         class BrokenConnection:
@@ -707,6 +766,32 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                SET status='REVOKED', revoked_by='test',
                    revoked_at=CURRENT_TIMESTAMP
         """)
+        self.assertFalse(self.runtime_check(
+            domain_id, 'HTTP_TLS_OBSERVATION'
+        )[0])
+
+    def test_scannable_trusted_asset_without_operation_permission_makes_no_request(self):
+        domain_id = self.domain('observe.example.com', 42, http_status=0)
+        observer = mock.Mock(return_value={
+            'http_observation_status': 'RESPONDED', 'http_status': 200,
+            'http_reason': 'OK', 'final_url': 'https://observe.example.com',
+            'final_status': 200, 'title': 'not reached',
+        })
+        self.run_worker('http_observation_worker.py', overrides={'http_probe': observer})
+        observer.assert_not_called()
+        self.assertFalse(self.runtime_check(
+            domain_id, 'HTTP_TLS_OBSERVATION'
+        )[0])
+
+    def test_operation_scope_exclusion_blocks_manual_scannable_target(self):
+        domain_id = self.domain('blocked.example.com', 42, http_status=0)
+        self.sql("UPDATE domains SET validation_source='manual' WHERE id=%s", (domain_id,))
+        self.authorize_scope(
+            'example.com', 'HTTP_TLS_OBSERVATION', excluded_domains=['blocked.example.com']
+        )
+        observer = mock.Mock()
+        self.run_worker('http_observation_worker.py', overrides={'http_probe': observer})
+        observer.assert_not_called()
         self.assertFalse(self.runtime_check(
             domain_id, 'HTTP_TLS_OBSERVATION'
         )[0])

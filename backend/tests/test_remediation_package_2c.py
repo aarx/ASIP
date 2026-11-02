@@ -123,7 +123,9 @@ class KnownShadowSourceOfTruthTests(unittest.TestCase):
         insert = text[text.index("INSERT INTO domains("):text.index("RETURNING id")]
 
         self.assertIn("is_known", insert)
-        self.assertIn("SELECT 1 FROM known_domains", insert)
+        self.assertIn("SELECT domain FROM known_domains", text)
+        self.assertIn("load_trusted_domains", text)
+        self.assertIn("is_known = EXCLUDED.is_known", insert)
         self.assertNotIn("Domain_Status", insert)
 
     def test_san_child_classification_uses_known_domains(self):
@@ -131,12 +133,16 @@ class KnownShadowSourceOfTruthTests(unittest.TestCase):
         insert = text[text.index("INSERT INTO domains("):text.index("RETURNING id")]
 
         self.assertIn("is_known", insert)
-        self.assertIn("SELECT 1 FROM known_domains", insert)
+        self.assertIn("SELECT domain FROM known_domains", text)
+        self.assertIn("load_trusted_domains", text)
+        self.assertIn("is_known = EXCLUDED.is_known", insert)
         self.assertNotIn("scannable", insert.lower())
         self.assertNotIn("validation_source", insert)
 
     def test_independent_fields_do_not_define_inventory_membership(self):
-        classification_sources = source("ingest.py") + source("san_worker.py")
+        classification_sources = (
+            source("ingest.py") + source("san_worker.py") + source("ownership.py")
+        )
         relevant = normalized(classification_sources)
 
         self.assertIn("KNOWN_DOMAINS", relevant)

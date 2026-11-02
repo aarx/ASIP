@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
 
+from ownership import is_within_trusted_boundary, trusted_boundary_sql
+
 
 SCOPE_STATUS_ACTIVE = "ACTIVE"
 SCOPE_STATUS_REVOKED = "REVOKED"
@@ -119,16 +121,38 @@ def scope_authorizes(scopes, domain, testing_level, now=None):
     return bool(matching)
 
 
+def scope_excludes_domain(scopes, domain, testing_level, now=None):
+    """Return whether an active operation scope explicitly excludes domain."""
+    testing_level = str(testing_level or "").strip().upper()
+    if testing_level not in SCOPE_TESTING_LEVELS:
+        return False
+    domain = normalize_scope_domain(domain)
+    return any(
+        scope.testing_level == testing_level
+        and scope_is_active(scope, now)
+        and domain in scope.excluded_domains
+        and (
+            domain == scope.scope_domain
+            or (scope.include_subdomains and domain.endswith("." + scope.scope_domain))
+        )
+        for scope in scopes
+    )
+
+
 def is_authorized(
     *, ownership_status, scannable, validation_source,
-    domain, testing_level, scopes=(), now=None,
+    domain, testing_level, scopes=(), now=None, trusted_domains=None,
 ):
     """Apply the complete local decision without database or network access."""
     if ownership_status != "CONFIRMED" or scannable is not True:
         return False
+    if trusted_domains is not None and not is_within_trusted_boundary(
+        domain, trusted_domains
+    ):
+        return False
     normalized_level = str(testing_level or "").strip().upper()
-    if validation_source == "manual" and normalized_level != "HTTP_TLS_OBSERVATION":
-        return True
+    if scope_excludes_domain(scopes, domain, normalized_level, now):
+        return False
     return scope_authorizes(scopes, domain, testing_level, now)
 
 
@@ -146,7 +170,7 @@ def explicit_t2_authorization_sql(domain_alias="d"):
 
 
 def active_scan_authorization_sql(domain_alias="d", testing_level="TECHNOLOGY_HTTP"):
-    """Return the canonical manual-or-approved-scope SQL predicate."""
+    """Return the canonical trusted-boundary and operation-scope predicate."""
     level = str(testing_level or "").strip().upper()
     if level not in SCOPE_TESTING_LEVELS:
         raise ScopePolicyError("unsupported scope testing level")
@@ -154,16 +178,38 @@ def active_scan_authorization_sql(domain_alias="d", testing_level="TECHNOLOGY_HT
     base = (
         f"{domain_alias}.ownership_status = 'CONFIRMED' "
         f"AND {domain_alias}.scannable IS TRUE "
+        f"AND {trusted_boundary_sql(f'{domain_alias}.domain')} "
+        f"AND NOT ({active_scope_exclusion_sql(domain_alias, level)}) "
     )
     scope_match = active_scope_coverage_sql(domain_alias, level)
-    return (
-        base
-        + (
-            f"AND ({domain_alias}.validation_source = 'manual' OR ({scope_match}))"
-            if level != "HTTP_TLS_OBSERVATION"
-            else f"AND ({scope_match})"
+    return base + f"AND ({scope_match})"
+
+
+def active_scope_exclusion_sql(domain_alias="d", testing_level="TECHNOLOGY_HTTP"):
+    """Return SQL for active, matching operation-specific exclusions."""
+    level = str(testing_level or "").strip().upper()
+    if level not in SCOPE_TESTING_LEVELS:
+        raise ScopePolicyError("unsupported scope testing level")
+    canonical_domain = f"LOWER(TRIM(TRAILING '.' FROM {domain_alias}.domain))"
+    return f"""
+        EXISTS (
+            SELECT 1
+            FROM active_scan_scopes scope_block
+            WHERE scope_block.status = 'ACTIVE'
+              AND (scope_block.expires_at IS NULL
+                   OR scope_block.expires_at > CURRENT_TIMESTAMP)
+              AND scope_block.testing_level = '{level}'
+              AND (
+                    {canonical_domain} = scope_block.scope_domain
+                    OR (
+                        scope_block.include_subdomains
+                        AND RIGHT({canonical_domain}, LENGTH(scope_block.scope_domain) + 1)
+                            = '.' || scope_block.scope_domain
+                    )
+              )
+              AND {canonical_domain} = ANY(scope_block.excluded_domains)
         )
-    )
+    """
 
 
 def active_scope_coverage_sql(domain_alias="d", testing_level=None):

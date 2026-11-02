@@ -4,7 +4,11 @@ import logging
 import os
 import sys
 from db import get_conn, require_running_scan
-from ownership import OWNERSHIP_CONFIRMED, ownership_for_discovery
+from ownership import (
+    load_trusted_domains,
+    normalize_hostname,
+    ownership_for_discovery,
+)
 from recon_artifact import ReconArtifactError, read_validated_recon_artifact
 
 
@@ -124,6 +128,13 @@ try:
     cur = conn.cursor()
     require_running_scan(cur, scan_id)
     require_no_downstream_evidence(cur, scan_id)
+    trusted_domains = load_trusted_domains(cur)
+    cur.execute("SELECT domain FROM known_domains")
+    known_domains = {
+        normalized
+        for (known_domain,) in cur.fetchall()
+        if (normalized := normalize_hostname(known_domain))
+    }
 
     # Before downstream stages run, these scan-local rows are the ingest-owned
     # projection. Rebuild them so retries converge to the validated artifact.
@@ -144,19 +155,15 @@ try:
         if not domain:
             continue
 
-        # ----------------------------
-        # Known domain check
-        # ----------------------------
-        cur.execute(
-            "SELECT 1 FROM known_domains WHERE domain=%s",
-            (domain,)
-        )
-        known = cur.fetchone() is not None
+        # Trusted roots are the union of seed_domains and known_domains.
+        # The seed value remains discovery provenance; it does not grant trust.
+        normalized_domain = normalize_hostname(domain)
+        known = normalized_domain in known_domains if normalized_domain else False
         ownership_status = ownership_for_discovery(
             domain,
             sources,
             seed,
-            is_known=known,
+            trusted_domains=trusted_domains,
         )
 
         # ----------------------------
@@ -201,16 +208,7 @@ try:
             source,
             ownership_status
         )
-        VALUES (
-            %s,
-            %s,
-            %s,
-            EXISTS (
-                SELECT 1 FROM known_domains WHERE domain = %s
-            ),
-            %s,
-            %s
-        )
+        VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT (domain)
         DO UPDATE SET
             first_seen_scan = CASE
@@ -223,18 +221,11 @@ try:
                 WHEN EXCLUDED.last_seen_scan IS NULL THEN domains.last_seen_scan
                 ELSE GREATEST(domains.last_seen_scan, EXCLUDED.last_seen_scan)
             END,
-            is_known = (
-                SELECT EXISTS (
-                    SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
-                )
-            ),
+            is_known = EXCLUDED.is_known,
             ownership_status = CASE
-                WHEN EXISTS (
-                    SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
-                ) THEN %s
                 WHEN domains.ownership_status = 'EXTERNAL' THEN 'EXTERNAL'
-                WHEN domains.ownership_status = 'CONFIRMED' THEN 'CONFIRMED'
                 WHEN EXCLUDED.ownership_status = 'CONFIRMED' THEN 'CONFIRMED'
+                WHEN domains.ownership_status = 'CONFIRMED' THEN 'CONFIRMED'
                 ELSE domains.ownership_status
             END,
             source = CASE
@@ -243,8 +234,7 @@ try:
             END
         RETURNING id
         """, (
-            domain, scan_id, scan_id, domain, primary_source,
-            ownership_status, OWNERSHIP_CONFIRMED,
+            domain, scan_id, scan_id, known, primary_source, ownership_status,
         ))
 
         res = cur.fetchone()

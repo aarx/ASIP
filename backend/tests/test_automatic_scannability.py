@@ -22,11 +22,11 @@ class AutomaticEligibilitySqlTests(unittest.TestCase):
         self.assertIn("SR.DOMAIN_ID = D.ID", sql)
         self.assertIn("D.SCANNABLE IS NOT TRUE", sql)
         self.assertIn("D.VALIDATION_SOURCE IS NULL", sql)
-        self.assertIn("D.OWNERSHIP_STATUS = 'CONFIRMED'", sql)
-        self.assertIn("FROM KNOWN_DOMAINS KD", sql)
-        self.assertIn("FROM SEED_DOMAINS ROOT", sql)
-        self.assertIn("FROM ACTIVE_SCAN_SCOPES SCOPE_ALLOW", sql)
-        self.assertIn("SCOPE_BLOCK.EXCLUDED_DOMAINS", sql)
+        self.assertIn("SET OWNERSHIP_STATUS = 'CONFIRMED'", sql)
+        self.assertIn("D.OWNERSHIP_STATUS <> 'EXTERNAL'", sql)
+        self.assertIn("SELECT DOMAIN FROM KNOWN_DOMAINS", sql)
+        self.assertIn("FROM SEED_DOMAINS", sql)
+        self.assertNotIn("ACTIVE_SCAN_SCOPES", sql)
 
     def test_scope_sql_keeps_testing_level_exclusions_correlated(self):
         sql = " ".join(active_scope_coverage_sql("d", "PORT_SCAN").split()).upper()

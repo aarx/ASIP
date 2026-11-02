@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from db import get_conn, require_running_scan
 from config import CERTSPOTTER_API_KEY
 from recon_artifact import publish_recon_artifact
+from ownership import load_trusted_domains
 
 
 def debug(msg):
@@ -468,12 +469,24 @@ def main(seed_file, deep, expand, scan_id):
 
     print("[+] Loading seed domains")
 
-    seeds = []
+    file_seeds = []
     with open(seed_file) as f:
         for line in f:
             s = normalize_domain(line)
             if s:
-                seeds.append(s)
+                file_seeds.append(s)
+
+    # seeds.txt remains a discovery-input list. The database inventories are
+    # authoritative for trusted-boundary classification, and their roots are
+    # included here so the discovery pass does not silently omit them.
+    inventory_conn = get_conn()
+    try:
+        inventory_cur = inventory_conn.cursor()
+        require_running_scan(inventory_cur, scan_id)
+        trusted_roots = load_trusted_domains(inventory_cur)
+    finally:
+        inventory_conn.close()
+    seeds = list(dict.fromkeys([*file_seeds, *sorted(trusted_roots)]))
 
     for seed in seeds:
         print(f"\n[+] Processing seed: {seed}")

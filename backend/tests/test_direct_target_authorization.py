@@ -88,7 +88,7 @@ class DirectTargetAuthorizationTests(unittest.TestCase):
             validation_source="manual", domain="app.example.com",
             testing_level="HTTP_TLS_OBSERVATION", scopes=[],
         ))
-        self.assertTrue(is_authorized(
+        self.assertFalse(is_authorized(
             ownership_status="CONFIRMED", scannable=True,
             validation_source="manual", domain="app.example.com",
             testing_level="TECHNOLOGY_HTTP", scopes=[],

@@ -100,7 +100,9 @@ class AuthorizationPolicyTests(unittest.TestCase):
         self.assertIn("SR.DOMAIN_ID = S.DOMAIN_ID", norm)
         self.assertIn("SR.SCAN_ID = S.SCAN_ID", norm)
         self.assertIn("D.SCANNABLE IS TRUE", norm)
-        self.assertIn("D.VALIDATION_SOURCE = 'MANUAL'", norm)
+        self.assertIn("ACTIVE_SCAN_SCOPES SCOPE_ALLOW", norm)
+        self.assertIn("FROM SEED_DOMAINS", norm)
+        self.assertIn("FROM KNOWN_DOMAINS", norm)
         self.assertIn("D.OWNERSHIP_STATUS = 'CONFIRMED'", norm)
         self.assertEqual(params, (42, 42))
 
@@ -135,7 +137,7 @@ class SanAuthorizationTests(unittest.TestCase):
         self.assertNotIn("EXCLUDED.SCANNABLE", norm)
         self.assertNotIn("IS_SCANNABLE", norm)
         self.assertNotIn("VALIDATION_SOURCE", norm)
-        self.assertIn("FROM SEED_DOMAINS", norm)
+        self.assertIn("LOAD_TRUSTED_DOMAINS", norm)
 
     def test_san_child_insert_relies_on_schema_default_for_authorization(self):
         text = source("san_worker.py")
@@ -177,7 +179,7 @@ class T0T1GateTests(unittest.TestCase):
                 for needle in write_needles:
                     self.assertIn(needle, source(filename))
 
-    def test_san_http_selects_unscannable_exact_membership_candidates(self):
+    def test_san_http_requires_current_membership_and_http_operation_permission(self):
         module = load_worker("san_http_worker.py")
         cursor = RecordingCursor(fetchalls=[[]])
         connection = FakeConnection(cursor)
@@ -190,7 +192,7 @@ class T0T1GateTests(unittest.TestCase):
         self.assertIn("JOIN scan_results sr", select_sql)
         self.assertIn("src.source = 'san'", select_sql)
         self.assertIn("ds.has_ip = TRUE", select_sql)
-        self.assertNotIn("scannable", select_sql.lower())
+        self.assertIn("HTTP_TLS_OBSERVATION", select_sql)
         self.assertEqual(connection.commits, 1)
 
 

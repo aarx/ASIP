@@ -15,7 +15,12 @@ from llm_service import ask_llm
 from urllib.parse import urlparse
 from db import get_conn, get_latest_authoritative_scan_id, get_previous_authoritative_scan_id
 from risk_engine import calculate_scan_risks, get_asset_exposure_keywords
-from ownership import OWNERSHIP_CONFIRMED, OWNERSHIP_EXTERNAL, normalize_ownership_status
+from ownership import (
+    OWNERSHIP_CONFIRMED,
+    OWNERSHIP_EXTERNAL,
+    normalize_ownership_status,
+    trusted_boundary_sql,
+)
 from ownership_ingest import apply_ownership
 from authorization_policy import active_scan_authorization_sql
 from php_lifecycle import evaluate_php_lifecycle
@@ -3224,7 +3229,8 @@ def frontend_v2_brand_assets(
         conn.close()
         return {"scan_id": None, "page": page, "limit": limit, "count": 0, "assets": []}
 
-    cur.execute("""
+    outside_trusted_boundary = trusted_boundary_sql("d.domain")
+    cur.execute(f"""
         SELECT
             d.domain, d.ownership_status,
             ds.ip, ds.has_ip, ds.http_observation_status,
@@ -3238,7 +3244,10 @@ def frontend_v2_brand_assets(
         LEFT JOIN domain_sources src
           ON src.domain_id = sr.domain_id AND src.scan_id = sr.scan_id
         WHERE sr.scan_id = %s
-          AND d.ownership_status IN ('CANDIDATE', 'EXTERNAL')
+          AND (
+              d.ownership_status IN ('CANDIDATE', 'EXTERNAL')
+              OR NOT {outside_trusted_boundary}
+          )
         GROUP BY d.id, d.domain, d.ownership_status,
                  ds.ip, ds.has_ip, ds.http_observation_status,
                  ds.http_status, ds.final_url, ds.final_status, ds.title

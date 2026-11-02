@@ -217,9 +217,9 @@ def validate_execution_context(context, *, now=None, deadline_at=None,
         or context.scannable is not True
     ):
         raise AuthorizationRevoked("Target no longer satisfies technical eligibility")
-    # Direct manual authorization and approved-scope authorization are both
-    # checked by recheck_target_authorization immediately before transport.
-    # This context guard must not reintroduce the legacy manual-only rule.
+    # The ADHOC_CHECK operation permission is checked by
+    # recheck_target_authorization immediately before transport. Technical
+    # approval alone never grants that testing permission.
     if cancellation_requested:
         raise CampaignCancelled("Campaign cancellation was requested")
 

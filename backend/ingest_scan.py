@@ -1,10 +1,22 @@
 import pandas as pd
 from db import get_conn
-from ownership import ownership_for_discovery
+from ownership import (
+    load_trusted_domains,
+    normalize_hostname,
+    ownership_for_discovery,
+)
 
 conn = get_conn()
 
 cur = conn.cursor()
+
+trusted_domains = load_trusted_domains(cur)
+cur.execute("SELECT domain FROM known_domains")
+known_domains = {
+    normalized
+    for (known_domain,) in cur.fetchall()
+    if (normalized := normalize_hostname(known_domain))
+}
 
 df = pd.read_csv("latest_scan.csv")
 
@@ -30,13 +42,11 @@ for _, row in df.iterrows():
 
     if res is None:
 
-        cur.execute(
-            "SELECT EXISTS (SELECT 1 FROM known_domains WHERE domain=%s)",
-            (domain.lower().strip(),)
-        )
-        is_known = cur.fetchone()[0]
+        normalized_domain = normalize_hostname(domain)
+        is_known = normalized_domain in known_domains if normalized_domain else False
         ownership_status = ownership_for_discovery(
-            domain, (), seed, is_known=is_known
+            domain, (), seed, is_known=is_known,
+            trusted_domains=trusted_domains,
         )
 
         cur.execute(

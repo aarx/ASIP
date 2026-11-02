@@ -219,11 +219,10 @@ class PersistenceContractTests(unittest.TestCase):
 
     def test_san_keeps_known_inventory_semantics_without_downgrading(self):
         san = normalized(source("san_worker.py"))
-        self.assertIn("'CONFIRMED'", san)
-        self.assertIn("ELSE 'CANDIDATE'", san)
-        self.assertIn("SELECT 1 FROM SEED_DOMAINS ROOT", san)
+        self.assertIn("OWNERSHIP_FOR_DISCOVERY", san)
+        self.assertIn("LOAD_TRUSTED_DOMAINS", san)
         self.assertNotIn("PARENT.OWNERSHIP_STATUS = 'CONFIRMED'", san)
-        self.assertIn("SELECT 1 FROM KNOWN_DOMAINS", san)
+        self.assertIn("SELECT DOMAIN FROM KNOWN_DOMAINS", san)
         self.assertIn("WHEN DOMAINS.OWNERSHIP_STATUS = 'EXTERNAL' THEN 'EXTERNAL'", san)
         self.assertIn("WHEN DOMAINS.OWNERSHIP_STATUS = 'CONFIRMED' THEN 'CONFIRMED'", san)
         self.assertIn("ELSE DOMAINS.OWNERSHIP_STATUS", san)

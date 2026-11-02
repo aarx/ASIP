@@ -7,6 +7,11 @@ from authorization_policy import (
 )
 from db import get_conn, require_running_scan
 from http_probe import open_validated_tls_socket
+from ownership import (
+    load_trusted_domains,
+    normalize_hostname,
+    ownership_for_discovery,
+)
 
 scan_id = int(sys.argv[1])
 
@@ -66,8 +71,13 @@ def main():
 
     print("SAN scan for scan_id:", scan_id)
 
+    trusted_domains = load_trusted_domains(cur)
     cur.execute("SELECT domain FROM known_domains")
-    known_set = set(r[0].strip().lower() for r in cur.fetchall())
+    known_set = {
+        normalized
+        for (known_domain,) in cur.fetchall()
+        if (normalized := normalize_hostname(known_domain))
+    }
     
     print("Loaded known domains:", len(known_set))
 
@@ -173,6 +183,11 @@ def main():
      
             # insert or get domain_id
             san = san.lower().strip()
+            normalized_san = normalize_hostname(san)
+            is_known = normalized_san in known_set if normalized_san else False
+            ownership_status = ownership_for_discovery(
+                san, ("san",), (), trusted_domains=trusted_domains
+            )
             
             cur.execute("""
             INSERT INTO domains(
@@ -191,19 +206,9 @@ def main():
                 %s,
                 NOW(),
                 NOW(),
-                EXISTS (SELECT 1 FROM known_domains WHERE domain = %s),
                 %s,
-                CASE
-                    WHEN EXISTS (
-                        SELECT 1 FROM known_domains WHERE domain = %s
-                    ) THEN 'CONFIRMED'
-                    WHEN EXISTS (
-                        SELECT 1 FROM seed_domains root
-                        WHERE %s = LOWER(TRIM(TRAILING '.' FROM root.domain))
-                           OR %s LIKE '%%.' || LOWER(TRIM(TRAILING '.' FROM root.domain))
-                    ) THEN 'CONFIRMED'
-                    ELSE 'CANDIDATE'
-                END
+                %s,
+                %s
             )
             ON CONFLICT (domain)
             DO UPDATE SET 
@@ -218,18 +223,11 @@ def main():
                     ELSE GREATEST(domains.last_seen_scan, EXCLUDED.last_seen_scan)
                 END,
                 last_seen_at = NOW(),
-                is_known = (
-                    SELECT EXISTS (
-                        SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
-                    )
-                ),
+                is_known = EXCLUDED.is_known,
                 ownership_status = CASE
-                    WHEN EXISTS (
-                        SELECT 1 FROM known_domains WHERE domain = EXCLUDED.domain
-                    ) THEN 'CONFIRMED'
                     WHEN domains.ownership_status = 'EXTERNAL' THEN 'EXTERNAL'
-                    WHEN domains.ownership_status = 'CONFIRMED' THEN 'CONFIRMED'
                     WHEN EXCLUDED.ownership_status = 'CONFIRMED' THEN 'CONFIRMED'
+                    WHEN domains.ownership_status = 'CONFIRMED' THEN 'CONFIRMED'
                     ELSE domains.ownership_status
                 END,
                 source = CASE
@@ -237,7 +235,7 @@ def main():
                     ELSE domains.source
                 END
             RETURNING id, (xmax = 0) AS inserted
-            """, (san, scan_id, scan_id, san, "san", san, san, san))
+            """, (san, scan_id, scan_id, is_known, "san", ownership_status))
             
             new_domain_id, inserted = cur.fetchone()
 

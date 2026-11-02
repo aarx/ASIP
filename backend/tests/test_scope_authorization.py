@@ -85,8 +85,8 @@ class AuthorizationDecisionTests(unittest.TestCase):
                     testing_level="TECHNOLOGY_HTTP", scopes=[approved], now=NOW,
                 ))
 
-    def test_direct_manual_authorization_is_preserved(self):
-        self.assertTrue(is_authorized(
+    def test_manual_scannability_does_not_grant_test_permission(self):
+        self.assertFalse(is_authorized(
             ownership_status="CONFIRMED", scannable=True,
             validation_source="manual", domain="legacy.example.com",
             testing_level="PORT_SCAN", now=NOW,
@@ -104,8 +104,8 @@ class AuthorizationDecisionTests(unittest.TestCase):
         self.assertTrue(scope_authorizes([approved], "app.example.com", "TECHNOLOGY_HTTP", NOW))
         self.assertFalse(scope_authorizes([approved], "app.example.com", "PORT_SCAN", NOW))
 
-    def test_zero_scopes_preserve_previous_direct_manual_behavior(self):
-        cases = (("CONFIRMED", True, "manual", True), ("CONFIRMED", True, None, False),
+    def test_zero_scopes_never_grant_direct_target_permission(self):
+        cases = (("CONFIRMED", True, "manual", False), ("CONFIRMED", True, None, False),
                  ("CANDIDATE", True, "manual", False), ("CONFIRMED", False, "manual", False))
         for ownership, scannable, source, expected in cases:
             with self.subTest(ownership=ownership, scannable=scannable, source=source):
@@ -117,7 +117,7 @@ class AuthorizationDecisionTests(unittest.TestCase):
 
     def test_worker_sql_contains_scope_and_direct_paths(self):
         sql = active_scan_authorization_sql("d", "PORT_SCAN")
-        self.assertIn("d.validation_source = 'manual'", sql)
+        self.assertNotIn("d.validation_source = 'manual'", sql)
         self.assertIn("FROM active_scan_scopes scope_allow", sql)
         self.assertIn("scope_allow.testing_level = 'PORT_SCAN'", sql)
         self.assertIn("FROM active_scan_scopes scope_block", sql)
