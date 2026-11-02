@@ -1,14 +1,17 @@
-"""Offline, evidence-backed PHP CVE applicability intelligence.
+"""Offline PHP CVE applicability compatibility adapter.
 
-The dataset is deliberately small and versioned in source control.  A match
-means only that a reported PHP version falls within a vendor-published range;
-it does not verify the runtime, a vendor backport, configuration, reachability,
-or exploitability.
+The public PHP classes and evaluator remain stable while the pure comparison
+and advisory model are shared with future product-specific catalogs.
 """
 
 from dataclasses import dataclass
 from datetime import date
-import re
+
+from advisory_catalog import (
+    AdvisoryRecord,
+    VersionRange,
+    evaluate_advisory_catalog,
+)
 
 
 PHP_CVE_DATASET_REVISION = "2026-10-28"
@@ -17,38 +20,13 @@ PHP_ADVISORY_RELEASE_SOURCE_URL = "https://www.php.net/archive/2026.php"
 
 
 @dataclass(frozen=True)
-class PHPVersionRange:
-    branch: str
-    upper_bound: tuple[int, int, int]
-    upper_inclusive: bool
-    fixed_version: str
-    range_text: str
-    lower_bound: tuple[int, int, int] | None = None
-    lower_inclusive: bool = True
-
-    def matches(self, version):
-        if version[:2] != tuple(int(part) for part in self.branch.split(".")):
-            return False
-        if self.lower_bound is not None:
-            if self.lower_inclusive and version < self.lower_bound:
-                return False
-            if not self.lower_inclusive and version <= self.lower_bound:
-                return False
-        if self.upper_inclusive:
-            return version <= self.upper_bound
-        return version < self.upper_bound
+class PHPVersionRange(VersionRange):
+    """Backward-compatible public name for PHP version ranges."""
 
 
 @dataclass(frozen=True)
-class PHPAdvisory:
-    cve_id: str
-    product: str
-    publication_date: str
-    source_url: str
-    severity: str
-    verification_status: str
-    affected_ranges: tuple[PHPVersionRange, ...]
-    applicability_conditions: tuple[str, ...]
+class PHPAdvisory(AdvisoryRecord):
+    """Backward-compatible public name for PHP advisory records."""
 
 
 def _version(value):
@@ -98,6 +76,12 @@ PHP_CVE_ADVISORIES = (
             "The vendor advisory describes confirmed mod_php exposure and "
             "conditional exposure for other SAPIs.",
         ),
+        advisory_id="CVE-2026-109618",
+        vendor="PHP",
+        canonical_technology="php",
+        updated_date="2026-10-21",
+        dataset_revision=PHP_CVE_DATASET_REVISION,
+        coverage=PHP_CVE_COVERAGE,
     ),
     PHPAdvisory(
         cve_id="CVE-2026-109619",
@@ -111,11 +95,28 @@ PHP_CVE_ADVISORIES = (
             "Successful exploitation requires a producer and consumer of "
             "stale request-owned state in a persistent worker.",
         ),
+        advisory_id="CVE-2026-109619",
+        vendor="PHP",
+        canonical_technology="php",
+        updated_date="2026-10-21",
+        dataset_revision=PHP_CVE_DATASET_REVISION,
+        coverage=PHP_CVE_COVERAGE,
     ),
 )
 
 
-_VERSION_RE = re.compile(r"^\s*(\d+)\.(\d+)\.(\d+)\s*$")
+_LEGACY_CANDIDATE_FIELDS = (
+    "cve_id",
+    "applicability_status",
+    "reported_version",
+    "affected_version_range",
+    "fixed_version",
+    "source_url",
+    "dataset_revision",
+    "evidence_confidence",
+    "patch_status",
+    "explanation_code",
+)
 
 
 def _assessment_date(value):
@@ -126,122 +127,36 @@ def _assessment_date(value):
     raise TypeError("assessment_date must be a date or ISO date string")
 
 
-def _candidate(
-    *,
-    advisory,
-    reported_version,
-    status,
-    affected_version_range,
-    fixed_version,
-    evidence_confidence,
-    patch_status,
-    explanation_code,
-):
-    return {
-        "cve_id": advisory.cve_id,
-        "applicability_status": status,
-        "reported_version": reported_version,
-        "affected_version_range": affected_version_range,
-        "fixed_version": fixed_version,
-        "source_url": advisory.source_url,
-        "dataset_revision": PHP_CVE_DATASET_REVISION,
-        "evidence_confidence": evidence_confidence,
-        "patch_status": patch_status,
-        "explanation_code": explanation_code,
-    }
-
-
 def evaluate_php_cve_applicability(
     technology,
     reported_version,
     advisory_dataset=PHP_CVE_ADVISORIES,
     assessment_date=None,
 ):
-    """Evaluate PHP CVE candidates without network or database access."""
+    """Evaluate PHP candidates while preserving the existing result contract."""
     assessed = _assessment_date(assessment_date or date.today())
-    result = {
-        "assessment_date": assessed.isoformat(),
+    if str(technology or "").strip().lower() != "php":
+        return {
+            "assessment_date": assessed.isoformat(),
+            "dataset_revision": PHP_CVE_DATASET_REVISION,
+            "coverage": "not_applicable",
+            "candidates": [],
+        }
+
+    evaluated = evaluate_advisory_catalog(
+        "php",
+        reported_version,
+        advisory_dataset,
+        dataset_revision=PHP_CVE_DATASET_REVISION,
+        assessment_date=assessed,
+        coverage=PHP_CVE_COVERAGE,
+    )
+    return {
+        "assessment_date": evaluated["assessment_date"],
         "dataset_revision": PHP_CVE_DATASET_REVISION,
         "coverage": PHP_CVE_COVERAGE,
-        "candidates": [],
+        "candidates": [
+            {key: candidate[key] for key in _LEGACY_CANDIDATE_FIELDS}
+            for candidate in evaluated["candidates"]
+        ],
     }
-    if str(technology or "").strip().lower() != "php":
-        result["coverage"] = "not_applicable"
-        return result
-
-    version_text = str(reported_version or "").strip()
-    match = _VERSION_RE.fullmatch(version_text)
-    parsed_version = (
-        tuple(int(part) for part in match.groups()) if match else None
-    )
-    seen_cves = set()
-
-    for advisory in advisory_dataset:
-        if advisory.cve_id in seen_cves:
-            continue
-        seen_cves.add(advisory.cve_id)
-
-        if not match:
-            code = "php_version_absent" if not version_text else "php_version_malformed"
-            result["candidates"].append(_candidate(
-                advisory=advisory,
-                reported_version=reported_version,
-                status="insufficient_evidence",
-                affected_version_range=None,
-                fixed_version=None,
-                evidence_confidence="insufficient",
-                patch_status="unknown",
-                explanation_code=code,
-            ))
-            continue
-
-        matching_branch = [
-            item for item in advisory.affected_ranges
-            if parsed_version[:2] == tuple(
-                int(part) for part in item.branch.split(".")
-            )
-        ]
-        if not matching_branch:
-            result["candidates"].append(_candidate(
-                advisory=advisory,
-                reported_version=reported_version,
-                status="insufficient_evidence",
-                affected_version_range=None,
-                fixed_version=None,
-                evidence_confidence="insufficient",
-                patch_status="unknown",
-                explanation_code="php_branch_not_covered_by_dataset",
-            ))
-            continue
-
-        matched_range = next(
-            (item for item in matching_branch if item.matches(parsed_version)),
-            None,
-        )
-        if matched_range:
-            result["candidates"].append(_candidate(
-                advisory=advisory,
-                reported_version=reported_version,
-                status="potentially_affected",
-                affected_version_range=matched_range.range_text,
-                fixed_version=matched_range.fixed_version,
-                evidence_confidence="high_version_range_match",
-                patch_status="unknown",
-                explanation_code="php_version_within_verified_affected_range",
-            ))
-        else:
-            fixed_versions = sorted({
-                item.fixed_version for item in matching_branch
-            })
-            result["candidates"].append(_candidate(
-                advisory=advisory,
-                reported_version=reported_version,
-                status="not_affected_by_version",
-                affected_version_range=None,
-                fixed_version=fixed_versions[-1] if fixed_versions else None,
-                evidence_confidence="high_version_range_match",
-                patch_status="unknown",
-                explanation_code="php_reported_version_at_or_above_verified_fix",
-            ))
-
-    return result

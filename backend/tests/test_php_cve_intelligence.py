@@ -18,6 +18,47 @@ from php_cve_intelligence import (  # noqa: E402
 )
 
 
+_BASELINE_SOURCES = {
+    "CVE-2026-109618": "https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w",
+    "CVE-2026-109619": "https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp",
+}
+
+
+def _baseline_candidate(cve_id, version, status, range_text, fixed, code, confidence):
+    return {
+        "cve_id": cve_id,
+        "applicability_status": status,
+        "reported_version": version,
+        "affected_version_range": range_text,
+        "fixed_version": fixed,
+        "source_url": _BASELINE_SOURCES[cve_id],
+        "dataset_revision": "2026-10-28",
+        "evidence_confidence": confidence,
+        "patch_status": "unknown",
+        "explanation_code": code,
+    }
+
+
+def _baseline_result(version, status, range_text, fixed, code, confidence):
+    return {
+        "assessment_date": "2026-10-28",
+        "dataset_revision": "2026-10-28",
+        "coverage": "partial",
+        "candidates": [
+            _baseline_candidate(
+                cve_id,
+                version,
+                status,
+                range_text,
+                fixed,
+                code,
+                confidence,
+            )
+            for cve_id in _BASELINE_SOURCES
+        ],
+    }
+
+
 class PHPCVEApplicabilityTests(unittest.TestCase):
     assessed = date(2026, 10, 28)
 
@@ -25,6 +66,23 @@ class PHPCVEApplicabilityTests(unittest.TestCase):
         return evaluate_php_cve_applicability(
             "php", version, dataset, self.assessed
         )
+
+    def test_refactor_matches_captured_pre_refactor_php_baseline(self):
+        fixtures = (
+            ("8.2.34", "potentially_affected", "< 8.2.35 (PHP 8.2 branch)", "8.2.35", "php_version_within_verified_affected_range", "high_version_range_match"),
+            ("8.2.35", "not_affected_by_version", None, "8.2.35", "php_reported_version_at_or_above_verified_fix", "high_version_range_match"),
+            ("8.3.35", "potentially_affected", "< 8.3.36 (PHP 8.3 branch)", "8.3.36", "php_version_within_verified_affected_range", "high_version_range_match"),
+            ("8.4.26", "potentially_affected", "< 8.4.27 (PHP 8.4 branch)", "8.4.27", "php_version_within_verified_affected_range", "high_version_range_match"),
+            ("8.5.11", "potentially_affected", "< 8.5.12 (PHP 8.5 branch)", "8.5.12", "php_version_within_verified_affected_range", "high_version_range_match"),
+            ("8.6.0", "insufficient_evidence", None, None, "php_branch_not_covered_by_dataset", "insufficient"),
+            (None, "insufficient_evidence", None, None, "php_version_absent", "insufficient"),
+        )
+        for version, status, range_text, fixed, code, confidence in fixtures:
+            with self.subTest(version=version):
+                self.assertEqual(
+                    self.evaluate(version),
+                    _baseline_result(version, status, range_text, fixed, code, confidence),
+                )
 
     def test_verified_affected_range_and_lower_boundary(self):
         for version in ("8.2.0", "8.2.34"):
