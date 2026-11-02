@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getAssetGrowth, getCertExpiry, getHttpStatus, getV2BrandAssets, getV2Overview, getV2Scans } from "../services/api";
+import { getAssetGrowth, getCertExpiry, getHttpStatus, getNamingAssetExposure, getV2BrandAssets, getV2Overview, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
@@ -139,8 +139,9 @@ export default function OverviewPage() {
       optionalRequest(getHttpStatus),
       optionalRequest(getCertExpiry),
       optionalRequest(loadDiscoverySummary),
+      optionalRequest(getNamingAssetExposure),
     ])
-      .then(([result, scans, assetGrowth, httpStatus, certificateExpiry, discoverySummary]) => {
+      .then(([result, scans, assetGrowth, httpStatus, certificateExpiry, discoverySummary, namingExposure]) => {
         if (active) {
           const scopedDiscoverySummary = discoverySummary.value?.scan_id === result.current_scan_id
             ? discoverySummary
@@ -156,6 +157,8 @@ export default function OverviewPage() {
             certificateExpiryStatus: certificateExpiry.status,
             discoverySummary: scopedDiscoverySummary.value,
             discoverySummaryStatus: scopedDiscoverySummary.status,
+            namingExposure: namingExposure.value,
+            namingExposureStatus: namingExposure.status,
           });
           setStatus("ready");
         }
@@ -234,6 +237,8 @@ export default function OverviewPage() {
         certificateScanId={data.current_scan_id}
         discoverySummary={data.discoverySummary}
         discoverySummaryStatus={data.discoverySummaryStatus}
+        namingExposure={data.namingExposure}
+        namingExposureStatus={data.namingExposureStatus}
       />
     </div>
   );

@@ -159,6 +159,11 @@
 .discovery-validation-signal strong { color: var(--asip-text-primary); font-family: var(--asip-font-mono); font-size: 18px; }
 .discovery-validation-signal small { grid-column: 1 / -1; color: var(--asip-text-muted); font-size: 9px; }
 .discovery-validation-note { margin: 12px 0 0; color: var(--asip-text-muted); font-size: 10px; line-height: 1.45; }
+.naming-exposure-signals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.naming-exposure-signal { display: grid; gap: 5px; padding: 10px; border: 1px solid rgba(115, 142, 170, .16); border-radius: 5px; }
+.naming-exposure-signal span { color: var(--asip-text-secondary); font-family: var(--asip-font-mono); font-size: 10px; }
+.naming-exposure-signal strong { color: var(--asip-text-primary); font-family: var(--asip-font-mono); font-size: 18px; }
+.naming-exposure-note { margin: 12px 0 0; color: var(--asip-text-muted); font-size: 10px; line-height: 1.45; }
 
 .state-card { min-height: 320px; display: grid; place-items: center; padding: 38px; border: 1px solid var(--asip-border); border-radius: var(--asip-radius); background: rgba(16, 29, 47, .8); text-align: center; }
 .state-card-compact { min-height: 0; place-items: start; padding: 16px 18px; text-align: left; }
@@ -524,6 +529,7 @@
   .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .certificate-health-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .discovery-validation-signals { grid-template-columns: 1fr; }
+  .naming-exposure-signals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .change-panel, .attention-panel, .risk-panel, .ownership-panel, .intelligence-panel { grid-column: 1 / -1; }
   .operation-panel-third, .operation-panel-wide, .operation-panel-half { grid-column: 1 / -1; }
   .operations-kpis, .actionable-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }

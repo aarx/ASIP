@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
-import { getV2BrandAssets, getV2Overview, getV2Scans } from "./services/api";
+import { getNamingAssetExposure, getV2BrandAssets, getV2Overview, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -12,6 +12,7 @@ jest.mock("./services/api", () => ({
   updateV2AssetOwnership: jest.fn(),
   getV2Scans: jest.fn(),
   getV2BrandAssets: jest.fn(),
+  getNamingAssetExposure: jest.fn(),
   getV2ReviewIndicators: jest.fn(),
   getV2AssetAssistant: jest.fn(),
   getInvestigationAssets: jest.fn(),
@@ -49,6 +50,7 @@ beforeEach(() => {
   getV2Overview.mockReset();
   getV2Scans.mockReset();
   getV2BrandAssets.mockReset();
+  getNamingAssetExposure.mockReset();
 });
 
 test("renders the permanent shell and authoritative overview", async () => {
@@ -68,6 +70,10 @@ test("renders the permanent shell and authoritative overview", async () => {
     count: ownership === "CANDIDATE" ? 3 : 2,
     assets: [],
   }));
+  getNamingAssetExposure.mockResolvedValue([
+    { keyword: "DEV", count: 2 },
+    { keyword: "STAGE", count: 1 },
+  ]);
   render(<App />);
 
   expect(screen.getByText("Loading authoritative state")).toBeInTheDocument();
@@ -95,6 +101,9 @@ test("renders the permanent shell and authoritative overview", async () => {
     "href",
     "#/brand?ownership=CANDIDATE"
   );
+  expect(screen.getByText("Naming exposure")).toBeInTheDocument();
+  expect(screen.getByLabelText("DEV: 2 matching confirmed assets")).toBeInTheDocument();
+  expect(getNamingAssetExposure).toHaveBeenCalledTimes(1);
   Date.now.mockRestore();
 });
 

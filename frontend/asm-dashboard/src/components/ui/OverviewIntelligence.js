@@ -276,13 +276,65 @@ function DiscoveryValidationPanel({ value, status, scanId }) {
   );
 }
 
-export default function OverviewIntelligence({ assetGrowth, assetGrowthStatus = "ready", httpStatus, httpStatusStatus = "ready", certificateExpiry, certificateExpiryStatus = "ready", certificateScanId, certificateNow, discoverySummary, discoverySummaryStatus = "ready" }) {
+const NAMING_CATEGORIES = new Set([
+  "DEV", "TEST", "UAT", "QA", "ADMIN", "MAIL", "TEMP", "STAGE", "STAGING",
+  "SANDBOX", "PREPROD", "PRE-PROD", "NONPROD", "NON-PROD", "LAB", "DEMO",
+]);
+
+export function normalizeNamingExposure(value) {
+  if (!Array.isArray(value)) return [];
+  const categories = new Map();
+  value.forEach((row) => {
+    const keyword = String(row?.keyword || "").trim().toUpperCase();
+    const count = Number(row?.count);
+    if (!NAMING_CATEGORIES.has(keyword) || !Number.isInteger(count) || count < 0) return;
+    categories.set(keyword, count);
+  });
+  return [...categories.entries()]
+    .map(([keyword, count]) => ({ keyword, count }))
+    .sort((left, right) => left.keyword.localeCompare(right.keyword));
+}
+
+function NamingExposurePanel({ value, status, scanId }) {
+  const categories = normalizeNamingExposure(value);
+  let content;
+  if (status === "loading") {
+    content = <ChartState title="Loading naming exposure" copy="Reading current confirmed-asset pattern matches." />;
+  } else if (status === "error") {
+    content = <ChartState title="Naming exposure unavailable" copy="The overview is available, but current naming-pattern observations could not be loaded." error />;
+  } else if (!categories.length) {
+    content = <ChartState title="No naming matches" copy="No supported naming-pattern matches were returned for the current confirmed surface." />;
+  } else {
+    content = (
+      <>
+        <div className="naming-exposure-signals" aria-label="Naming exposure category counts">
+          {categories.map(({ keyword, count }) => (
+            <div className="naming-exposure-signal" key={keyword} aria-label={`${keyword}: ${count} matching confirmed assets`}>
+              <span>{keyword}</span>
+              <strong>{count}</strong>
+            </div>
+          ))}
+        </div>
+        <p className="naming-exposure-note">Counts are unique confirmed domains. Categories may overlap, and a name match is an investigation indicator—not proof of an exposed interface or vulnerability.</p>
+      </>
+    );
+  }
+
+  return (
+    <Panel id="overview-naming-exposure" title="Naming exposure" subtitle="Pattern matches in the current confirmed organizational surface" meta={scanId != null ? `SCAN #${scanId}` : "CURRENT"} className="intelligence-panel naming-exposure-panel">
+      {content}
+    </Panel>
+  );
+}
+
+export default function OverviewIntelligence({ assetGrowth, assetGrowthStatus = "ready", httpStatus, httpStatusStatus = "ready", certificateExpiry, certificateExpiryStatus = "ready", certificateScanId, certificateNow, discoverySummary, discoverySummaryStatus = "ready", namingExposure, namingExposureStatus = "ready" }) {
   return (
     <>
       <AssetGrowthPanel value={assetGrowth} status={assetGrowthStatus} />
       <HttpStatusPanel value={httpStatus} status={httpStatusStatus} />
       <CertificateHealthPanel value={certificateExpiry} status={certificateExpiryStatus} scanId={certificateScanId} now={certificateNow} />
       <DiscoveryValidationPanel value={discoverySummary} status={discoverySummaryStatus} scanId={discoverySummary?.scan_id} />
+      <NamingExposurePanel value={namingExposure} status={namingExposureStatus} scanId={certificateScanId} />
     </>
   );
 }

@@ -2,6 +2,7 @@ import React from "react";
 import { render, screen, within } from "@testing-library/react";
 import OverviewIntelligence, {
   classifyCertificateExpiry,
+  normalizeNamingExposure,
   normalizeCertificateRecords,
   parseCertificateExpiry,
 } from "./OverviewIntelligence";
@@ -58,6 +59,49 @@ test("renders current unique-domain discovery totals with exact Brand Perimeter 
   );
   expect(within(panel).getByText(/count unique domains/i)).toBeInTheDocument();
   expect(within(panel).getByText(/Historical discovery-only records are excluded/i)).toBeInTheDocument();
+});
+
+test("normalizes overlapping naming categories without treating them as additive", () => {
+  expect(normalizeNamingExposure([
+    { keyword: "DEV", count: 2 },
+    { keyword: "ADMIN", count: 1 },
+    { keyword: "STAGE", count: 3 },
+    { keyword: "STAGING", count: 4 },
+    { keyword: "DEV", count: 2 },
+    { keyword: "UNSUPPORTED", count: 99 },
+  ])).toEqual([
+    { keyword: "ADMIN", count: 1 },
+    { keyword: "DEV", count: 2 },
+    { keyword: "STAGE", count: 3 },
+    { keyword: "STAGING", count: 4 },
+  ]);
+});
+
+test("renders naming exposure as non-clickable current-scan signals", () => {
+  render(<OverviewIntelligence namingExposure={[
+    { keyword: "DEV", count: 20 },
+    { keyword: "STAGE", count: 2 },
+    { keyword: "STAGING", count: 4 },
+  ]} certificateScanId={16} />);
+
+  const panel = document.getElementById("overview-naming-exposure");
+  expect(within(panel).getByText("SCAN #16")).toBeInTheDocument();
+  expect(within(panel).getByLabelText("DEV: 20 matching confirmed assets")).toBeInTheDocument();
+  expect(within(panel).getByLabelText("STAGE: 2 matching confirmed assets")).toBeInTheDocument();
+  expect(within(panel).getByLabelText("STAGING: 4 matching confirmed assets")).toBeInTheDocument();
+  expect(within(panel).getByText(/Categories may overlap/i)).toBeInTheDocument();
+  expect(panel.querySelectorAll("a")).toHaveLength(0);
+});
+
+test("renders naming exposure loading, failure, and empty states", () => {
+  const { rerender } = render(<OverviewIntelligence namingExposureStatus="loading" />);
+  expect(screen.getByText("Loading naming exposure")).toBeInTheDocument();
+
+  rerender(<OverviewIntelligence namingExposureStatus="error" />);
+  expect(screen.getByText("Naming exposure unavailable")).toBeInTheDocument();
+
+  rerender(<OverviewIntelligence namingExposure={[]} />);
+  expect(screen.getByText("No naming matches")).toBeInTheDocument();
 });
 
 test("preserves zero discovery totals and handles loading or failed discovery requests", () => {
@@ -134,7 +178,8 @@ test("renders bounded certificate health observations with verified asset links"
   );
 
   expect(screen.getByText("Certificate health")).toBeInTheDocument();
-  expect(screen.getByText("SCAN #16")).toBeInTheDocument();
+  const certificatePanel = screen.getByText("Certificate health").closest("section");
+  expect(within(certificatePanel).getByText("SCAN #16")).toBeInTheDocument();
   const summary = screen.getByLabelText("Certificate health summary");
   expect(within(summary).getByText("Expired")).toBeInTheDocument();
   expect(within(summary).getByText("Within 7 days")).toBeInTheDocument();
