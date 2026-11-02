@@ -6,6 +6,7 @@ import unittest
 from unittest import mock
 
 from backend.tests import test_remediation_package_2d1c as convergence
+from backend.authorization_policy import recheck_active_authorization
 
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
@@ -242,6 +243,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
     def setUp(self):
         convergence.PostgreSQLIngestConvergenceTests.setUp(self)
         self.sql("INSERT INTO scans VALUES (44, 'FAILED')")
+        self.sql("DELETE FROM active_scan_scopes")
 
     def sql(self, statement, params=None):
         connection = self.connect()
@@ -487,6 +489,172 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'downstream'):
             self.ingest(42, [{'Domain':'replacement.example'}])
         self.assertEqual(self.snapshot(), before)
+
+    def authorize_scope(self, scope_domain="example.com", testing_level="TECHNOLOGY_HTTP",
+                        include_subdomains=True, expires_at=None, status="ACTIVE",
+                        excluded_domains=None):
+        self.sql(
+            """
+            INSERT INTO active_scan_scopes(
+                scope_domain, include_subdomains, testing_level, approved_by,
+                status, expires_at, excluded_domains
+            ) VALUES (%s, %s, %s, 'test-operator', %s, %s, %s)
+            """,
+            (scope_domain, include_subdomains, testing_level, status,
+             expires_at, excluded_domains or []),
+        )
+
+    def runtime_check(self, domain_id, testing_level="TECHNOLOGY_HTTP",
+                      scan_id=42, required_scan_status="RUNNING"):
+        connection = self.connect()
+        try:
+            with connection:
+                with connection.cursor() as cursor:
+                    return recheck_active_authorization(
+                        cursor,
+                        scan_id=scan_id,
+                        domain_id=domain_id,
+                        testing_level=testing_level,
+                        required_scan_status=required_scan_status,
+                    )
+        finally:
+            connection.close()
+
+    def test_runtime_recheck_enforces_current_sql_authorization_state(self):
+        domain_id = self.domain("app.example.com", 42)
+        self.assertFalse(self.runtime_check(domain_id)[0])
+        self.authorize_scope()
+        self.assertEqual(self.runtime_check(domain_id), (True, "authorized"))
+
+        self.sql("UPDATE active_scan_scopes SET status='REVOKED', revoked_by='test', revoked_at=CURRENT_TIMESTAMP")
+        self.assertFalse(self.runtime_check(domain_id)[0])
+
+        self.sql("UPDATE active_scan_scopes SET status='ACTIVE', revoked_by=NULL, revoked_at=NULL, expires_at=CURRENT_TIMESTAMP - INTERVAL '1 second'")
+        self.assertFalse(self.runtime_check(domain_id)[0])
+
+        self.sql("UPDATE active_scan_scopes SET expires_at=NULL, testing_level='PORT_SCAN'")
+        self.assertFalse(self.runtime_check(domain_id, "TECHNOLOGY_HTTP")[0])
+
+        self.sql("UPDATE domains SET ownership_status='CANDIDATE' WHERE id=%s", (domain_id,))
+        self.assertFalse(self.runtime_check(domain_id, "PORT_SCAN")[0])
+
+        self.sql("UPDATE domains SET ownership_status='CONFIRMED', scannable=FALSE WHERE id=%s", (domain_id,))
+        self.assertFalse(self.runtime_check(domain_id, "PORT_SCAN")[0])
+
+        self.sql("UPDATE domains SET scannable=TRUE WHERE id=%s", (domain_id,))
+        self.assertFalse(self.runtime_check(domain_id, "PORT_SCAN", scan_id=41)[0])
+        self.assertFalse(self.runtime_check(domain_id, "PORT_SCAN", scan_id=43, required_scan_status="SUCCEEDED")[0])
+
+        self.sql("UPDATE active_scan_scopes SET testing_level='PORT_SCAN'")
+        self.sql("UPDATE scans SET status='SUCCEEDED' WHERE id=42")
+        self.assertFalse(self.runtime_check(domain_id, "PORT_SCAN")[0])
+
+    def test_runtime_recheck_preserves_direct_manual_authorization_without_scope(self):
+        domain_id = self.domain("manual.example.com", 42)
+        self.sql("UPDATE domains SET validation_source='manual' WHERE id=%s", (domain_id,))
+        self.assertEqual(self.runtime_check(domain_id, "PORT_SCAN"), (True, "authorized"))
+
+    def test_runtime_recheck_fails_closed_on_database_error(self):
+        class BrokenConnection:
+            def __init__(self):
+                self.rollbacks = 0
+
+            def rollback(self):
+                self.rollbacks += 1
+
+        class BrokenCursor:
+            def __init__(self):
+                self.connection = BrokenConnection()
+
+            def execute(self, *_args, **_kwargs):
+                raise RuntimeError("database unavailable")
+
+        cursor = BrokenCursor()
+        self.assertEqual(
+            recheck_active_authorization(
+                cursor, scan_id=42, domain_id=1, testing_level="PORT_SCAN"
+            ),
+            (False, "authorization check failed"),
+        )
+        self.assertEqual(cursor.connection.rollbacks, 1)
+
+    def test_technology_worker_rechecks_before_network_after_scope_revocation(self):
+        domain_id = self.domain("tech.example.com", 42)
+        self.authorize_scope()
+        detected = mock.Mock(return_value=["nginx"])
+        revoked = False
+
+        def revoke_before_check(cursor, **kwargs):
+            nonlocal revoked
+            if not revoked:
+                self.sql("UPDATE active_scan_scopes SET status='REVOKED', revoked_by='test', revoked_at=CURRENT_TIMESTAMP")
+                revoked = True
+            return recheck_active_authorization(cursor, **kwargs)
+
+        self.run_worker(
+            "tech_worker.py",
+            overrides={
+                "detect_tech": detected,
+                "recheck_active_authorization": revoke_before_check,
+            },
+        )
+        detected.assert_not_called()
+
+    def test_port_worker_rechecks_before_network_after_scope_expiry(self):
+        domain_id = self.domain("port.example.com", 42)
+        self.authorize_scope("example.com", "PORT_SCAN")
+        scanned = mock.Mock(return_value=[(443, "https")])
+        expired = False
+
+        def expire_before_check(cursor, **kwargs):
+            nonlocal expired
+            if not expired:
+                self.sql("UPDATE active_scan_scopes SET expires_at=CURRENT_TIMESTAMP - INTERVAL '1 second'")
+                expired = True
+            return recheck_active_authorization(cursor, **kwargs)
+
+        self.run_worker(
+            "port_scan_worker.py",
+            overrides={
+                "scan_ports": scanned,
+                "recheck_active_authorization": expire_before_check,
+            },
+        )
+        scanned.assert_not_called()
+
+    def test_valid_scope_recheck_allows_technology_and_port_network_work(self):
+        self.domain("tech.example.com", 42)
+        self.domain("port.example.com", 42)
+        self.authorize_scope("tech.example.com", "TECHNOLOGY_HTTP", include_subdomains=False)
+        self.authorize_scope("port.example.com", "PORT_SCAN", include_subdomains=False)
+        detected = mock.Mock(return_value=["nginx"])
+        scanned = mock.Mock(return_value=[])
+
+        self.run_worker("tech_worker.py", overrides={"detect_tech": detected})
+        self.run_worker("port_scan_worker.py", overrides={"scan_ports": scanned})
+
+        detected.assert_called_once_with("tech.example.com")
+        scanned.assert_called_once_with("port.example.com")
+
+    def test_denied_target_does_not_block_later_authorized_target(self):
+        first = self.domain("first.example.com", 42)
+        second = self.domain("second.example.com", 42)
+        self.authorize_scope()
+        detected = mock.Mock(return_value=["nginx"])
+
+        def deny_first(cursor, **kwargs):
+            if kwargs["domain_id"] == first:
+                return False, "authorization no longer valid"
+            return recheck_active_authorization(cursor, **kwargs)
+
+        self.run_worker(
+            "tech_worker.py",
+            overrides={
+                "detect_tech": detected,
+                "recheck_active_authorization": deny_first,
+            },
+        )
+        self.assertEqual([call.args[0] for call in detected.call_args_list], ["second.example.com"])
 
 
 if __name__ == "__main__":

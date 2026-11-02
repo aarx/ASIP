@@ -6,7 +6,10 @@ import sys
 
 import requests
 
-from authorization_policy import active_scan_authorization_sql
+from authorization_policy import (
+    active_scan_authorization_sql,
+    recheck_active_authorization,
+)
 from db import get_conn, require_running_scan
 
 scan_id = int(sys.argv[1])
@@ -446,12 +449,28 @@ def main():
 
     for domain_id, domain in rows:
 
+        authorized, reason = recheck_active_authorization(
+            cur,
+            scan_id=scan_id,
+            domain_id=domain_id,
+            testing_level="TECHNOLOGY_HTTP",
+            required_scan_status="RUNNING",
+        )
+        if not authorized:
+            logger.info("Skipping technology detection for %s: %s", domain, reason)
+            continue
+
+        # End the read transaction before the network request so the next
+        # target observes current scope expiry/revocation at READ COMMITTED.
+        conn.commit()
+
         techs = detect_tech(domain)
         detection = _last_detections.pop(domain, None)
 
         print("Tech detect →", domain, techs)
 
         if techs is None:
+            conn.commit()
             continue
         
         if isinstance(techs, str):
@@ -476,9 +495,10 @@ def main():
                     SELECT 1 FROM scan_results sr
                     WHERE sr.scan_id = %s AND sr.domain_id = %s
                 )
-                """, (domain_id, scan_id, tech, scan_id, domain_id))
+            """, (domain_id, scan_id, tech, scan_id, domain_id))
 
         if detection is None:
+            conn.commit()
             continue
 
         for fingerprint in detection.fingerprints:
@@ -514,7 +534,8 @@ def main():
                 domain_id,
             ))
 
-    conn.commit()
+        conn.commit()
+
     conn.close()
 
     print("Tech enrichment complete")

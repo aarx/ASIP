@@ -193,3 +193,37 @@ def active_scan_authorization_sql(domain_alias="d", testing_level="TECHNOLOGY_HT
         base
         + f"AND ({domain_alias}.validation_source = 'manual' OR ({scope_match}))"
     )
+
+
+def recheck_active_authorization(
+    cur, *, scan_id, domain_id, testing_level, required_scan_status="RUNNING"
+):
+    """Perform a fresh, fail-closed authorization check before network I/O."""
+    try:
+        cur.execute(
+            f"""
+            SELECT 1
+            FROM domains d
+            JOIN scan_results sr
+              ON sr.domain_id = d.id
+             AND sr.scan_id = %s
+            JOIN scans scan
+              ON scan.id = sr.scan_id
+            WHERE d.id = %s
+              AND scan.status = %s
+              AND {active_scan_authorization_sql('d', testing_level)}
+            LIMIT 1
+            """,
+            (scan_id, domain_id, required_scan_status),
+        )
+        if cur.fetchone() is None:
+            return False, "authorization no longer valid"
+        return True, "authorized"
+    except Exception:
+        connection = getattr(cur, "connection", None)
+        if connection is not None:
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+        return False, "authorization check failed"

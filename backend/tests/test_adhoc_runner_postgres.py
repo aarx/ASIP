@@ -73,6 +73,10 @@ class AdhocRunnerPostgreSQLTests(unittest.TestCase):
                         (REPOSITORY / "backend/migrations/005_add_adhoc_campaigns.sql")
                         .read_text(encoding="utf-8")
                     )
+                    cursor.execute(
+                        (REPOSITORY / "backend/migrations/006_add_active_scan_scopes.sql")
+                        .read_text(encoding="utf-8")
+                    )
         except Exception:
             _remediation_fixture.PostgreSQLIngestConvergenceTests.tearDownClass.__func__(cls)
             raise

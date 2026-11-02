@@ -4,7 +4,10 @@ import logging
 import os
 import sys
 from db import get_conn, require_running_scan
-from authorization_policy import active_scan_authorization_sql
+from authorization_policy import (
+    active_scan_authorization_sql,
+    recheck_active_authorization,
+)
 
 scan_id = int(sys.argv[1])
 
@@ -113,6 +116,21 @@ def main():
     print("Rows to scan:", len(domains))
 
     for domain_id, domain in domains:
+
+        authorized, reason = recheck_active_authorization(
+            cur,
+            scan_id=scan_id,
+            domain_id=domain_id,
+            testing_level="PORT_SCAN",
+            required_scan_status="RUNNING",
+        )
+        if not authorized:
+            print(f"Skipping port scan for {domain}: {reason}")
+            continue
+
+        # End the read transaction before nmap so later targets observe
+        # current scope expiry/revocation at READ COMMITTED.
+        conn.commit()
     
         print(f"Scanning {domain}")
     
@@ -136,7 +154,8 @@ def main():
         if not domains:
             print("No domains to scan for this run")
 
-    conn.commit()
+        conn.commit()
+
     conn.close()
 
     print("Port scan enrichment complete")

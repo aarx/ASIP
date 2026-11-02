@@ -38,6 +38,12 @@ def load_worker(filename):
             sys.modules.pop("db", None)
         else:
             sys.modules["db"] = previous_db
+    if filename in ("tech_worker.py", "port_scan_worker.py"):
+        # These unit tests use a lightweight cursor without the authorization
+        # schema; disposable PostgreSQL tests cover the real helper decisions.
+        module.recheck_active_authorization = mock.Mock(
+            return_value=(True, "authorized")
+        )
     return module
 
 
