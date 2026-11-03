@@ -26,6 +26,35 @@ class QueueCursor:
         return self.fetchall_value or []
 
 
+class ResultReplacingCursor:
+    """Model a DB cursor where each execute replaces pending result rows."""
+
+    def __init__(self, target_rows, classification_rows):
+        self.target_rows = target_rows
+        self.classification_rows = classification_rows
+        self.pending_rows = []
+        self.events = []
+        self.executions = []
+
+    def execute(self, sql, params=None):
+        self.executions.append((sql, params))
+        normalized = " ".join(sql.lower().split())
+        if "asset_class" in normalized:
+            self.pending_rows = list(self.classification_rows)
+            self.events.append("classify_execute")
+        elif "d.confidence_label in ('medium', 'high')" in normalized:
+            self.pending_rows = list(self.target_rows)
+            self.events.append("targets_execute")
+        else:
+            raise AssertionError(f"Unexpected SQL: {normalized}")
+
+    def fetchall(self):
+        self.events.append("fetchall")
+        rows = self.pending_rows
+        self.pending_rows = []
+        return rows
+
+
 class FakeConnection:
     def __init__(self, cursor):
         self.cursor_value = cursor
@@ -182,16 +211,18 @@ class McpScopeParityTests(unittest.TestCase):
         self.assertEqual(result["reasons"], [])
         self.assertIn("sr.scan_id = %s", cursor.executions[0][0])
 
-    def test_priority_targets_include_current_candidates_without_organizational_risk(self):
-        cursor = QueueCursor(fetchall=[
+    def test_priority_targets_fetches_before_classification_replaces_cursor_results(self):
+        cursor = ResultReplacingCursor(target_rows=[
             ("legacy-confirmed-outside.example", False, 95, "high", 571),
             ("shadow.example", True, 99, "high", 58),
+            ("known.example", True, 91, "medium", 1),
+        ], classification_rows=[
+            (571, "CANDIDATE"),
+            (58, "SHADOW"),
+            (1, "KNOWN"),
         ])
-        with mock.patch.object(
-            self.mcp, "current_scan_asset_classes", return_value=self.classes
-        ):
-            self.connect(cursor)
-            result = self.mcp.priority_targets()
+        self.connect(cursor)
+        result = self.mcp.priority_targets()
 
         self.assertEqual(result, [{
             "domain": "legacy-confirmed-outside.example",
@@ -207,6 +238,24 @@ class McpScopeParityTests(unittest.TestCase):
         self.assertIn("ds.scan_id = sr.scan_id", sql)
         self.assertIn("WHERE sr.scan_id = %s", sql)
         self.assertEqual(params, (17,))
+        self.assertEqual(cursor.events, [
+            "targets_execute", "fetchall", "classify_execute", "fetchall",
+        ])
+        self.assertIn("FROM seed_domains seed_root", cursor.executions[1][0])
+
+    def test_priority_targets_empty_when_no_effectively_candidate_rows(self):
+        cursor = ResultReplacingCursor(target_rows=[
+            ("shadow.example", True, 99, "high", 58),
+            ("known.example", True, 91, "medium", 1),
+        ], classification_rows=[
+            (58, "SHADOW"),
+            (1, "KNOWN"),
+        ])
+        self.connect(cursor)
+        self.assertEqual(self.mcp.priority_targets(), [])
+        self.assertEqual(cursor.events, [
+            "targets_execute", "fetchall", "classify_execute", "fetchall",
+        ])
 
 
 if __name__ == "__main__":

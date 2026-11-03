@@ -255,8 +255,9 @@ def priority_targets():
           AND d.confidence_label IN ('medium', 'high')
         ORDER BY d.domain
     """, (scan_id,))
+    target_rows = cur.fetchall()
     asset_classes = current_scan_asset_classes(cur, scan_id)
-    rows = [row for row in cur.fetchall()
+    rows = [row for row in target_rows
             if asset_classes.get(row[4]) == "CANDIDATE"]
 
     conn.close()
