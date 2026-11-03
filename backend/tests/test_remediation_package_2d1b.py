@@ -330,7 +330,7 @@ class PostgreSQLLockingTests(unittest.TestCase):
             ],
         )
 
-    def test_expired_managed_lease_is_recovered_without_rewriting_history(self):
+    def test_expired_managed_lease_requires_external_containment(self):
         orchestration = load_backend_module(BACKEND / "orchestration.py")
         connection = self.psycopg2.connect(**self.connection_args)
         with connection:
@@ -344,34 +344,20 @@ class PostgreSQLLockingTests(unittest.TestCase):
                     WHERE id = 42
                     """
                 )
-        previous_started_at = None
-        with connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT started_at FROM scans WHERE id = 42")
-                previous_started_at = cursor.fetchone()[0]
+        with self.assertRaisesRegex(
+            RuntimeError, "cannot prove its worker process tree"
+        ):
+            orchestration.recover_orphaned_scans(connection)
 
-        previous_grace = os.environ.get("ASIP_RUNNER_ORPHAN_GRACE_SECONDS")
-        os.environ["ASIP_RUNNER_ORPHAN_GRACE_SECONDS"] = "1"
-        try:
-            recovered = orchestration.recover_orphaned_scans(connection)
-        finally:
-            if previous_grace is None:
-                os.environ.pop("ASIP_RUNNER_ORPHAN_GRACE_SECONDS", None)
-            else:
-                os.environ["ASIP_RUNNER_ORPHAN_GRACE_SECONDS"] = previous_grace
-
-        with connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT status, failure_reason, started_at FROM scans WHERE id = 42"
-                )
-                status, reason, started_at = cursor.fetchone()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT status, failure_reason FROM scans WHERE id = 42"
+            )
+            status, reason = cursor.fetchone()
         connection.close()
 
-        self.assertEqual(recovered, [42])
-        self.assertEqual(status, "FAILED")
-        self.assertEqual(reason, "ORPHANED_RUNNER_RECOVERED")
-        self.assertEqual(started_at, previous_started_at)
+        self.assertEqual(status, "RUNNING")
+        self.assertIsNone(reason)
 
     def test_fresh_managed_lease_blocks_recovery(self):
         orchestration = load_backend_module(BACKEND / "orchestration.py")
@@ -389,7 +375,9 @@ class PostgreSQLLockingTests(unittest.TestCase):
         previous_grace = os.environ.get("ASIP_RUNNER_ORPHAN_GRACE_SECONDS")
         os.environ["ASIP_RUNNER_ORPHAN_GRACE_SECONDS"] = "60"
         try:
-            with self.assertRaisesRegex(RuntimeError, "fresh lease"):
+            with self.assertRaisesRegex(
+                RuntimeError, "cannot prove its worker process tree"
+            ):
                 orchestration.recover_orphaned_scans(connection)
         finally:
             if previous_grace is None:
@@ -456,7 +444,7 @@ class WriterWiringTests(unittest.TestCase):
     def test_orchestration_and_artifact_match_authorized_package_baselines(self):
         expected = {
             "orchestration.py": (
-                "fc1ff6cbeadfb9be515d2f64110427b69d120f444abc472c428762924b219ee1"
+                "7e04381ea17045ea064681ae312e32ab33d0b503ff350b36ae3594f4a14fd20c"
             ),
             "recon_artifact.py": (
                 "096c44848356e2f4b7f0587e5a26f8008724531101edf405098ed708916bb370"

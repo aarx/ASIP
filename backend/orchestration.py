@@ -114,12 +114,12 @@ def release_orchestration_lock(conn):
 
 
 def recover_orphaned_scans(conn):
-    """Fail closed on unowned RUNNING rows and recover only expired leases.
+    """Fail closed on every RUNNING row until execution is externally contained.
 
-    The caller holds the canonical advisory lock. A managed runner with a
-    fresh lease is treated as an active/inconsistent state and blocks a new
-    run. Legacy RUNNING rows without lease metadata are never guessed to be
-    stale and require explicit operator reconciliation.
+    The advisory lock only proves that no launcher currently owns its
+    PostgreSQL session. It cannot prove that a stage process or descendant
+    started by a dead launcher has stopped. Lease age is therefore diagnostic
+    only; neither fresh nor expired leases authorize automatic recovery.
     """
     cur = conn.cursor()
     cur.execute(
@@ -142,45 +142,12 @@ def recover_orphaned_scans(conn):
             + ",".join(str(scan_id) for scan_id in legacy)
         )
 
-    grace_seconds = runner_orphan_grace_seconds()
-    cur.execute(
-        """
-        SELECT id
-        FROM scans
-        WHERE status = 'RUNNING'
-          AND heartbeat_at >= NOW() - (%s * INTERVAL '1 second')
-        ORDER BY id
-        """,
-        (grace_seconds,),
+    managed = [row[0] for row in rows]
+    raise RuntimeError(
+        "RUNNING scan requires operator containment and reconciliation; "
+        "lease metadata cannot prove its worker process tree has terminated: "
+        + ",".join(str(scan_id) for scan_id in managed)
     )
-    fresh = [row[0] for row in cur.fetchall()]
-    if fresh:
-        raise RuntimeError(
-            "A managed RUNNING scan has a fresh lease: "
-            + ",".join(str(scan_id) for scan_id in fresh)
-        )
-
-    cur.execute(
-        """
-        UPDATE scans
-        SET status = 'FAILED',
-            completed_at = NOW(),
-            failure_reason = 'ORPHANED_RUNNER_RECOVERED'
-        WHERE status = 'RUNNING'
-          AND runner_token IS NOT NULL
-          AND heartbeat_at IS NOT NULL
-          AND heartbeat_at < NOW() - (%s * INTERVAL '1 second')
-        RETURNING id
-        """,
-        (grace_seconds,),
-    )
-    recovered = [row[0] for row in cur.fetchall()]
-    conn.commit()
-    for scan_id in recovered:
-        logging.warning(
-            "Recovered orphaned RUNNING scan %s as FAILED", scan_id
-        )
-    return recovered
 
 
 class RunnerHeartbeat:

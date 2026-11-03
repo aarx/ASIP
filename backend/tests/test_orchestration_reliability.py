@@ -136,6 +136,76 @@ class OrchestrationTimeoutTests(unittest.TestCase):
             time.sleep(2.1)
             self.assertFalse(marker.exists())
 
+    def test_sigkill_leaves_stage_descendant_but_recovery_fails_closed(self):
+        """A dead launcher cannot infer process-tree death from its lost lock."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            ready = Path(directory) / "child-ready"
+            marker = Path(directory) / "child-survived"
+            child_code = (
+                "import pathlib,time; pathlib.Path(" + repr(str(ready)) +").touch(); "
+                "time.sleep(2); pathlib.Path(" + repr(str(marker)) + ").touch()"
+            )
+            launcher_code = (
+                "import subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c'," + repr(child_code) + "]); "
+                "time.sleep(30)"
+            )
+            launcher = subprocess.Popen(
+                [sys.executable, "-c", launcher_code], start_new_session=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            try:
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline and not ready.exists():
+                    if launcher.poll() is not None:
+                        self.fail("launcher exited before child became ready")
+                    time.sleep(0.01)
+                self.assertTrue(ready.exists())
+                launcher.send_signal(signal.SIGKILL)
+                launcher.wait(timeout=2)
+                class Cursor:
+                    def __init__(self):
+                        self.statements = []
+
+                    def execute(self, query, params=None):
+                        self.statements.append(query)
+
+                    def fetchall(self):
+                        return [(42, "runner-token", "expired-heartbeat")]
+
+                class Connection:
+                    def __init__(self):
+                        self.cursor_instance = Cursor()
+                        self.commits = 0
+
+                    def cursor(self):
+                        return self.cursor_instance
+
+                    def commit(self):
+                        self.commits += 1
+
+                connection = Connection()
+                with self.assertRaisesRegex(
+                    RuntimeError, "cannot prove its worker process tree"
+                ):
+                    self.module.recover_orphaned_scans(connection)
+                self.assertEqual(connection.commits, 0)
+                self.assertEqual(len(connection.cursor_instance.statements), 1)
+                time.sleep(2.1)
+                self.assertTrue(
+                    marker.exists(),
+                    "the descendant should demonstrate survival of launcher SIGKILL",
+                )
+            finally:
+                # This process group was created exclusively by this test.
+                try:
+                    os.killpg(launcher.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
     def test_shutdown_signals_raise_into_pipeline_cleanup(self):
         for signum in (self.module.signal.SIGTERM, self.module.signal.SIGINT):
             with self.subTest(signum=signum), self.assertRaises(KeyboardInterrupt):
