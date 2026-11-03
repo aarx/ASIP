@@ -78,7 +78,6 @@ class AdhocRunnerPostgreSQLTests(unittest.TestCase):
                         (REPOSITORY / "backend/migrations/006_add_active_scan_scopes.sql")
                         .read_text(encoding="utf-8")
                     )
-                    cursor.execute("CREATE TABLE seed_domains (domain text UNIQUE)")
                     cursor.execute("INSERT INTO seed_domains(domain) VALUES ('approved.example')")
         except Exception:
             _remediation_fixture.PostgreSQLIngestConvergenceTests.tearDownClass.__func__(cls)

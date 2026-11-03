@@ -199,6 +199,9 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
                     CREATE TABLE known_domains (
                         domain text UNIQUE
                     );
+                    CREATE TABLE seed_domains (
+                        domain text
+                    );
                     CREATE TABLE domains (
                         id serial PRIMARY KEY,
                         domain text UNIQUE CHECK (domain <> 'explode.example'),

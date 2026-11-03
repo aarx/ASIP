@@ -1,5 +1,6 @@
 import importlib.util
 import logging
+import os
 import pathlib
 import sys
 import types
@@ -88,11 +89,12 @@ class AuthorizationPolicyTests(unittest.TestCase):
             "AND d.validation_source = 'manual'",
         )
 
-    def test_port_candidates_require_manual_t2_authorization_and_membership(self):
+    def test_port_candidates_require_org_policy_and_membership(self):
         module = load_worker("port_scan_worker.py")
         cursor = RecordingCursor(fetchalls=[])
 
-        module.get_resolving_domains(cursor, 42)
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "PORT_SCAN"}):
+            module.get_resolving_domains(cursor, 42)
 
         sql, params = cursor.executions[0]
         norm = normalized(sql)
@@ -100,10 +102,15 @@ class AuthorizationPolicyTests(unittest.TestCase):
         self.assertIn("SR.DOMAIN_ID = S.DOMAIN_ID", norm)
         self.assertIn("SR.SCAN_ID = S.SCAN_ID", norm)
         self.assertIn("D.SCANNABLE IS TRUE", norm)
-        self.assertIn("ACTIVE_SCAN_SCOPES SCOPE_ALLOW", norm)
         self.assertIn("FROM SEED_DOMAINS", norm)
         self.assertIn("FROM KNOWN_DOMAINS", norm)
         self.assertIn("D.OWNERSHIP_STATUS = 'CONFIRMED'", norm)
+        self.assertIn("D.SCANNABLE IS TRUE", norm)
+        self.assertIn("AND TRUE", norm)
+        self.assertIn("SCOPE_BLOCK", norm)
+        self.assertIn("EXCLUDED_DOMAINS", norm)
+        self.assertNotIn("SCOPE_ALLOW", norm)
+        self.assertNotIn("VALIDATION_SOURCE = 'MANUAL'", norm)
         self.assertEqual(params, (42, 42))
 
     def test_manual_approval_is_the_only_t2_authorizing_shape(self):

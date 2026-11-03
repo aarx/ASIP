@@ -204,7 +204,6 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                 with connection.cursor() as cur:
                     cur.execute("""
                         ALTER TABLE domains ADD first_seen_at timestamp, ADD last_seen_at timestamp;
-                        CREATE TABLE seed_domains (domain text);
                         INSERT INTO seed_domains VALUES ('example');
                         CREATE TABLE sensitive_ports (port integer, risk integer);
                         INSERT INTO sensitive_ports VALUES (443, 10);

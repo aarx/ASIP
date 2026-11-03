@@ -1,6 +1,7 @@
 import datetime
 import importlib.util
 import logging
+import os
 import pathlib
 import socket
 import ssl
@@ -105,7 +106,7 @@ class SanFalseCompletionTests(unittest.TestCase):
 
     def run_main(self, observation, fetchones=None):
         cursor = RecordingCursor(
-            fetchalls=[[], [(1, 'parent.example')]],
+            fetchalls=[[], [], [(1, 'parent.example')]],
             fetchones=fetchones or [(1,), (1,)],
         )
         connection = FakeConnection(cursor)
@@ -348,6 +349,11 @@ class PortTruthTests(unittest.TestCase):
 
 class TechnologyTruthTests(unittest.TestCase):
     def setUp(self):
+        self.policy = mock.patch.dict(
+            os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "TECHNOLOGY_HTTP"}
+        )
+        self.policy.start()
+        self.addCleanup(self.policy.stop)
         self.module = load_worker("tech_worker.py")
 
     @staticmethod
@@ -474,7 +480,7 @@ class TechnologyTruthTests(unittest.TestCase):
         self.assertFalse(request.call_args.kwargs["allow_redirects"])
         self.assertNotIn("external.example", str(request.call_args))
 
-    def test_worker_query_requires_explicit_authorization(self):
+    def test_worker_query_uses_org_policy_and_current_membership(self):
         cursor = RecordingCursor(fetchalls=[[(1, "host.example")]])
         connection = FakeConnection(cursor)
         self.module.get_conn = lambda: connection
@@ -485,7 +491,14 @@ class TechnologyTruthTests(unittest.TestCase):
         query = cursor.executions[0][0]
         self.assertIn("ownership_status = 'CONFIRMED'", query)
         self.assertIn("scannable IS TRUE", query)
-        self.assertIn("validation_source = 'manual'", query)
+        self.assertIn("FROM seed_domains", query)
+        self.assertIn("FROM known_domains", query)
+        self.assertIn("AND TRUE", query)
+        self.assertIn("scan_results", query)
+        self.assertIn("manually", query.lower())
+        self.assertIn("scope_block", query.lower())
+        self.assertNotIn("scope_allow", query.lower())
+        self.assertNotIn("validation_source = 'manual'", query)
 
     def test_structured_observations_persist_without_replacing_labels(self):
         cursor = RecordingCursor(fetchalls=[[(1, "host.example")]])

@@ -50,6 +50,9 @@ class RecordingCursor:
     def fetchone(self):
         return self.result
 
+    def fetchall(self):
+        return []
+
 
 class FakeConnection:
     def __init__(self, result):

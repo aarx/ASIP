@@ -94,13 +94,16 @@ class CliSourceOutcomeTests(unittest.TestCase):
 
     @staticmethod
     def completed(returncode=0, stdout="", stderr=""):
-        return subprocess.CompletedProcess(
-            args=["tool"], returncode=returncode, stdout=stdout, stderr=stderr
-        )
+        process = mock.Mock()
+        process.returncode = returncode
+        process.stdout = io.StringIO(stdout)
+        process.stderr = io.StringIO(stderr)
+        process.communicate.return_value = (stdout, stderr)
+        return process
 
     def test_cli_zero_exit_with_usable_results_is_ok(self):
         with mock.patch.object(
-            self.recon.subprocess, "run",
+            self.recon.subprocess, "Popen",
             return_value=self.completed(stdout="a.example.com\n"),
         ):
             self.recon.run_subdomain_enum("example.com", deep=False)
@@ -111,7 +114,7 @@ class CliSourceOutcomeTests(unittest.TestCase):
 
     def test_cli_zero_exit_without_usable_results_is_zero(self):
         with mock.patch.object(
-            self.recon.subprocess, "run", return_value=self.completed(stdout="\n")
+            self.recon.subprocess, "Popen", return_value=self.completed(stdout="\n")
         ):
             self.recon.run_subdomain_enum("example.com", deep=False)
 
@@ -122,7 +125,7 @@ class CliSourceOutcomeTests(unittest.TestCase):
 
     def test_cli_nonzero_is_failed_and_stdout_is_rejected(self):
         with mock.patch.object(
-            self.recon.subprocess, "run",
+            self.recon.subprocess, "Popen",
             return_value=self.completed(returncode=3, stdout="a.example.com\n"),
         ):
             self.recon.run_subdomain_enum("example.com", deep=False)
@@ -134,7 +137,7 @@ class CliSourceOutcomeTests(unittest.TestCase):
 
     def test_cli_launch_failure_is_failed_and_does_not_escape(self):
         with mock.patch.object(
-            self.recon.subprocess, "run", side_effect=FileNotFoundError("missing")
+            self.recon.subprocess, "Popen", side_effect=FileNotFoundError("missing")
         ):
             self.recon.run_subdomain_enum("example.com", deep=False)
 
@@ -153,7 +156,7 @@ class CliSourceOutcomeTests(unittest.TestCase):
             self.completed(stdout=""),
             self.completed(returncode=2, stdout="ignored.example.com\n"),
         ]
-        with mock.patch.object(self.recon.subprocess, "run", side_effect=results):
+        with mock.patch.object(self.recon.subprocess, "Popen", side_effect=results):
             self.recon.run_subdomain_enum("example.com", deep=False)
 
         self.assertEqual(
@@ -168,7 +171,7 @@ class CliSourceOutcomeTests(unittest.TestCase):
             ("amass", ["amass", "enum", "-passive", "-norecursive", "-d"])
         ]
         with mock.patch.object(
-            self.recon.subprocess, "run", return_value=self.completed(stdout="")
+            self.recon.subprocess, "Popen", return_value=self.completed(stdout="")
         ) as run:
             self.recon.run_subdomain_enum("example.com", deep=False)
             run.assert_not_called()
@@ -320,9 +323,9 @@ class SummaryAndWorkflowTests(unittest.TestCase):
             try:
                 os.chdir(root)
                 with mock.patch.object(
-                    self.recon.subprocess, "run",
-                    return_value=subprocess.CompletedProcess(
-                        args=["tool"], returncode=1, stdout="", stderr="failed"
+                    self.recon.subprocess, "Popen",
+                    return_value=CliSourceOutcomeTests.completed(
+                        returncode=1, stdout="", stderr="failed"
                     ),
                 ), mock.patch.object(
                     self.recon.requests, "get", side_effect=OSError("offline")

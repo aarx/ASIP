@@ -1,4 +1,5 @@
 import datetime
+import os
 import unittest
 from unittest import mock
 
@@ -17,6 +18,12 @@ class PostgreSQLChronologyTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        cls.policy = mock.patch.dict(
+            os.environ,
+            {"ASIP_DEFAULT_SCAN_OPERATIONS": "HTTP_TLS_OBSERVATION"},
+        )
+        cls.policy.start()
+        cls.addClassCleanup(cls.policy.stop)
         try:
             convergence.PostgreSQLIngestConvergenceTests.setUpClass.__func__(cls)
         except unittest.SkipTest as exc:
@@ -36,7 +43,6 @@ class PostgreSQLChronologyTests(unittest.TestCase):
                         ALTER TABLE domains
                             ADD first_seen_at timestamp,
                             ADD last_seen_at timestamp;
-                        CREATE TABLE seed_domains (domain text);
                         INSERT INTO seed_domains VALUES ('example');
                         ALTER TABLE domain_san ADD UNIQUE(domain_id, scan_id);
                     """)
