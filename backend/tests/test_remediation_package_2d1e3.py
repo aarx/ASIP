@@ -313,35 +313,42 @@ class PortTruthTests(unittest.TestCase):
 
     def test_successful_open_and_zero_port_results(self):
         with mock.patch.object(
-            self.module.subprocess, "run",
-            return_value=self.completed(stdout="443/tcp open https\n"),
+            self.module.subprocess, "Popen",
+            return_value=mock.Mock(
+                communicate=mock.Mock(return_value=("443/tcp open https\n", "")),
+                returncode=0,
+            ),
         ):
             self.assertEqual(self.module.scan_ports("host.example"), [(443, "https")])
 
         with mock.patch.object(
-            self.module.subprocess, "run", return_value=self.completed()
+            self.module.subprocess, "Popen",
+            return_value=mock.Mock(communicate=mock.Mock(return_value=("", "")), returncode=0),
         ):
             self.assertEqual(self.module.scan_ports("host.example"), [])
 
     def test_nonzero_stdout_is_rejected(self):
         with mock.patch.object(
-            self.module.subprocess, "run",
-            return_value=self.completed(2, "443/tcp open https\n"),
-        ), mock.patch("builtins.print"):
-            self.assertEqual(self.module.scan_ports("host.example"), [])
+            self.module.subprocess, "Popen",
+            return_value=mock.Mock(
+                communicate=mock.Mock(return_value=("443/tcp open https\n", "failed")),
+                returncode=2,
+            ),
+        ), self.assertRaises(self.module.PortScanError):
+            self.module.scan_ports("host.example")
 
     def test_timeout_and_launch_failure_write_no_ports(self):
         for error in (subprocess.TimeoutExpired("nmap", 60), FileNotFoundError()):
             with self.subTest(error=type(error).__name__), mock.patch.object(
-                self.module.subprocess, "run", side_effect=error
-            ), mock.patch("builtins.print"):
-                self.assertEqual(self.module.scan_ports("host.example"), [])
+                self.module.subprocess, "Popen", side_effect=error
+            ), self.assertRaises(self.module.PortScanError):
+                self.module.scan_ports("host.example")
 
     def test_zero_port_result_produces_no_port_row(self):
         cursor = RecordingCursor(fetchalls=[[(1, "host.example")]])
         connection = FakeConnection(cursor)
         self.module.get_conn = lambda: connection
-        self.module.scan_ports = lambda domain: []
+        self.module.scan_ports = lambda domain, cancel_event=None: []
         with mock.patch("builtins.print"):
             self.module.main()
         self.assertEqual(writes_to(cursor, "domain_ports"), [])

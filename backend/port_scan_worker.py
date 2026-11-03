@@ -1,13 +1,19 @@
-import subprocess
-import re
 import logging
 import os
+import re
+import signal
+import subprocess
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from db import get_conn, require_running_scan
 from authorization_policy import (
     active_scan_authorization_sql,
     recheck_active_authorization,
 )
+
 
 scan_id = int(sys.argv[1])
 
@@ -18,13 +24,49 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.FileHandler("logs/app.log"),
-        logging.StreamHandler()
-    ]
+        logging.StreamHandler(),
+    ],
 )
 
 
-def get_resolving_domains(cur, scan_id):
+DEFAULT_PORT_SCAN_WORKERS = 2
+MAX_PORT_SCAN_WORKERS = 4
+PORT_SCAN_TIMEOUT_SECONDS = 60
+PORT_SCAN_POLL_SECONDS = 0.25
+PORT_SCAN_TERMINATE_GRACE_SECONDS = 2
 
+
+class PortScanError(RuntimeError):
+    """Nmap did not complete successfully; partial output is not persisted."""
+
+    def __init__(self, message, partial_ports=()):
+        super().__init__(message)
+        self.partial_ports = tuple(partial_ports)
+
+
+class PortScanTimeout(PortScanError):
+    pass
+
+
+class PortScanCancelled(PortScanError):
+    pass
+
+
+class PortScanStageError(RuntimeError):
+    pass
+
+
+def configured_worker_count(value=None):
+    """Read a conservative worker limit, clamped to the supported range."""
+    raw = os.environ.get("ASIP_NMAP_WORKERS") if value is None else value
+    try:
+        parsed = int(raw) if raw not in (None, "") else DEFAULT_PORT_SCAN_WORKERS
+    except (TypeError, ValueError):
+        parsed = DEFAULT_PORT_SCAN_WORKERS
+    return min(MAX_PORT_SCAN_WORKERS, max(1, parsed))
+
+
+def get_resolving_domains(cur, scan_id):
     cur.execute(f"""
     SELECT DISTINCT ON (d.id) d.id, d.domain
     FROM domains d
@@ -34,89 +76,125 @@ def get_resolving_domains(cur, scan_id):
     JOIN scan_results sr
       ON sr.domain_id = s.domain_id
       AND sr.scan_id = s.scan_id
-    
+
     LEFT JOIN domain_ports dp
       ON d.id = dp.domain_id
       AND dp.scan_id = %s
-    
+
     WHERE s.has_ip = TRUE
     AND dp.domain_id IS NULL
     AND {active_scan_authorization_sql("d", "PORT_SCAN")}
     ORDER BY d.id, s.scan_id DESC
     """, (scan_id, scan_id))
-
-    rows = cur.fetchall()
-
-
-    return rows
+    return cur.fetchall()
 
 
-def scan_ports(domain):
+def _parse_ports(stdout):
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode("utf-8", errors="replace")
+    ports = []
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if "/tcp" not in line or "open" not in line:
+            continue
+        parts = re.split(r"\s+", line)
+        try:
+            port = int(parts[0].split("/")[0])
+        except (IndexError, ValueError) as exc:
+            raise PortScanError(f"could not parse Nmap output line: {line}") from exc
+        ports.append((port, parts[-1]))
+    return ports
+
+
+def _terminate_process(process):
+    """Stop this Nmap process and collect any partial output."""
+    if process.poll() is None:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, _stderr = process.communicate(
+                timeout=PORT_SCAN_TERMINATE_GRACE_SECONDS
+            )
+            return stdout
+        except subprocess.TimeoutExpired:
+            process.kill()
+    stdout, _stderr = process.communicate()
+    return stdout
+
+
+def scan_ports(domain, cancel_event=None):
+    """Run the existing bounded Nmap profile once, without retries."""
+    asm_ports = (
+        "21,22,23,25,53,80,110,143,389,443,445,"
+        "1521,3000,3306,3389,5000,5432,5900,"
+        "5985,5986,6379,7001,7002,8000,8080,8443,"
+        "8888,27017,11211"
+    )
+    cmd = ["nmap", "-Pn", "-T3", "--open", "-p", asm_ports, domain]
+
+    if cancel_event is not None and cancel_event.is_set():
+        raise PortScanCancelled("cancelled before Nmap process start")
 
     try:
-
-        ASM_PORTS = (
-            "21,22,23,25,53,80,110,143,389,443,445,"
-            "1521,3000,3306,3389,5000,5432,5900,"
-            "5985,5986,6379,7001,7002,8000,8080,8443,"
-            "8888,27017,11211"
-        )
-
-        cmd = [
-            "nmap",
-            "-Pn",
-            "-T3",
-            "--open",
-            "-p", ASM_PORTS,
-            domain
-        ]
-
-        result = subprocess.run(
+        process = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=60
         )
+    except Exception as exc:
+        raise PortScanError(f"could not start Nmap for {domain}: {exc}") from exc
 
-        if result.returncode != 0:
-            print(f"Scan failed for {domain} → nmap exit {result.returncode}")
-            return []
+    deadline = time.monotonic() + PORT_SCAN_TIMEOUT_SECONDS
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            stdout = _terminate_process(process)
+            partial_ports = _parse_ports(stdout)
+            raise PortScanCancelled(
+                f"cancelled Nmap for {domain}; discarded {len(partial_ports)} partial ports",
+                partial_ports,
+            )
 
-        ports = []
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            stdout = _terminate_process(process)
+            partial_ports = _parse_ports(stdout)
+            raise PortScanTimeout(
+                f"Nmap timed out after {PORT_SCAN_TIMEOUT_SECONDS}s for {domain}; "
+                f"discarded {len(partial_ports)} partial ports",
+                partial_ports,
+            )
 
-        for line in result.stdout.splitlines():
+        try:
+            stdout, stderr = process.communicate(
+                timeout=min(PORT_SCAN_POLL_SECONDS, remaining)
+            )
+            break
+        except subprocess.TimeoutExpired:
+            continue
 
-            line = line.strip()
+    ports = _parse_ports(stdout)
+    if process.returncode != 0:
+        raise PortScanError(
+            f"Nmap exited {process.returncode} for {domain}: {stderr or ''}; "
+            f"discarded {len(ports)} partial ports",
+            ports,
+        )
+    return ports
 
-            if "/tcp" in line and "open" in line:
 
-                parts = re.split(r"\s+", line)
+def scan_target(scan_id, domain_id, domain, cancel_event):
+    """Authorize, scan, and persist one target using its own DB connection."""
+    conn = None
+    try:
+        if cancel_event.is_set():
+            return {"status": "cancelled", "domain": domain}
 
-                port_part = parts[0]
-                service = parts[-1]
-
-                port = int(port_part.split("/")[0])
-
-                ports.append((port, service))
-
-        return ports
-
-    except Exception as e:
-        print(f"Scan failed for {domain} → {e}")
-        return []
-
-def main():
-
-    conn = get_conn()
-    cur = conn.cursor()
-    require_running_scan(cur, scan_id)
-
-    domains = get_resolving_domains(cur, scan_id)
-    print("Scan ID:", scan_id)
-    print("Rows to scan:", len(domains))
-
-    for domain_id, domain in domains:
-
+        conn = get_conn()
+        cur = conn.cursor()
+        require_running_scan(cur, scan_id)
         authorized, reason = recheck_active_authorization(
             cur,
             scan_id=scan_id,
@@ -124,23 +202,45 @@ def main():
             testing_level="PORT_SCAN",
             required_scan_status="RUNNING",
         )
-        if not authorized:
-            print(f"Skipping port scan for {domain}: {reason}")
-            continue
-
-        # End the read transaction before nmap so later targets observe
-        # current scope expiry/revocation at READ COMMITTED.
         conn.commit()
-    
-        print(f"Scanning {domain}")
-    
-        ports = scan_ports(domain)
-    
-        if ports:
-            print(f"OPEN → {domain} → {ports}")
-    
+        if not authorized:
+            if reason == "authorization check failed":
+                return {
+                    "status": "failed",
+                    "domain": domain,
+                    "reason": "runtime authorization could not be verified",
+                }
+            logging.info("Skipping port scan for %s: %s", domain, reason)
+            return {"status": "skipped", "domain": domain, "reason": reason}
+
+        # Authorization is checked independently in the worker immediately
+        # before this single Nmap invocation. No batch decision is reused.
+        if cancel_event.is_set():
+            return {"status": "cancelled", "domain": domain}
+        logging.info("Scanning %s", domain)
+        ports = scan_ports(domain, cancel_event=cancel_event)
+
+        if cancel_event.is_set():
+            return {"status": "cancelled", "domain": domain}
+
+        cur = conn.cursor()
+        require_running_scan(cur, scan_id)
+        still_authorized, reason = recheck_active_authorization(
+            cur,
+            scan_id=scan_id,
+            domain_id=domain_id,
+            testing_level="PORT_SCAN",
+            required_scan_status="RUNNING",
+        )
+        if not still_authorized:
+            conn.rollback()
+            return {
+                "status": "failed",
+                "domain": domain,
+                "reason": f"authorization changed before result persistence: {reason}",
+            }
+
         for port, service in ports:
-    
             cur.execute("""
             INSERT INTO domain_ports(domain_id, scan_id, port, service)
             SELECT %s, %s, %s, %s
@@ -150,15 +250,125 @@ def main():
             )
             ON CONFLICT (domain_id, port, scan_id) DO NOTHING
             """, (domain_id, scan_id, port, service, scan_id, domain_id))
-         
-        if not domains:
-            print("No domains to scan for this run")
-
         conn.commit()
 
-    conn.close()
+        if ports:
+            logging.info("OPEN → %s → %s", domain, ports)
+        return {"status": "complete", "domain": domain, "ports": len(ports)}
+    except PortScanCancelled as exc:
+        if conn is not None:
+            conn.rollback()
+        return {"status": "cancelled", "domain": domain, "reason": str(exc)}
+    except Exception as exc:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        logging.error("Port scan failed for %s: %s", domain, exc)
+        return {"status": "failed", "domain": domain, "reason": str(exc)}
+    finally:
+        if conn is not None:
+            conn.close()
 
-    print("Port scan enrichment complete")
+
+def run_port_scan_pool(
+    scan_id,
+    domains,
+    *,
+    worker_count=None,
+    cancel_event=None,
+    target_worker=None,
+):
+    cancel_event = cancel_event or threading.Event()
+    target_worker = target_worker or scan_target
+    workers = configured_worker_count(worker_count)
+
+    # The selection SQL already returns DISTINCT ON (d.id); this guard keeps
+    # accidental duplicate input from launching duplicate Nmap processes.
+    unique_targets = list({domain_id: (domain_id, domain)
+                           for domain_id, domain in domains}.values())
+    if not unique_targets:
+        return []
+
+    outcomes = []
+    executor = ThreadPoolExecutor(max_workers=workers)
+    futures = {
+        executor.submit(target_worker, scan_id, domain_id, domain, cancel_event): domain
+        for domain_id, domain in unique_targets
+    }
+    try:
+        for future in as_completed(futures):
+            domain = futures[future]
+            try:
+                outcome = future.result()
+            except Exception as exc:
+                outcome = {"status": "failed", "domain": domain, "reason": str(exc)}
+            outcomes.append(outcome)
+    except KeyboardInterrupt as exc:
+        cancel_event.set()
+        for future in futures:
+            future.cancel()
+        executor.shutdown(wait=True, cancel_futures=True)
+        raise PortScanStageError("port scan cancelled; incomplete work was not successful") from exc
+    else:
+        executor.shutdown(wait=True)
+
+    incomplete = [item for item in outcomes if item.get("status") in ("failed", "cancelled")]
+    if incomplete:
+        examples = "; ".join(
+            f"{item.get('domain')}: {item.get('reason', item['status'])}"
+            for item in incomplete[:3]
+        )
+        raise PortScanStageError(
+            f"port scan incomplete for {len(incomplete)} target(s): {examples}"
+        )
+    return outcomes
+
+
+def _install_cancellation_handlers(cancel_event):
+    previous = {}
+
+    def request_cancellation(_signum, _frame):
+        cancel_event.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        previous[sig] = signal.signal(sig, request_cancellation)
+    return previous
+
+
+def main():
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        require_running_scan(cur, scan_id)
+        domains = get_resolving_domains(cur, scan_id)
+        conn.commit()
+    finally:
+        conn.close()
+
+    print("Scan ID:", scan_id)
+    print("Rows to scan:", len(domains))
+    if not domains:
+        print("No domains to scan for this run")
+        print("Port scan enrichment complete")
+        return
+
+    cancel_event = threading.Event()
+    previous_handlers = _install_cancellation_handlers(cancel_event)
+    try:
+        outcomes = run_port_scan_pool(
+            scan_id,
+            domains,
+            cancel_event=cancel_event,
+        )
+    finally:
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
+
+    complete = sum(item["status"] == "complete" for item in outcomes)
+    skipped = sum(item["status"] == "skipped" for item in outcomes)
+    print(f"Port scan enrichment complete: {complete} scanned, {skipped} authorization skips")
 
 
 if __name__ == "__main__":

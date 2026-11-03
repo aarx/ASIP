@@ -423,7 +423,16 @@ class WriterWiringTests(unittest.TestCase):
             with self.subTest(filename=filename):
                 source = (BACKEND / filename).read_text(encoding="utf-8")
                 connection = source.index("conn = get_conn()")
-                self.assertEqual(source.count("conn = get_conn()"), 1)
+                expected_connections = 2 if filename == "port_scan_worker.py" else 1
+                self.assertEqual(source.count("conn = get_conn()"), expected_connections)
+                if filename == "port_scan_worker.py":
+                    main = source[source.index("def main():"):]
+                    self.assertLess(main.index("conn = get_conn()"), main.index("domains = get_resolving_domains"))
+                    self.assertLess(main.index("domains = get_resolving_domains"), main.index("run_port_scan_pool("))
+                    target = source[source.index("def scan_target("):source.index("def run_port_scan_pool(")]
+                    self.assertLess(target.index("conn = get_conn()"), target.index("require_running_scan(cur, scan_id)"))
+                    self.assertLess(target.index("require_running_scan(cur, scan_id)", target.index("ports = scan_ports")), target.index("INSERT INTO domain_ports"))
+                    continue
                 guard = source.index("require_running_scan(cur, scan_id)", connection)
                 selection = source.index("domains = get_", guard)
                 mutation_position = source.index(mutation)
@@ -642,8 +651,11 @@ class FailClosedWriterTests(unittest.TestCase):
                         else:
                             with self.assertRaises(real_db.ScanNotRunningError):
                                 module.main()
-                    fake_db.get_conn.assert_called_once_with()
-                    guard.assert_called_once_with(cursor, 42)
+                    expected_connections = 2 if filename == "port_scan_worker.py" and status == "RUNNING" else 1
+                    self.assertEqual(fake_db.get_conn.call_count, expected_connections)
+                    expected_guards = 3 if filename == "port_scan_worker.py" and status == "RUNNING" else 1
+                    self.assertEqual(guard.call_count, expected_guards)
+                    self.assertTrue(all(call.args == (cursor, 42) for call in guard.call_args_list))
                     self.assertIn("FROM scans", cursor.executions[0][0])
                     if status == "RUNNING":
                         self.assertIn("scan_results", cursor.executions[1][0])
@@ -651,7 +663,7 @@ class FailClosedWriterTests(unittest.TestCase):
                             f"INSERT INTO {table}" in sql for sql, _ in cursor.executions
                         ))
                         network.assert_called_once()
-                        expected_commits = 2 if filename == "port_scan_worker.py" else 1
+                        expected_commits = 3 if filename == "port_scan_worker.py" else 1
                         self.assertEqual(connection.commits, expected_commits)
                     else:
                         self.assertEqual(len(cursor.executions), 1)

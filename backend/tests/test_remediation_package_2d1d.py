@@ -113,7 +113,8 @@ class StaticMembershipContractTests(unittest.TestCase):
             with self.subTest(filename=filename):
                 text = source(filename)
                 self.assertRegex(text, r"def get_[a-z_]+\(cur, scan_id\):")
-                self.assertEqual(text.count("get_conn()"), 1)
+                expected_connections = 2 if filename == "port_scan_worker.py" else 1
+                self.assertEqual(text.count("get_conn()"), expected_connections)
 
     def test_san_parent_membership_precedes_network_observation(self):
         text = source("san_worker.py")
@@ -335,7 +336,9 @@ class PostgreSQLMembershipTests(unittest.TestCase):
             finally:
                 for connection in connections:
                     connection.close()
-        fake_db.get_conn.assert_called_once_with()
+        self.assertEqual(fake_db.get_conn.call_count, len(connections))
+        if filename != "port_scan_worker.py":
+            fake_db.get_conn.assert_called_once_with()
         return executions, mocks
 
     def test_all_consumers_exclude_historical_wrong_scan_and_orphan_inputs(self):
@@ -930,7 +933,9 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                 "recheck_active_authorization": expire_before_check,
             },
         )
-        scanned.assert_called_once_with("port.example.com")
+        scanned.assert_called_once()
+        self.assertEqual(scanned.call_args.args[0], "port.example.com")
+        self.assertIsNotNone(scanned.call_args.kwargs.get("cancel_event"))
 
     def test_default_policy_allows_trusted_technology_and_port_network_work(self):
         self.domain("tech.example.com", 42)
@@ -947,7 +952,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
             [call.args[0] for call in detected.call_args_list],
             ["tech.example.com", "port.example.com"],
         )
-        self.assertEqual(
+        self.assertCountEqual(
             [call.args[0] for call in scanned.call_args_list],
             ["tech.example.com", "port.example.com"],
         )
