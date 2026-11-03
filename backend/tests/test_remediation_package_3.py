@@ -272,7 +272,8 @@ class CanonicalIntegrationContractTests(unittest.TestCase):
             with self.subTest(filename=filename):
                 source = (BACKEND / filename).read_text(encoding="utf-8")
                 self.assertNotIn("domain_risk", source.lower())
-                self.assertIn("calculate_scan_risks", source)
+                helper = "current_scan_risks" if filename == "mcp_server.py" else "calculate_scan_risks"
+                self.assertIn(helper, source)
 
     def test_summary_risk_labels_use_shared_priority_and_observed_http(self):
         main = (BACKEND / "main.py").read_text(encoding="utf-8")

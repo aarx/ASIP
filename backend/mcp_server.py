@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 import os
 from db import get_conn, get_latest_authoritative_scan_id
-from risk_engine import calculate_scan_risks
+from asset_reporting import current_scan_asset_classes, current_scan_risks
 
 app = FastAPI(title="ShadowRecon MCP Server")
 
@@ -16,33 +16,50 @@ def get_summary():
 
     scan_id = get_latest_authoritative_scan_id(cur)
 
-    cur.execute("""
-        SELECT COUNT(*)
-        FROM domain_states
-        JOIN domains d ON d.id = domain_states.domain_id
-        WHERE scan_id = %s
-        AND has_ip = TRUE
-        AND d.ownership_status = 'CONFIRMED'
-    """, (scan_id,))
-    live = cur.fetchone()[0]
+    if scan_id is None:
+        conn.close()
+        return {
+            "scan_id": None,
+            "live_domains": 0,
+            "shadow_assets": 0,
+        }
+
+    asset_classes = current_scan_asset_classes(cur, scan_id)
 
     cur.execute("""
-        SELECT COUNT(*)
-        FROM domain_states ds
-        JOIN domains d ON d.id = ds.domain_id
-        WHERE ds.scan_id = %s
-        AND d.ownership_status = 'CONFIRMED'
-        AND d.is_known = FALSE
-        AND ds.has_ip = TRUE
+        SELECT sr.domain_id, COALESCE(ds.has_ip, FALSE)
+        FROM scan_results sr
+        LEFT JOIN domain_states ds
+          ON ds.domain_id = sr.domain_id AND ds.scan_id = sr.scan_id
+        WHERE sr.scan_id = %s
     """, (scan_id,))
-    shadow = cur.fetchone()[0]
+    state_rows = cur.fetchall()
+    ip_by_id = {domain_id: bool(has_ip) for domain_id, has_ip in state_rows}
+    live = sum(
+        has_ip and asset_classes.get(domain_id) in ("KNOWN", "SHADOW")
+        for domain_id, has_ip in ip_by_id.items()
+    )
+    live_shadow = sum(
+        has_ip and asset_classes.get(domain_id) == "SHADOW"
+        for domain_id, has_ip in ip_by_id.items()
+    )
+    totals = {
+        asset_class: sum(value == asset_class for value in asset_classes.values())
+        for asset_class in ("KNOWN", "SHADOW", "CANDIDATE", "EXTERNAL")
+    }
 
     conn.close()
 
     return {
         "scan_id": scan_id,
         "live_domains": live,
-        "shadow_assets": shadow
+        "shadow_assets": live_shadow,
+        "total_domains": len(asset_classes),
+        "organizational_assets": totals["KNOWN"] + totals["SHADOW"],
+        "known_assets": totals["KNOWN"],
+        "total_shadow_assets": totals["SHADOW"],
+        "candidate_assets": totals["CANDIDATE"],
+        "external_assets": totals["EXTERNAL"],
     }
 
 
@@ -57,22 +74,29 @@ def get_shadow_assets():
 
     scan_id = get_latest_authoritative_scan_id(cur)
 
-    cur.execute("""
-        SELECT d.domain, ds.ip
-        FROM domain_states ds
-        JOIN domains d ON d.id = ds.domain_id
-        WHERE ds.scan_id = %s
-        AND ds.has_ip = TRUE
-        AND d.ownership_status = 'CONFIRMED'
-        AND d.is_known = FALSE
-        LIMIT 50
-    """, (scan_id,))
+    if scan_id is None:
+        conn.close()
+        return []
 
-    rows = cur.fetchall()
+    asset_classes = current_scan_asset_classes(cur, scan_id)
+
+    cur.execute("""
+        SELECT d.id, d.domain, ds.ip
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        JOIN domain_states ds
+          ON ds.domain_id = sr.domain_id AND ds.scan_id = sr.scan_id
+        WHERE sr.scan_id = %s AND ds.has_ip = TRUE
+        ORDER BY d.domain
+    """, (scan_id,))
+    rows = [
+        row for row in cur.fetchall()
+        if asset_classes.get(row[0]) == "SHADOW"
+    ][:50]
     conn.close()
 
     return [
-        {"domain": r[0], "ip": r[1]}
+        {"domain": r[1], "ip": r[2]}
         for r in rows
     ]
 
@@ -117,9 +141,11 @@ def get_domain(domain: str):
         conn.close()
         return {"error": "domain not found"}
 
+    asset_classes = current_scan_asset_classes(cur, scan_id)
+    asset_class = asset_classes.get(row[0], "CANDIDATE")
     canonical_risk = next(
         (
-            risk for risk in calculate_scan_risks(cur, scan_id)
+            risk for risk in current_scan_risks(cur, scan_id, asset_classes)
             if risk.domain_id == row[0]
         ),
         None,
@@ -130,6 +156,7 @@ def get_domain(domain: str):
         "domain": row[1],
         "is_known": row[2],
         "ownership_status": row[3],
+        "asset_class": asset_class,
         "ip": row[4],
         "http_status": row[5],
         "risk_score": canonical_risk.result.score if canonical_risk else None,
@@ -177,7 +204,7 @@ def high_risk():
         conn.close()
         return []
 
-    canonical_risks = calculate_scan_risks(cur, scan_id)
+    canonical_risks = current_scan_risks(cur, scan_id)
     conn.close()
 
     ranked = sorted(
@@ -219,26 +246,19 @@ def priority_targets():
             d.confidence_score,
             d.confidence_label,
             d.id
-        FROM domains d
-
-        WHERE d.ownership_status = 'CANDIDATE'
-        AND d.confidence_label IN ('medium', 'high')
-        
-        AND EXISTS (
-            SELECT 1 
-            FROM domain_states ds
-            WHERE ds.domain_id = d.id
-            AND ds.scan_id = %s
-            AND ds.has_ip = TRUE
-        )
-
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        JOIN domain_states ds
+          ON ds.domain_id = sr.domain_id AND ds.scan_id = sr.scan_id
+        WHERE sr.scan_id = %s
+          AND ds.has_ip = TRUE
+          AND d.confidence_label IN ('medium', 'high')
+        ORDER BY d.domain
     """, (scan_id,))
+    asset_classes = current_scan_asset_classes(cur, scan_id)
+    rows = [row for row in cur.fetchall()
+            if asset_classes.get(row[4]) == "CANDIDATE"]
 
-    rows = cur.fetchall()
-    canonical_by_id = {
-        risk.domain_id: risk
-        for risk in calculate_scan_risks(cur, scan_id)
-    }
     conn.close()
 
     results = [
@@ -247,10 +267,9 @@ def priority_targets():
             "scannable": r[1],
             "confidence_score": r[2],
             "confidence_label": r[3],
-            "risk_score": canonical_by_id[r[4]].result.score
-            if r[4] in canonical_by_id else None,
-            "priority": canonical_by_id[r[4]].result.priority
-            if r[4] in canonical_by_id else None,
+            "asset_class": asset_classes.get(r[4], "CANDIDATE"),
+            "risk_score": None,
+            "priority": None,
         }
         for r in rows
     ]

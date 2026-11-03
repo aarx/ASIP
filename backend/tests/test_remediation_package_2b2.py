@@ -494,7 +494,9 @@ class McpCursor:
 
     @staticmethod
     def assert_priority_isolation(sql, params):
-        assert "ds.scan_id = %s" in sql
+        assert "from scan_results sr" in sql
+        assert "sr.scan_id = %s" in sql
+        assert "ds.scan_id = sr.scan_id" in sql
         assert "ds.has_ip = true" in sql
         assert "d.confidence_label in ('medium', 'high')" in sql
         assert params == (31,)
@@ -712,21 +714,13 @@ class AuthoritativeHistoryTests(unittest.TestCase):
         sql = HistoricalCursor.normalize(cursor.executions[0][0])
         self.assertLess(sql.index("s.status = 'succeeded'"), sql.index("lag("))
 
-    def test_risky_domains_volatility_filters_before_lag(self):
-        with mock.patch.object(
-            self.main, "_current_scan_asset_classes", return_value={}
-        ):
+    def test_risky_domains_uses_current_scan_risks_without_history_query(self):
+        with mock.patch.object(self.main, "_current_scan_risks", return_value=[]):
             response, cursor = self.run_endpoint("risky_domains")
 
         self.assertEqual(response, [])
-        volatility_sql = next(
-            HistoricalCursor.normalize(sql)
-            for sql, _ in cursor.executions
-            if "COUNT(*) AS flips" in sql
-        )
-        self.assertLess(
-            volatility_sql.index("s.status = 'succeeded'"),
-            volatility_sql.index("lag("),
+        self.assertFalse(
+            any("COUNT(*) AS flips" in sql for sql, _ in cursor.executions)
         )
 
     def test_risky_domains_scoring_model_is_unchanged(self):
@@ -812,7 +806,19 @@ class McpCurrentSnapshotTests(unittest.TestCase):
                         reasons=tuple(item["reasons"]),
                     ),
                 ))
-        self.mcp.calculate_scan_risks = mock.Mock(return_value=canonical)
+        classes = {
+            1: "SHADOW",
+            2: "CANDIDATE",
+            3: "CANDIDATE",
+            4: "CANDIDATE",
+        }
+        self.mcp.current_scan_asset_classes = mock.Mock(return_value=classes)
+        self.mcp.current_scan_risks = mock.Mock(
+            side_effect=lambda _cursor, _scan_id, asset_classes=None: [
+                item for item in canonical
+                if classes.get(item.domain_id) in ("KNOWN", "SHADOW")
+            ]
+        )
         response = getattr(self.mcp, endpoint)(*args)
         self.assertTrue(connection.closed)
         return response, cursor
@@ -826,6 +832,7 @@ class McpCurrentSnapshotTests(unittest.TestCase):
             "domain": "current.example.test",
             "is_known": False,
             "ownership_status": "CONFIRMED",
+            "asset_class": "SHADOW",
             "ip": "192.0.2.31",
             "http_status": 200,
             "risk_score": 4,
@@ -850,7 +857,7 @@ class McpCurrentSnapshotTests(unittest.TestCase):
 
         self.assertEqual(response, [])
         self.assertEqual(len({row["domain"] for row in response}), len(response))
-        self.mcp.calculate_scan_risks.assert_called_once_with(cursor, 31)
+        self.mcp.current_scan_risks.assert_called_once_with(cursor, 31)
 
     def test_high_risk_zero_authoritative_returns_empty_list(self):
         response, cursor = self.run_endpoint(
@@ -870,6 +877,7 @@ class McpCurrentSnapshotTests(unittest.TestCase):
                 "scannable": False,
                 "confidence_score": 95,
                 "confidence_label": "high",
+                "asset_class": "CANDIDATE",
                 "risk_score": None,
                 "priority": None,
             },
@@ -878,6 +886,7 @@ class McpCurrentSnapshotTests(unittest.TestCase):
                 "scannable": False,
                 "confidence_score": 70,
                 "confidence_label": "medium",
+                "asset_class": "CANDIDATE",
                 "risk_score": None,
                 "priority": None,
             },

@@ -14,6 +14,10 @@ from datetime import date, datetime
 from llm_service import ask_llm
 from urllib.parse import urlparse
 from db import get_conn, get_latest_authoritative_scan_id, get_previous_authoritative_scan_id
+from asset_reporting import (
+    current_scan_asset_classes,
+    current_scan_risks,
+)
 from risk_engine import calculate_scan_risks, get_asset_exposure_keywords
 from ownership import (
     OWNERSHIP_CONFIRMED,
@@ -1982,28 +1986,15 @@ def discovery_sources():
 
 
 def _current_scan_asset_classes(cursor, scan_id):
-    """Resolve display classes from current trusted inventory for scan members."""
-    classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
-    cursor.execute(f"""
-        SELECT d.id, {classification} AS asset_class
-        FROM scan_results sr
-        JOIN domains d ON d.id = sr.domain_id
-        WHERE sr.scan_id = %s
-    """, (scan_id,))
-    return dict(cursor.fetchall())
+    return current_scan_asset_classes(cursor, scan_id)
 
 
 def _current_scan_risks(cursor, scan_id, asset_classes=None):
     if asset_classes is None:
         asset_classes = _current_scan_asset_classes(cursor, scan_id)
-    eligible_ids = {
-        domain_id for domain_id, asset_class in asset_classes.items()
-        if asset_class in ("KNOWN", "SHADOW")
-    }
-    return [
-        risk for risk in calculate_scan_risks(cursor, scan_id)
-        if risk.domain_id in eligible_ids
-    ]
+    return current_scan_risks(
+        cursor, scan_id, asset_classes, risk_calculator=calculate_scan_risks
+    )
 
 
 def _frontend_risk_payload(risk):

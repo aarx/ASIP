@@ -243,7 +243,9 @@ class SurfaceSemanticsTests(unittest.TestCase):
                 block = normalized(endpoint_block(name))
                 self.assertIn("OWNERSHIP_STATUS = 'CONFIRMED'", block)
         mcp = normalized(source("mcp_server.py"))
-        self.assertIn("D.OWNERSHIP_STATUS = 'CONFIRMED'", mcp)
+        self.assertIn("CURRENT_SCAN_ASSET_CLASSES", mcp)
+        self.assertIn("CURRENT_SCAN_RISKS", mcp)
+        self.assertNotIn("D.OWNERSHIP_STATUS = 'CONFIRMED'", mcp)
 
     def test_brand_validation_metrics_use_candidate_not_scannable(self):
         for name in ("unvalidated_brand_footprint", "unvalidated_breakdown"):
