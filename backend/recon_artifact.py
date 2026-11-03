@@ -14,6 +14,20 @@ class ReconArtifactError(RuntimeError):
     pass
 
 
+def scan_recon_artifact_path(data_directory, scan_id):
+    """Return the canonical artifact path for one scan, rejecting unsafe IDs."""
+    if not isinstance(scan_id, int) or isinstance(scan_id, bool) or scan_id <= 0:
+        raise ReconArtifactError("scan_id must be a positive integer")
+
+    data_root = Path(data_directory).resolve()
+    artifact_path = (
+        data_root / "scans" / f"scan_{scan_id}" / "final_output.csv"
+    ).resolve()
+    if not artifact_path.is_relative_to(data_root):
+        raise ReconArtifactError("scan artifact path escapes the data directory")
+    return artifact_path
+
+
 def get_manifest_path(artifact_path):
     artifact_path = Path(artifact_path)
     return artifact_path.with_name(f"{artifact_path.name}.manifest.json")

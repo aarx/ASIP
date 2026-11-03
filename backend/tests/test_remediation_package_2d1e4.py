@@ -133,6 +133,11 @@ class ReconPtrTruthTests(unittest.TestCase):
         self.assertEqual(rows[0]["Reverse_DNS"], "")
         gethostbyaddr.assert_not_called()
         self.recon.publish_recon_artifact.assert_called_once()
+        artifact_path = self.recon.publish_recon_artifact.call_args.args[1]
+        self.assertEqual(
+            pathlib.Path(artifact_path).parts[-4:],
+            ("data", "scans", "scan_42", "final_output.csv"),
+        )
         self.assertEqual(connection.commits, 1)
         self.assertEqual(connection.rollbacks, 0)
 
@@ -148,6 +153,11 @@ class ReconPtrTruthTests(unittest.TestCase):
         self.assertEqual(rows[0]["Reverse_DNS"], "")
         gethostbyaddr.assert_called_once_with("192.0.2.1")
         self.recon.publish_recon_artifact.assert_called_once()
+        artifact_path = self.recon.publish_recon_artifact.call_args.args[1]
+        self.assertEqual(
+            pathlib.Path(artifact_path).parts[-4:],
+            ("data", "scans", "scan_42", "final_output.csv"),
+        )
         self.assertEqual(connection.commits, 1)
         self.assertEqual(connection.rollbacks, 0)
 

@@ -373,7 +373,7 @@ class HandoffIntegrationTests(unittest.TestCase):
         database_open = source.index("\nconn = get_conn()")
 
         self.assertLess(validation, database_open)
-        self.assertIn('artifact_path = "data/final_output.csv"', source)
+        self.assertIn('artifact_path = scan_recon_artifact_path("data", scan_id)', source)
         self.assertIn("pd.read_csv(io.BytesIO(artifact_data))", source)
         self.assertIn('manifest["row_count"]', source)
 
@@ -389,7 +389,7 @@ class HandoffIntegrationTests(unittest.TestCase):
             data = root / "data"
             data.mkdir()
             source = root / "empty.csv"
-            artifact = data / "final_output.csv"
+            artifact = artifacts.scan_recon_artifact_path(data, 42)
             self.write_empty_recon_csv(source)
             artifacts.publish_recon_artifact(source, artifact, 42, 0)
             previous_directory = os.getcwd()
@@ -415,19 +415,95 @@ class HandoffIntegrationTests(unittest.TestCase):
             data = root / "data"
             data.mkdir()
             source = root / "old.csv"
-            artifact = data / "final_output.csv"
+            artifact = artifacts.scan_recon_artifact_path(data, 41)
             self.write_empty_recon_csv(source)
             artifacts.publish_recon_artifact(source, artifact, 41, 0)
             previous_directory = os.getcwd()
             try:
                 os.chdir(root)
                 with mock.patch.object(sys, "argv", ["ingest.py", "42"]), \
-                        self.assertRaisesRegex(RuntimeError, "belongs to scan 41"):
+                        self.assertRaisesRegex(RuntimeError, "missing or invalid"):
                     load_backend_module(BACKEND / "ingest.py", {"db": fake_db})
             finally:
                 os.chdir(previous_directory)
 
         fake_db.get_conn.assert_not_called()
+
+    def test_missing_current_artifact_does_not_fall_back_to_shared_output(self):
+        fake_db = types.ModuleType("db")
+        fake_db.get_conn = mock.Mock(side_effect=AssertionError("database opened"))
+        fake_db.require_running_scan = mock.Mock()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            data = root / "data"
+            data.mkdir()
+            (data / "final_output.csv").write_text("old shared data\n", encoding="utf-8")
+            previous_directory = os.getcwd()
+            try:
+                os.chdir(root)
+                with mock.patch.object(sys, "argv", ["ingest.py", "42"]), \
+                        self.assertRaisesRegex(RuntimeError, "missing or invalid"):
+                    load_backend_module(BACKEND / "ingest.py", {"db": fake_db})
+            finally:
+                os.chdir(previous_directory)
+
+        fake_db.get_conn.assert_not_called()
+
+    def test_scan_artifact_paths_are_isolated_and_reject_unsafe_ids(self):
+        artifacts = load_backend_module(BACKEND / "recon_artifact.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data = pathlib.Path(temp_dir) / "data"
+            first = artifacts.scan_recon_artifact_path(data, 41)
+            second = artifacts.scan_recon_artifact_path(data, 42)
+            self.assertNotEqual(first, second)
+            self.assertEqual(first.parent, data.resolve() / "scans" / "scan_41")
+            for unsafe in (0, -1, True, "../42", "42"):
+                with self.subTest(scan_id=unsafe), self.assertRaises(
+                    artifacts.ReconArtifactError
+                ):
+                    artifacts.scan_recon_artifact_path(data, unsafe)
+
+    def test_consecutive_scan_publications_keep_csv_and_manifest_isolated(self):
+        artifacts = load_backend_module(BACKEND / "recon_artifact.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            data = root / "data"
+            first_source = root / "first.csv"
+            second_source = root / "second.csv"
+            self.write_empty_recon_csv(first_source)
+            second_source.write_text("second scan\n", encoding="utf-8")
+            first_path = artifacts.scan_recon_artifact_path(data, 41)
+            second_path = artifacts.scan_recon_artifact_path(data, 42)
+
+            artifacts.publish_recon_artifact(first_source, first_path, 41, 0)
+            artifacts.publish_recon_artifact(second_source, second_path, 42, 0)
+
+            first_manifest = artifacts.validate_recon_artifact(first_path, 41)
+            second_manifest = artifacts.validate_recon_artifact(second_path, 42)
+            self.assertEqual(first_manifest["scan_id"], 41)
+            self.assertEqual(second_manifest["scan_id"], 42)
+            self.assertEqual(
+                artifacts.get_manifest_path(first_path).parent, first_path.parent
+            )
+            self.assertEqual(
+                artifacts.get_manifest_path(second_path).parent, second_path.parent
+            )
+            self.assertNotEqual(first_path.read_bytes(), second_path.read_bytes())
+
+    def test_scan_artifact_directory_symlink_cannot_escape_data_root(self):
+        artifacts = load_backend_module(BACKEND / "recon_artifact.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            data = root / "data"
+            data.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            (data / "scans").symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(
+                artifacts.ReconArtifactError, "escapes the data directory"
+            ):
+                artifacts.scan_recon_artifact_path(data, 42)
 
     def test_orchestration_passes_same_scan_id_to_recon_and_ingest(self):
         source = (BACKEND / "orchestration.py").read_text(encoding="utf-8")

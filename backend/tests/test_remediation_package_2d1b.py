@@ -447,7 +447,7 @@ class WriterWiringTests(unittest.TestCase):
                 "7e04381ea17045ea064681ae312e32ab33d0b503ff350b36ae3594f4a14fd20c"
             ),
             "recon_artifact.py": (
-                "096c44848356e2f4b7f0587e5a26f8008724531101edf405098ed708916bb370"
+                "82343444f896da273892d1f930078ba81dcf57129019deb6d98ed64828c1402e"
             ),
         }
         for filename, digest in expected.items():
@@ -479,7 +479,7 @@ class FailClosedWriterTests(unittest.TestCase):
                 encoding="utf-8",
             )
             artifact_module.publish_recon_artifact(
-                source, data / "final_output.csv", 42, 0
+                source, artifact_module.scan_recon_artifact_path(data, 42), 42, 0
             )
             previous_directory = os.getcwd()
             try:
@@ -530,6 +530,9 @@ class FailClosedWriterTests(unittest.TestCase):
                 os.chdir(previous_directory)
 
             self.assertEqual(stable.read_bytes(), b"previous artifact\n")
+            self.assertFalse(
+                (root / "data" / "scans" / "scan_42" / "final_output.csv").exists()
+            )
             self.assertFalse(
                 (root / "data" / "final_output.csv.manifest.json").exists()
             )

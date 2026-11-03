@@ -60,6 +60,12 @@ def load_recon(api_key=None):
     fake_probe.http_probe = mock.Mock(return_value=None)
     fake_artifact = types.ModuleType("recon_artifact")
     fake_artifact.publish_recon_artifact = mock.Mock()
+    fake_artifact.scan_recon_artifact_path = lambda data, scan_id: (
+        pathlib.Path(data).resolve()
+        / "scans"
+        / f"scan_{scan_id}"
+        / "final_output.csv"
+    )
 
     replacements = {
         "db": fake_db,

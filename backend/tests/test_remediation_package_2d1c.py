@@ -78,7 +78,7 @@ class ArtifactFailureTests(unittest.TestCase):
             root = pathlib.Path(temp_dir)
             data = root / "data"
             data.mkdir()
-            artifact_setup(root, data / "final_output.csv")
+            artifact_setup(root, self.artifacts.scan_recon_artifact_path(data, 42))
             previous_directory = os.getcwd()
             try:
                 os.chdir(root)
@@ -325,7 +325,7 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
             write_csv(source, rows)
             self.artifacts.publish_recon_artifact(
                 source,
-                data / "final_output.csv",
+                self.artifacts.scan_recon_artifact_path(data, scan_id),
                 scan_id if manifest_scan_id is None else manifest_scan_id,
                 len(rows) if row_count is None else row_count,
             )

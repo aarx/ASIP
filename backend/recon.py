@@ -11,7 +11,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from db import get_conn, require_running_scan
 from config import CERTSPOTTER_API_KEY
-from recon_artifact import publish_recon_artifact
+from recon_artifact import publish_recon_artifact, scan_recon_artifact_path
 
 
 def debug(msg):
@@ -537,7 +537,7 @@ def main(seed_file, deep, expand, scan_id):
 
     print(f"[+] Recon output saved → {csv_file}")
 
-    backend_csv = os.path.join("data", "final_output.csv")
+    backend_csv = scan_recon_artifact_path("data", scan_id)
     conn = get_conn()
     try:
         cur = conn.cursor()

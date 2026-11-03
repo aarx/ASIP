@@ -9,7 +9,11 @@ from ownership import (
     normalize_hostname,
     ownership_for_discovery,
 )
-from recon_artifact import ReconArtifactError, read_validated_recon_artifact
+from recon_artifact import (
+    ReconArtifactError,
+    read_validated_recon_artifact,
+    scan_recon_artifact_path,
+)
 
 
 class DownstreamEvidenceError(RuntimeError):
@@ -101,7 +105,7 @@ def require_no_downstream_evidence(cur, requested_scan_id):
         )
 
 scan_id = int(sys.argv[1])
-artifact_path = "data/final_output.csv"
+artifact_path = scan_recon_artifact_path("data", scan_id)
 
 os.makedirs("logs", exist_ok=True)
 
