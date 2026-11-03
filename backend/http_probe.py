@@ -21,6 +21,14 @@ class AuthorizationDeniedError(RuntimeError):
     """A fresh policy check denied a direct target operation."""
 
 
+class RequestNotStartedError(OSError):
+    """All connection attempts failed before invoking request()."""
+
+
+class RequestOutcomeAmbiguousError(RuntimeError):
+    """request() began, so the remote outcome is unknown."""
+
+
 def _empty_result(status, *, requested_url=None, stop_reason="observation_unavailable"):
     return {
         "http_observation_status": status,
@@ -237,7 +245,12 @@ def _request_url(url, *, expected_ip=None, before_request=None, on_request=None)
 
     if not recheck():
         raise AuthorizationDeniedError("authorization is no longer valid")
-    addresses = _resolve_allowed_addresses(domain, port, expected_ip)
+    try:
+        addresses = _resolve_allowed_addresses(domain, port, expected_ip)
+    except Exception as exc:
+        # DNS failures are known to precede request invocation, so the caller
+        # may use the existing separately authorized scheme fallback.
+        raise RequestNotStartedError("destination resolution failed") from exc
     if not addresses:
         raise OSError("no permitted destination address")
 
@@ -293,8 +306,11 @@ def _request_url(url, *, expected_ip=None, before_request=None, on_request=None)
         except Exception as exc:
             if request_started:
                 # Do not duplicate an HTTP request after an ambiguous timeout
-                # or response failure. The current hop ends unresolved.
-                raise
+                # or response failure. The current hop ends unresolved, and
+                # the outer layer must not retry using another scheme.
+                raise RequestOutcomeAmbiguousError(
+                    "HTTP request began; outcome is unknown"
+                ) from exc
             last_error = exc
         finally:
             if connection is not None:
@@ -307,7 +323,9 @@ def _request_url(url, *, expected_ip=None, before_request=None, on_request=None)
                     sock.close()
                 except Exception:
                     pass
-    raise last_error or OSError("observation failed")
+    raise RequestNotStartedError("HTTP request did not begin") from (
+        last_error or OSError("observation failed")
+    )
 
 
 def _observe_once(domain, scheme, expected_ip=None, before_request=None):
@@ -346,6 +364,9 @@ def _observe_chain(start_url, *, expected_ip=None, before_request=None):
 
         def mark_followed():
             if pending_hop is not None:
+                # Compatibility field: followed means a request attempt for
+                # this destination began; it does not imply a response or
+                # prove that the peer received bytes.
                 pending_hop["followed"] = True
 
         try:
@@ -358,8 +379,18 @@ def _observe_chain(start_url, *, expected_ip=None, before_request=None):
         except AuthorizationDeniedError:
             evidence["stop_reason"] = "authorization_denied"
             break
-        except (OSError, TimeoutError, http.client.HTTPException, ValueError):
-            evidence["stop_reason"] = "network_or_url_error"
+        except RequestOutcomeAmbiguousError:
+            evidence["stop_reason"] = "request_outcome_ambiguous"
+            break
+        except RequestNotStartedError:
+            evidence["stop_reason"] = (
+                "pre_request_failure" if not evidence["observed_hops"]
+                else "redirect_hop_pre_request_failure"
+            )
+            break
+        except Exception:
+            # Unknown phase must not trigger a retry or scheme fallback.
+            evidence["stop_reason"] = "request_phase_unknown"
             break
 
         status = int(response["http_status"])
@@ -470,11 +501,9 @@ def http_probe(domain, *, before_request=None, expected_ip=None):
                 expected_ip=expected_ip,
                 before_request=before_request,
             )
-            if (
-                scheme == "https"
-                and result["http_observation_status"] == HTTP_NO_RESPONSE
-                and result["redirect_evidence"].get("stop_reason") == "network_or_url_error"
-            ):
+            if scheme == "https" and result["redirect_evidence"].get(
+                "stop_reason"
+            ) == "pre_request_failure":
                 continue
             return result
         except AuthorizationDeniedError:
@@ -484,7 +513,12 @@ def http_probe(domain, *, before_request=None, expected_ip=None):
                 stop_reason="authorization_denied",
             )
         except Exception:
-            continue
+            # Unknown request phase: fail closed without an HTTP retry.
+            return _empty_result(
+                HTTP_NO_RESPONSE,
+                requested_url=last_requested_url,
+                stop_reason="request_phase_unknown",
+            )
     return _empty_result(
         HTTP_NO_RESPONSE if attempted else HTTP_UNKNOWN,
         requested_url=last_requested_url,

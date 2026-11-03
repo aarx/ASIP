@@ -89,8 +89,8 @@ class HttpProbeTests(unittest.TestCase):
         authorized = mock.Mock(return_value=True)
         with mock.patch.object(
             http_probe,
-            "_observe_chain",
-            side_effect=[OSError("tls"), {
+            "_request_url",
+            side_effect=[http_probe.RequestNotStartedError("tls"), {
                 "http_observation_status": "RESPONDED",
                 "http_status": 204,
                 "http_reason": "No Content",
@@ -110,7 +110,10 @@ class HttpProbeTests(unittest.TestCase):
 
     def test_revocation_between_attempts_stops_fallback(self):
         authorized = mock.Mock(side_effect=[True, False])
-        with mock.patch.object(http_probe, "_observe_chain", side_effect=OSError("tls")) as observe:
+        with mock.patch.object(
+            http_probe, "_request_url",
+            side_effect=http_probe.RequestNotStartedError("tls"),
+        ) as observe:
             result = http_probe.http_probe("example.test", before_request=authorized)
         self.assertEqual(result["http_observation_status"], "UNKNOWN")
         self.assertEqual(observe.call_count, 1)
@@ -394,7 +397,7 @@ class HttpProbeTests(unittest.TestCase):
         })
         self.assertEqual(timeout_contacted, [start, "https://inside.example/middle"])
         self.assertEqual(timeout["redirect_evidence"]["completion_status"], "UNRESOLVED")
-        self.assertEqual(timeout["redirect_evidence"]["stop_reason"], "network_or_url_error")
+        self.assertEqual(timeout["redirect_evidence"]["stop_reason"], "request_phase_unknown")
 
         contacted = []
         auth_calls = []
@@ -463,10 +466,11 @@ class HttpProbeTests(unittest.TestCase):
         ), mock.patch.object(
             http_probe.http.client, "HTTPConnection", side_effect=RuntimeError("setup")
         ):
-            with self.assertRaisesRegex(RuntimeError, "setup"):
+            with self.assertRaises(http_probe.RequestNotStartedError) as raised:
                 http_probe._observe_once(
                     "inside.example", "http", before_request=lambda _domain=None: True
                 )
+        self.assertRegex(str(raised.exception.__cause__), "setup")
         sock.close.assert_called_once()
 
     def test_ambiguous_http_failure_does_not_retry_the_same_hop_on_another_ip(self):
@@ -480,13 +484,95 @@ class HttpProbeTests(unittest.TestCase):
         ) as connect, mock.patch.object(
             http_probe.http.client, "HTTPConnection", return_value=connection
         ):
-            with self.assertRaisesRegex(TimeoutError, "response timeout"):
+            with self.assertRaises(http_probe.RequestOutcomeAmbiguousError):
                 http_probe._request_url(
                     "https://inside.example/path?q=1",
                     before_request=lambda _host: True,
                 )
         self.assertEqual(connect.call_count, 1)
         connection.request.assert_called_once()
+
+    def test_ambiguous_initial_https_request_never_falls_back_to_http(self):
+        result = {
+            "http_observation_status": http_probe.HTTP_NO_RESPONSE,
+            "http_status": 0,
+            "http_reason": "",
+            "final_url": None,
+            "final_status": None,
+            "redirect_count": 0,
+            "redirect_evidence": {
+                "requested_url": "https://inside.example/",
+                "observed_hops": [],
+                "completion_status": "UNRESOLVED",
+                "stop_reason": "request_outcome_ambiguous",
+            },
+            "title": "",
+        }
+        authorized = mock.Mock(return_value=True)
+        with mock.patch.object(http_probe, "_observe_chain", return_value=result) as observe:
+            actual = http_probe.http_probe("inside.example", before_request=authorized)
+        self.assertIs(actual, result)
+        observe.assert_called_once_with(
+            "https://inside.example/", expected_ip=None, before_request=authorized
+        )
+        self.assertEqual(authorized.call_count, 1)
+
+    def test_pre_request_dns_failure_allows_freshly_authorized_http_fallback(self):
+        fallback = self.observed("http://inside.example/", 200)
+        authorized = mock.Mock(return_value=True)
+        with mock.patch.object(
+            http_probe, "_request_url",
+            side_effect=[http_probe.RequestNotStartedError("DNS failed"), fallback],
+        ) as observe:
+            result = http_probe.http_probe("inside.example", before_request=authorized)
+        self.assertEqual(result["final_url"], "http://inside.example/")
+        self.assertEqual(observe.call_count, 2)
+        self.assertEqual(authorized.call_count, 2)
+
+    def test_ambiguous_redirect_hop_does_not_restart_chain_or_fallback(self):
+        start = "https://inside.example/start"
+        destination = "https://inside.example/destination"
+        first = self.observed(start, 302, "/destination")
+        contacted = []
+
+        def request(url, *, before_request, on_request=None, **_kwargs):
+            contacted.append(url)
+            if url == destination:
+                if on_request:
+                    on_request()
+                raise http_probe.RequestOutcomeAmbiguousError("send timeout")
+            if on_request:
+                on_request()
+            return first
+
+        with mock.patch.object(http_probe, "_request_url", side_effect=request):
+            result = http_probe._observe_chain(start, before_request=lambda _host=None: True)
+        self.assertEqual(contacted, [start, destination])
+        self.assertIsNone(result["final_url"])
+        self.assertEqual(result["redirect_evidence"]["completion_status"], "UNRESOLVED")
+        self.assertEqual(
+            result["redirect_evidence"]["stop_reason"], "request_outcome_ambiguous"
+        )
+        self.assertEqual(
+            result["redirect_evidence"]["observed_hops"][0]["followed"], True
+        )
+
+    def test_request_start_failure_does_not_try_second_resolved_address(self):
+        connection = mock.Mock()
+        connection.request.side_effect = OSError("connection reset after invocation")
+        with mock.patch.object(
+            http_probe, "_resolve_allowed_addresses", return_value=["8.8.8.8", "1.1.1.1"]
+        ), mock.patch.object(
+            http_probe, "_connect_pinned", return_value=mock.Mock()
+        ) as connect, mock.patch.object(
+            http_probe.http.client, "HTTPConnection", return_value=connection
+        ):
+            result = http_probe.http_probe("inside.example", before_request=lambda *_: True)
+        self.assertEqual(connect.call_count, 1)
+        connection.request.assert_called_once()
+        self.assertEqual(
+            result["redirect_evidence"]["stop_reason"], "request_outcome_ambiguous"
+        )
 
     def test_revocation_between_public_address_attempts_stops_later_connect(self):
         addresses = ["8.8.8.8", "1.1.1.1"]

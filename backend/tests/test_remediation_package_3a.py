@@ -58,7 +58,11 @@ class HttpProbeOutcomeTests(unittest.TestCase):
 
     def test_no_response_after_authorized_attempts(self):
         allowed = mock.Mock(return_value=True)
-        with mock.patch.object(self.http_probe, "_observe_chain", side_effect=OSError("offline")):
+        with mock.patch.object(
+            self.http_probe,
+            "_request_url",
+            side_effect=self.http_probe.RequestNotStartedError("offline"),
+        ):
             result = self.http_probe.http_probe("example.test", before_request=allowed)
         self.assertEqual(result["http_observation_status"], "NO_RESPONSE")
         self.assertEqual(allowed.call_count, 2)
