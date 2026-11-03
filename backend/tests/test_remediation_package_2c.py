@@ -123,8 +123,8 @@ class KnownShadowSourceOfTruthTests(unittest.TestCase):
         insert = text[text.index("INSERT INTO domains("):text.index("RETURNING id")]
 
         self.assertIn("is_known", insert)
-        self.assertIn("SELECT domain FROM known_domains", text)
         self.assertIn("load_trusted_domains", text)
+        self.assertIn("known_domains = trusted_domains.known_domains", text)
         self.assertIn("is_known = EXCLUDED.is_known", insert)
         self.assertNotIn("Domain_Status", insert)
 
@@ -133,8 +133,8 @@ class KnownShadowSourceOfTruthTests(unittest.TestCase):
         insert = text[text.index("INSERT INTO domains("):text.index("RETURNING id")]
 
         self.assertIn("is_known", insert)
-        self.assertIn("SELECT domain FROM known_domains", text)
         self.assertIn("load_trusted_domains", text)
+        self.assertIn("known_set = trusted_domains.known_domains", text)
         self.assertIn("is_known = EXCLUDED.is_known", insert)
         self.assertNotIn("scannable", insert.lower())
         self.assertNotIn("validation_source", insert)

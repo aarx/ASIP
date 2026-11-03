@@ -21,6 +21,7 @@ from http_probe import http_probe  # noqa: E402
 from ownership import (  # noqa: E402
     OWNERSHIP_CANDIDATE,
     OWNERSHIP_CONFIRMED,
+    TrustedDomainBoundary,
     is_within_trusted_boundary,
     normalize_hostname,
     ownership_for_discovery,
@@ -45,7 +46,7 @@ def operation_scope(level="TECHNOLOGY_HTTP", **overrides):
 
 
 class TrustedHostnameTests(unittest.TestCase):
-    def test_exact_known_seed_and_known_descendants(self):
+    def test_exact_seed_and_seed_descendants(self):
         for domain in (
             "example.com", "api.example.com", "a.b.example.com",
             "example.org", "dev.example.org", "example.co.in",
@@ -59,6 +60,34 @@ class TrustedHostnameTests(unittest.TestCase):
                         trusted_domains=TRUSTED,
                     ),
                     OWNERSHIP_CONFIRMED,
+                )
+
+    def test_known_hosts_match_exactly_without_becoming_parent_namespaces(self):
+        boundary = TrustedDomainBoundary(
+            seed_domains=frozenset({"example.com"}),
+            known_domains=frozenset({"www.example.com", "vpn.othercompany.net"}),
+        )
+        for domain in ("example.com", "api.example.com", "a.b.example.com",
+                       "www.example.com", "vpn.othercompany.net"):
+            with self.subTest(domain=domain):
+                self.assertTrue(is_within_trusted_boundary(domain, boundary))
+                self.assertEqual(
+                    ownership_for_discovery(
+                        domain, ("ct",), "unused.test", trusted_domains=boundary
+                    ),
+                    OWNERSHIP_CONFIRMED,
+                )
+        for domain in (
+            "random.vpn.othercompany.net", "example.net", "example.com.evil.net",
+            "notexample.com",
+        ):
+            with self.subTest(domain=domain):
+                self.assertFalse(is_within_trusted_boundary(domain, boundary))
+                self.assertEqual(
+                    ownership_for_discovery(
+                        domain, ("san",), "example.com", trusted_domains=boundary
+                    ),
+                    OWNERSHIP_CANDIDATE,
                 )
 
     def test_case_trailing_dot_and_label_boundaries(self):
@@ -252,10 +281,11 @@ class EligibilityAndAuthorizationTests(unittest.TestCase):
     def test_trusted_sql_checks_valid_hosts_and_label_boundaries(self):
         sql = trusted_boundary_sql("d.domain")
         self.assertIn("FROM seed_domains", sql)
-        self.assertIn("FROM known_domains", sql)
+        self.assertIn("FROM known_domains known_host", sql)
         self.assertIn("RIGHT(", sql)
         self.assertIn("LENGTH(", sql)
         self.assertIn("TRIM(TRAILING '.'", sql)
+        self.assertIn("AND TRIM(TRAILING '.' FROM LOWER(BTRIM(d.domain))) = TRIM(TRAILING '.' FROM LOWER(BTRIM(known_host.domain)))", " ".join(sql.split()))
 
 
 if __name__ == "__main__":

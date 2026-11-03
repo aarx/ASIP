@@ -24,7 +24,8 @@ class AutomaticEligibilitySqlTests(unittest.TestCase):
         self.assertIn("D.VALIDATION_SOURCE IS NULL", sql)
         self.assertIn("SET OWNERSHIP_STATUS = 'CONFIRMED'", sql)
         self.assertIn("D.OWNERSHIP_STATUS <> 'EXTERNAL'", sql)
-        self.assertIn("SELECT DOMAIN FROM KNOWN_DOMAINS", sql)
+        self.assertIn("FROM KNOWN_DOMAINS KNOWN_HOST", sql)
+        self.assertIn("= TRIM(TRAILING '.' FROM LOWER(BTRIM(KNOWN_HOST.DOMAIN)))", sql)
         self.assertIn("FROM SEED_DOMAINS", sql)
         self.assertNotIn("ACTIVE_SCAN_SCOPES", sql)
 

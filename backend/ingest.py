@@ -129,12 +129,7 @@ try:
     require_running_scan(cur, scan_id)
     require_no_downstream_evidence(cur, scan_id)
     trusted_domains = load_trusted_domains(cur)
-    cur.execute("SELECT domain FROM known_domains")
-    known_domains = {
-        normalized
-        for (known_domain,) in cur.fetchall()
-        if (normalized := normalize_hostname(known_domain))
-    }
+    known_domains = trusted_domains.known_domains
 
     # Before downstream stages run, these scan-local rows are the ingest-owned
     # projection. Rebuild them so retries converge to the validated artifact.

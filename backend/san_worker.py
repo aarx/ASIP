@@ -72,12 +72,7 @@ def main():
     print("SAN scan for scan_id:", scan_id)
 
     trusted_domains = load_trusted_domains(cur)
-    cur.execute("SELECT domain FROM known_domains")
-    known_set = {
-        normalized
-        for (known_domain,) in cur.fetchall()
-        if (normalized := normalize_hostname(known_domain))
-    }
+    known_set = trusted_domains.known_domains
     
     print("Loaded known domains:", len(known_set))
 

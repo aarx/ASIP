@@ -367,6 +367,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
             {'Domain': 'api.seed.test', 'Seed': 'different-file-input.test', 'Source': 'ct'},
             {'Domain': 'known.test', 'Seed': 'unknown.test', 'Source': 'passive'},
             {'Domain': 'a.b.known.test', 'Seed': 'unknown.test', 'Source': 'san'},
+            {'Domain': 'random.known.test', 'Seed': 'unknown.test', 'Source': 'ct'},
             {'Domain': 'outside.test', 'Seed': 'known.test', 'Source': 'ct'},
             {'Domain': 'denied.known.test', 'Seed': 'known.test', 'Source': 'passive'},
         ])
@@ -376,14 +377,15 @@ class PostgreSQLMembershipTests(unittest.TestCase):
             SELECT domain, ownership_status, is_known, scannable
             FROM domains WHERE domain IN (
                 'seed.test', 'api.seed.test', 'a.b.known.test',
-                'known.test', 'outside.test', 'denied.known.test'
+                'known.test', 'random.known.test', 'outside.test', 'denied.known.test'
             ) ORDER BY domain
         """), [
-            ('a.b.known.test', 'CONFIRMED', False, True),
+            ('a.b.known.test', 'CANDIDATE', False, False),
             ('api.seed.test', 'CONFIRMED', False, True),
             ('denied.known.test', 'CONFIRMED', False, False),
             ('known.test', 'CONFIRMED', True, True),
             ('outside.test', 'CANDIDATE', False, False),
+            ('random.known.test', 'CANDIDATE', False, False),
             ('seed.test', 'CONFIRMED', False, True),
         ])
         self.assertEqual(
@@ -401,17 +403,18 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.authorize_scope('example', 'HTTP_TLS_OBSERVATION')
         self.run_worker('san_worker.py', overrides={
             'fetch_san_domains': mock.Mock(return_value=[
-                'api.known.vendor.test', 'unrelated.vendor.test'
+                'known.vendor.test', 'api.known.vendor.test', 'unrelated.vendor.test'
             ]),
         })
         self.assertEqual(self.sql("""
             SELECT d.domain, d.ownership_status, d.scannable
             FROM domains d JOIN scan_results sr ON sr.domain_id=d.id
             WHERE sr.scan_id=42 AND d.domain IN (
-                'api.known.vendor.test', 'unrelated.vendor.test'
+                'known.vendor.test', 'api.known.vendor.test', 'unrelated.vendor.test'
             ) ORDER BY d.domain
         """), [
-            ('api.known.vendor.test', 'CONFIRMED', False),
+            ('api.known.vendor.test', 'CANDIDATE', False),
+            ('known.vendor.test', 'CONFIRMED', False),
             ('unrelated.vendor.test', 'CANDIDATE', False),
         ])
         self.assertEqual(self.sql(
@@ -423,14 +426,16 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.sql("INSERT INTO known_domains(domain) VALUES ('known.example.net')")
         member = self.domain('app.example.com', 42, state_scan=None, scannable=False)
         known = self.domain('known.example.net', 42, state_scan=None, scannable=False)
+        known_child = self.domain('child.known.example.net', 42, state_scan=None, scannable=False)
         historical = self.domain('old.example.com', 41, state_scan=None, scannable=False)
         outside = self.domain('outside.example.net', 42, state_scan=None, scannable=False)
         self.run_worker('eligibility_worker.py')
 
         self.assertEqual(
-            self.sql("SELECT domain, scannable FROM domains WHERE id IN (%s,%s,%s,%s) ORDER BY id",
-                     (member, known, historical, outside)),
+            self.sql("SELECT domain, scannable FROM domains WHERE id IN (%s,%s,%s,%s,%s) ORDER BY id",
+                     (member, known, known_child, historical, outside)),
             [('app.example.com', True), ('known.example.net', True),
+             ('child.known.example.net', False),
              ('old.example.com', False), ('outside.example.net', False)],
         )
 
@@ -769,6 +774,14 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.assertFalse(self.runtime_check(
             domain_id, 'HTTP_TLS_OBSERVATION'
         )[0])
+
+    def test_runtime_known_inventory_is_exact_not_a_parent_namespace(self):
+        self.sql("INSERT INTO known_domains(domain) VALUES ('vpn.othercompany.net')")
+        exact = self.domain('vpn.othercompany.net', 42)
+        descendant = self.domain('random.vpn.othercompany.net', 42)
+        self.authorize_scope('othercompany.net', 'PORT_SCAN')
+        self.assertEqual(self.runtime_check(exact, 'PORT_SCAN'), (True, 'authorized'))
+        self.assertFalse(self.runtime_check(descendant, 'PORT_SCAN')[0])
 
     def test_scannable_trusted_asset_without_operation_permission_makes_no_request(self):
         domain_id = self.domain('observe.example.com', 42, http_status=0)
