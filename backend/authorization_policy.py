@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 import re
 
 from ownership import is_within_trusted_boundary, trusted_boundary_sql
@@ -13,6 +14,7 @@ SCOPE_TESTING_LEVELS = frozenset({
     "ADHOC_CHECK",
     "HTTP_TLS_OBSERVATION",
 })
+DEFAULT_SCAN_OPERATIONS_ENV = "ASIP_DEFAULT_SCAN_OPERATIONS"
 
 _DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
@@ -139,21 +141,64 @@ def scope_excludes_domain(scopes, domain, testing_level, now=None):
     )
 
 
+def scope_revokes_domain(scopes, domain, testing_level):
+    """Treat persisted revoked grants as operation-specific denials."""
+    testing_level = str(testing_level or "").strip().upper()
+    if testing_level not in SCOPE_TESTING_LEVELS:
+        return False
+    domain = normalize_scope_domain(domain)
+    return any(
+        scope.testing_level == testing_level
+        and scope.status == SCOPE_STATUS_REVOKED
+        and (
+            domain == scope.scope_domain
+            or (scope.include_subdomains and domain.endswith("." + scope.scope_domain))
+        )
+        for scope in scopes
+    )
+
+
+def configured_scan_operations(value=None):
+    """Parse the organization default operation allowlist, failing closed."""
+    if value is None:
+        value = os.environ.get(DEFAULT_SCAN_OPERATIONS_ENV)
+    if value is None:
+        return frozenset()
+    entries = value.split(",")
+    normalized = [entry.strip().upper() for entry in entries]
+    if not normalized or any(not item or item not in SCOPE_TESTING_LEVELS for item in normalized):
+        return frozenset()
+    return frozenset(normalized)
+
+
+def default_operation_enabled(testing_level, value=None):
+    level = str(testing_level or "").strip().upper()
+    return level in SCOPE_TESTING_LEVELS and level in configured_scan_operations(value)
+
+
 def is_authorized(
     *, ownership_status, scannable, validation_source,
     domain, testing_level, scopes=(), now=None, trusted_domains=None,
+    confidence_reasons=(),
 ):
     """Apply the complete local decision without database or network access."""
     if ownership_status != "CONFIRMED" or scannable is not True:
         return False
-    if trusted_domains is not None and not is_within_trusted_boundary(
-        domain, trusted_domains
-    ):
+    if isinstance(confidence_reasons, str):
+        confidence_reasons = (confidence_reasons,)
+    if any(str(reason).strip().lower() == "manually rejected" for reason in confidence_reasons or ()):
+        return False
+    if trusted_domains is None or not is_within_trusted_boundary(domain, trusted_domains):
         return False
     normalized_level = str(testing_level or "").strip().upper()
-    if scope_excludes_domain(scopes, domain, normalized_level, now):
+    if not default_operation_enabled(normalized_level):
         return False
-    return scope_authorizes(scopes, domain, testing_level, now)
+    if (
+        scope_excludes_domain(scopes, domain, normalized_level, now)
+        or scope_revokes_domain(scopes, domain, normalized_level)
+    ):
+        return False
+    return True
 
 
 def explicit_t2_authorization_sql(domain_alias="d"):
@@ -170,7 +215,7 @@ def explicit_t2_authorization_sql(domain_alias="d"):
 
 
 def active_scan_authorization_sql(domain_alias="d", testing_level="TECHNOLOGY_HTTP"):
-    """Return the canonical trusted-boundary and operation-scope predicate."""
+    """Return trusted, technically eligible, centrally permitted SQL."""
     level = str(testing_level or "").strip().upper()
     if level not in SCOPE_TESTING_LEVELS:
         raise ScopePolicyError("unsupported scope testing level")
@@ -179,10 +224,19 @@ def active_scan_authorization_sql(domain_alias="d", testing_level="TECHNOLOGY_HT
         f"{domain_alias}.ownership_status = 'CONFIRMED' "
         f"AND {domain_alias}.scannable IS TRUE "
         f"AND {trusted_boundary_sql(f'{domain_alias}.domain')} "
+        f"AND NOT COALESCE('manually rejected' = ANY({domain_alias}.confidence_reasons), FALSE) "
+        f"AND {default_operation_policy_sql(level)} "
         f"AND NOT ({active_scope_exclusion_sql(domain_alias, level)}) "
     )
-    scope_match = active_scope_coverage_sql(domain_alias, level)
-    return base + f"AND ({scope_match})"
+    return base
+
+
+def default_operation_policy_sql(testing_level):
+    """Generate the current allowlist decision so each recheck sees changes."""
+    level = str(testing_level or "").strip().upper()
+    if level not in SCOPE_TESTING_LEVELS:
+        raise ScopePolicyError("unsupported scope testing level")
+    return "TRUE" if default_operation_enabled(level) else "FALSE"
 
 
 def active_scope_exclusion_sql(domain_alias="d", testing_level="TECHNOLOGY_HTTP"):
@@ -195,9 +249,12 @@ def active_scope_exclusion_sql(domain_alias="d", testing_level="TECHNOLOGY_HTTP"
         EXISTS (
             SELECT 1
             FROM active_scan_scopes scope_block
-            WHERE scope_block.status = 'ACTIVE'
-              AND (scope_block.expires_at IS NULL
-                   OR scope_block.expires_at > CURRENT_TIMESTAMP)
+            WHERE (scope_block.status = 'REVOKED'
+              OR (scope_block.status = 'ACTIVE'
+                  AND (scope_block.expires_at IS NULL
+                       OR scope_block.expires_at > CURRENT_TIMESTAMP)
+                  AND {canonical_domain} = ANY(scope_block.excluded_domains))
+              )
               AND scope_block.testing_level = '{level}'
               AND (
                     {canonical_domain} = scope_block.scope_domain
@@ -207,7 +264,6 @@ def active_scope_exclusion_sql(domain_alias="d", testing_level="TECHNOLOGY_HTTP"
                             = '.' || scope_block.scope_domain
                     )
               )
-              AND {canonical_domain} = ANY(scope_block.excluded_domains)
         )
     """
 

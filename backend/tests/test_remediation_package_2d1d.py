@@ -1,5 +1,6 @@
 import ast
 import hashlib
+import os
 import pathlib
 import types
 import unittest
@@ -244,6 +245,14 @@ class PostgreSQLMembershipTests(unittest.TestCase):
             connection.close()
 
     def setUp(self):
+        policy_patch = mock.patch.dict(
+            os.environ,
+            {"ASIP_DEFAULT_SCAN_OPERATIONS": (
+                "HTTP_TLS_OBSERVATION,TECHNOLOGY_HTTP,PORT_SCAN,ADHOC_CHECK"
+            )},
+        )
+        policy_patch.start()
+        self.addCleanup(policy_patch.stop)
         convergence.PostgreSQLIngestConvergenceTests.setUp(self)
         self.sql("INSERT INTO scans VALUES (44, 'FAILED')")
         self.sql("DELETE FROM active_scan_scopes")
@@ -701,18 +710,19 @@ class PostgreSQLMembershipTests(unittest.TestCase):
 
     def test_runtime_recheck_enforces_current_sql_authorization_state(self):
         domain_id = self.domain("app.example.com", 42)
-        self.assertFalse(self.runtime_check(domain_id)[0])
-        self.authorize_scope()
         self.assertEqual(self.runtime_check(domain_id), (True, "authorized"))
 
+        self.authorize_scope()
         self.sql("UPDATE active_scan_scopes SET status='REVOKED', revoked_by='test', revoked_at=CURRENT_TIMESTAMP")
         self.assertFalse(self.runtime_check(domain_id)[0])
 
         self.sql("UPDATE active_scan_scopes SET status='ACTIVE', revoked_by=NULL, revoked_at=NULL, expires_at=CURRENT_TIMESTAMP - INTERVAL '1 second'")
-        self.assertFalse(self.runtime_check(domain_id)[0])
+        # A legacy per-domain grant expiry no longer controls the central
+        # organization policy. Explicit revocation above remains a denial.
+        self.assertTrue(self.runtime_check(domain_id)[0])
 
         self.sql("UPDATE active_scan_scopes SET expires_at=NULL, testing_level='PORT_SCAN'")
-        self.assertFalse(self.runtime_check(domain_id, "TECHNOLOGY_HTTP")[0])
+        self.assertTrue(self.runtime_check(domain_id, "TECHNOLOGY_HTTP")[0])
 
         self.sql("UPDATE domains SET ownership_status='CANDIDATE' WHERE id=%s", (domain_id,))
         self.assertFalse(self.runtime_check(domain_id, "PORT_SCAN")[0])
@@ -728,10 +738,13 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.sql("UPDATE scans SET status='SUCCEEDED' WHERE id=42")
         self.assertFalse(self.runtime_check(domain_id, "PORT_SCAN")[0])
 
-    def test_runtime_recheck_requires_operation_scope_even_for_manual_rows(self):
+    def test_runtime_recheck_requires_central_operation_policy_for_manual_rows(self):
         domain_id = self.domain("manual.example.com", 42)
         self.sql("UPDATE domains SET validation_source='manual' WHERE id=%s", (domain_id,))
-        self.assertFalse(self.runtime_check(domain_id, "PORT_SCAN")[0])
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": ""}):
+            self.assertFalse(self.runtime_check(domain_id, "PORT_SCAN")[0])
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "PORT_SCAN"}):
+            self.assertTrue(self.runtime_check(domain_id, "PORT_SCAN")[0])
 
     def test_runtime_recheck_fails_closed_on_database_error(self):
         class BrokenConnection:
@@ -790,11 +803,12 @@ class PostgreSQLMembershipTests(unittest.TestCase):
             'http_reason': 'OK', 'final_url': 'https://observe.example.com',
             'final_status': 200, 'title': 'not reached',
         })
-        self.run_worker('http_observation_worker.py', overrides={'http_probe': observer})
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": ""}):
+            self.run_worker('http_observation_worker.py', overrides={'http_probe': observer})
+            self.assertFalse(self.runtime_check(
+                domain_id, 'HTTP_TLS_OBSERVATION'
+            )[0])
         observer.assert_not_called()
-        self.assertFalse(self.runtime_check(
-            domain_id, 'HTTP_TLS_OBSERVATION'
-        )[0])
 
     def test_operation_scope_exclusion_blocks_manual_scannable_target(self):
         domain_id = self.domain('blocked.example.com', 42, http_status=0)
@@ -869,7 +883,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         )
         detected.assert_not_called()
 
-    def test_port_worker_rechecks_before_network_after_scope_expiry(self):
+    def test_expired_legacy_grant_does_not_override_default_operation_policy(self):
         domain_id = self.domain("port.example.com", 42)
         self.authorize_scope("example.com", "PORT_SCAN")
         scanned = mock.Mock(return_value=[(443, "https")])
@@ -889,9 +903,9 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                 "recheck_active_authorization": expire_before_check,
             },
         )
-        scanned.assert_not_called()
+        scanned.assert_called_once_with("port.example.com")
 
-    def test_valid_scope_recheck_allows_technology_and_port_network_work(self):
+    def test_default_policy_allows_trusted_technology_and_port_network_work(self):
         self.domain("tech.example.com", 42)
         self.domain("port.example.com", 42)
         self.authorize_scope("tech.example.com", "TECHNOLOGY_HTTP", include_subdomains=False)
@@ -902,8 +916,14 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.run_worker("tech_worker.py", overrides={"detect_tech": detected})
         self.run_worker("port_scan_worker.py", overrides={"scan_ports": scanned})
 
-        detected.assert_called_once_with("tech.example.com")
-        scanned.assert_called_once_with("port.example.com")
+        self.assertEqual(
+            [call.args[0] for call in detected.call_args_list],
+            ["tech.example.com", "port.example.com"],
+        )
+        self.assertEqual(
+            [call.args[0] for call in scanned.call_args_list],
+            ["tech.example.com", "port.example.com"],
+        )
 
     def test_denied_target_does_not_block_later_authorized_target(self):
         first = self.domain("first.example.com", 42)

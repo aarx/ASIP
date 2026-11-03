@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import pathlib
 import sys
 import types
@@ -14,6 +15,7 @@ from authorization_policy import (  # noqa: E402
     ScopeApproval,
     is_authorized,
 )
+from ownership import TrustedDomainBoundary  # noqa: E402
 
 
 class FakeCursor:
@@ -78,11 +80,15 @@ class DirectTargetAuthorizationTests(unittest.TestCase):
             approved_by="operator",
             approved_at=datetime.now(timezone.utc),
         )
-        self.assertTrue(is_authorized(
-            ownership_status="CONFIRMED", scannable=True,
-            validation_source=None, domain="app.example.com",
-            testing_level="HTTP_TLS_OBSERVATION", scopes=[scope],
-        ))
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "HTTP_TLS_OBSERVATION"}):
+            self.assertTrue(is_authorized(
+                ownership_status="CONFIRMED", scannable=True,
+                validation_source=None, domain="app.example.com",
+                testing_level="HTTP_TLS_OBSERVATION", scopes=[scope],
+                trusted_domains=TrustedDomainBoundary(
+                    seed_domains=frozenset({"example.com"}), known_domains=frozenset(),
+                ),
+            ))
         self.assertFalse(is_authorized(
             ownership_status="CONFIRMED", scannable=True,
             validation_source="manual", domain="app.example.com",

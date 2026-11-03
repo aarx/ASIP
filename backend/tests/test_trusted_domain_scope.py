@@ -1,4 +1,5 @@
 import pathlib
+import os
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -158,22 +159,18 @@ class EligibilityAndAuthorizationTests(unittest.TestCase):
             ))
 
     def test_trusted_boundary_and_exact_operation_scope_are_both_required(self):
-        tech = operation_scope("TECHNOLOGY_HTTP")
         common = dict(
             ownership_status="CONFIRMED", scannable=True,
             validation_source=None, domain="api.example.com", now=NOW,
             trusted_domains=TRUSTED,
         )
-        self.assertTrue(is_authorized(
-            **common, testing_level="TECHNOLOGY_HTTP", scopes=[tech]
-        ))
-        self.assertFalse(is_authorized(
-            **{**common, "domain": "api.external.net"},
-            testing_level="TECHNOLOGY_HTTP", scopes=[tech],
-        ))
-        self.assertFalse(is_authorized(
-            **common, testing_level="PORT_SCAN", scopes=[tech]
-        ))
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "TECHNOLOGY_HTTP"}):
+            self.assertTrue(is_authorized(**common, testing_level="TECHNOLOGY_HTTP"))
+            self.assertFalse(is_authorized(
+                **{**common, "domain": "api.external.net"},
+                testing_level="TECHNOLOGY_HTTP",
+            ))
+            self.assertFalse(is_authorized(**common, testing_level="PORT_SCAN"))
 
     def test_expiry_revocation_and_operation_exclusion_deny(self):
         common = dict(
@@ -201,11 +198,14 @@ class EligibilityAndAuthorizationTests(unittest.TestCase):
         ))
 
     def test_runtime_sql_contains_trusted_boundary_and_denies_manual_bypass(self):
-        sql = active_scan_authorization_sql("d", "PORT_SCAN")
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "PORT_SCAN"}):
+            sql = active_scan_authorization_sql("d", "PORT_SCAN")
         self.assertIn("FROM seed_domains", sql)
         self.assertIn("FROM known_domains", sql)
-        self.assertIn("scope_allow.testing_level = 'PORT_SCAN'", sql)
+        self.assertIn("AND TRUE", sql)
+        self.assertNotIn("scope_allow", sql)
         self.assertIn("scope_block.excluded_domains", sql)
+        self.assertIn("scope_block.status = 'REVOKED'", sql)
         self.assertNotIn("d.validation_source = 'manual' OR", sql)
 
     def test_scannable_without_operation_permission_never_starts_http_probe(self):

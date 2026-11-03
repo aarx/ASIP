@@ -1,5 +1,6 @@
 import importlib.util
 import logging
+import os
 import pathlib
 import sys
 import types
@@ -25,7 +26,9 @@ def load_main():
     previous = {name: sys.modules.get(name) for name in ("db", "llm_service")}
     try:
         sys.modules.update({"db": fake_db, "llm_service": fake_llm})
-        with mock.patch("logging.FileHandler", return_value=logging.NullHandler()):
+        with mock.patch("logging.FileHandler", return_value=logging.NullHandler()), mock.patch.dict(
+            os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "ADHOC_CHECK"}
+        ):
             spec.loader.exec_module(module)
     finally:
         for name, value in previous.items():
@@ -159,7 +162,9 @@ class AdhocPHPRceEndpointTests(unittest.TestCase):
         for sql, params in connection.cursor_obj.executions[2:]:
             self.assertIn("d.ownership_status = 'CONFIRMED'", sql)
             self.assertIn("d.scannable IS TRUE", sql)
-            self.assertIn("d.validation_source = 'manual'", sql)
+            self.assertIn("manually rejected", sql)
+            self.assertIn("AND TRUE", sql)
+            self.assertIn("FROM seed_domains seed_root", sql)
             self.assertEqual(params, (16,))
 
     def test_filters_are_applied_before_pagination(self):

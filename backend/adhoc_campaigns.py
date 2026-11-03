@@ -124,16 +124,15 @@ def _authorized_member(row):
     return (
         row[2] == "CONFIRMED"
         and row[3] is True
-        and row[4] == "manual"
     )
 
 
 def validate_explicit_target_selection(requested_domains, member_rows, max_targets=50):
     """Validate explicit targets against one successful scan's members.
 
-    ``member_rows`` contains ``(domain_id, domain, ownership_status,
-    scannable, validation_source)``. The returned snapshots are immutable
-    request data; a future worker must recheck the live predicate.
+    ``member_rows`` must come from the trusted, scannable, operation-policy
+    filtered current-scan query above. The returned snapshots are immutable
+    request data; the runner rechecks the live predicate before each request.
     """
     normalized = normalize_target_set(requested_domains, max_targets)
 

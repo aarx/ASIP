@@ -83,13 +83,15 @@ class CampaignFoundationTests(unittest.TestCase):
         for domain in (
             "candidate.example",
             "external.example",
-            "unvalidated.example",
             "not-scannable.example",
             "missing.example",
         ):
             with self.subTest(domain=domain):
                 with self.assertRaises(CampaignError):
                     validate_explicit_target_selection([domain], members)
+
+        shadow = validate_explicit_target_selection(["unvalidated.example"], members)
+        self.assertEqual(shadow[0]["validation_source_snapshot"], "discovery")
 
     def test_zero_and_duplicate_target_requests_are_rejected(self):
         members = [(1, "approved.example", "CONFIRMED", True, "manual")]
@@ -99,12 +101,25 @@ class CampaignFoundationTests(unittest.TestCase):
                     validate_explicit_target_selection(targets, members)
 
     def test_runtime_recheck_uses_membership_and_central_predicate(self):
-        query, params = runtime_authorization_query(7, 16)
+        from unittest.mock import patch
+
+        with patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "ADHOC_CHECK"}):
+            query, params = runtime_authorization_query(7, 16)
         self.assertEqual(params, (16, 7))
         self.assertIn("sr.scan_id = %s", query)
         self.assertIn("d.ownership_status = 'CONFIRMED'", query)
         self.assertIn("d.scannable IS TRUE", query)
-        self.assertIn("d.validation_source = 'manual'", query)
+        self.assertNotIn("d.validation_source = 'manual'", query)
+        self.assertIn("d.scannable IS TRUE", query)
+        self.assertIn("manually rejected", query)
+        self.assertIn("FROM seed_domains seed_root", query)
+        self.assertIn("FROM known_domains known_host", query)
+        with patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "ADHOC_CHECK"}):
+            enabled_query, _ = runtime_authorization_query(7, 16)
+        with patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "PORT_SCAN"}):
+            disabled_query, _ = runtime_authorization_query(7, 16)
+        self.assertIn("AND TRUE", enabled_query)
+        self.assertIn("AND FALSE", disabled_query)
 
     def test_creation_requires_operator_authorization_dependency(self):
         with self.assertRaises(PermissionError):

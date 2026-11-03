@@ -1,7 +1,9 @@
 import pathlib
+import os
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
@@ -116,17 +118,20 @@ class AuthorizationDecisionTests(unittest.TestCase):
                 ), expected)
 
     def test_worker_sql_contains_scope_and_direct_paths(self):
-        sql = active_scan_authorization_sql("d", "PORT_SCAN")
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "PORT_SCAN"}):
+            sql = active_scan_authorization_sql("d", "PORT_SCAN")
         self.assertNotIn("d.validation_source = 'manual'", sql)
-        self.assertIn("FROM active_scan_scopes scope_allow", sql)
-        self.assertIn("scope_allow.testing_level = 'PORT_SCAN'", sql)
+        self.assertIn("AND TRUE", sql)
+        self.assertNotIn("scope_allow", sql)
         self.assertIn("FROM active_scan_scopes scope_block", sql)
+        self.assertIn("scope_block.status = 'REVOKED'", sql)
         self.assertIn("LOWER(TRIM(TRAILING '.' FROM d.domain))", sql)
 
     def test_http_tls_observation_requires_scope_and_does_not_expand_manual_path(self):
-        sql = active_scan_authorization_sql("d", "HTTP_TLS_OBSERVATION")
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "HTTP_TLS_OBSERVATION"}):
+            sql = active_scan_authorization_sql("d", "HTTP_TLS_OBSERVATION")
         self.assertNotIn("d.validation_source = 'manual'", sql)
-        self.assertIn("scope_allow.testing_level = 'HTTP_TLS_OBSERVATION'", sql)
+        self.assertIn("AND TRUE", sql)
         self.assertFalse(is_authorized(
             ownership_status="CONFIRMED", scannable=True,
             validation_source="manual", domain="app.example.com",

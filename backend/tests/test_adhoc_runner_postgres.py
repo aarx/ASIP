@@ -4,6 +4,7 @@ import threading
 import unittest
 from datetime import datetime, timezone
 import importlib
+from unittest import mock
 
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
@@ -77,6 +78,8 @@ class AdhocRunnerPostgreSQLTests(unittest.TestCase):
                         (REPOSITORY / "backend/migrations/006_add_active_scan_scopes.sql")
                         .read_text(encoding="utf-8")
                     )
+                    cursor.execute("CREATE TABLE seed_domains (domain text UNIQUE)")
+                    cursor.execute("INSERT INTO seed_domains(domain) VALUES ('approved.example')")
         except Exception:
             _remediation_fixture.PostgreSQLIngestConvergenceTests.tearDownClass.__func__(cls)
             raise
@@ -92,6 +95,11 @@ class AdhocRunnerPostgreSQLTests(unittest.TestCase):
         return cls.psycopg2.connect(**cls.connection_args)
 
     def setUp(self):
+        policy_env = mock.patch.dict(
+            "os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "ADHOC_CHECK"}
+        )
+        policy_env.start()
+        self.addCleanup(policy_env.stop)
         connection = self.connect()
         with connection:
             with connection.cursor() as cursor:
