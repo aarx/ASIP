@@ -270,6 +270,7 @@ class ApiAndWorkerRegressionTests(unittest.TestCase):
         self.main.get_conn = lambda: connection
         self.main.calculate_scan_risks = mock.Mock(return_value=[
             types.SimpleNamespace(
+                domain_id=1,
                 domain="risk.example",
                 has_ip=True,
                 result=types.SimpleNamespace(
@@ -278,7 +279,10 @@ class ApiAndWorkerRegressionTests(unittest.TestCase):
             )
         ])
 
-        result = self.main.risk_leaderboard()
+        with mock.patch.object(
+            self.main, "_current_scan_asset_classes", return_value={1: "SHADOW"}
+        ):
+            result = self.main.risk_leaderboard()
 
         self.assertEqual(result, [{
             "domain": "risk.example",

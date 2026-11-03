@@ -88,17 +88,21 @@ class ReviewIndicatorContractTests(unittest.TestCase):
             ),
         ]
         current_assets = [
-            ("same.example", "CONFIRMED", True),
-            ("shadow.example", "CONFIRMED", False),
-            ("candidate.example", "CANDIDATE", False),
-            ("known.example", "CONFIRMED", True),
-            ("external.example", "EXTERNAL", False),
+            (1, "same.example", "CONFIRMED", True),
+            (2, "shadow.example", "CONFIRMED", False),
+            (3, "candidate.example", "CANDIDATE", False),
+            (4, "known.example", "CONFIRMED", True),
+            (5, "external.example", "EXTERNAL", False),
         ]
         cursor = QueueCursor([redirect_rows, current_assets])
         connection = FakeConnection(cursor)
         self.main.get_conn = lambda: connection
 
-        result = self.main.frontend_v2_review_indicators()
+        with mock.patch.object(self.main, "_current_scan_asset_classes", return_value={
+            1: "KNOWN", 2: "SHADOW", 3: "CANDIDATE",
+            4: "KNOWN", 5: "EXTERNAL",
+        }):
+            result = self.main.frontend_v2_review_indicators()
 
         self.assertEqual(result["scan_id"], 42)
         self.assertEqual(result["count"], 2)

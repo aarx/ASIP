@@ -89,9 +89,14 @@ class FrontendV2ContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.main = load_main()
 
+    def reporting_classes(self, values):
+        return mock.patch.object(
+            self.main, "_current_scan_asset_classes", return_value=values
+        )
+
     def test_overview_combines_current_counts_changes_and_canonical_risk(self):
         cursor = QueueCursor(
-            fetchones=[(5, 2, 3, 1, 1), (2,), (1,)],
+            fetchones=[(2,), (1,)],
         )
         self.main.get_conn = lambda: FakeConnection(cursor)
         self.main.calculate_scan_risks = mock.Mock(return_value=[
@@ -100,14 +105,18 @@ class FrontendV2ContractTests(unittest.TestCase):
             risk(3, "review.example", 4, "Review", ("shadow_asset",)),
         ])
 
-        result = self.main.frontend_v2_overview()
+        with self.reporting_classes({
+            1: "KNOWN", 2: "SHADOW", 3: "SHADOW",
+            4: "CANDIDATE", 5: "EXTERNAL",
+        }):
+            result = self.main.frontend_v2_overview()
 
         self.assertEqual(result["current_scan_id"], 42)
         self.assertEqual(result["previous_scan_id"], 41)
         self.assertEqual(result["counts"], {
-            "organizational": 5,
-            "known": 2,
-            "shadow": 3,
+            "organizational": 3,
+            "known": 1,
+            "shadow": 2,
             "candidate": 1,
             "external": 1,
         })
@@ -119,8 +128,46 @@ class FrontendV2ContractTests(unittest.TestCase):
         })
         self.assertEqual(result["needs_attention"][0]["domain"], "high.example")
         count_sql, count_params = cursor.executions[0]
-        self.assertIn("FROM scan_results sr", count_sql)
-        self.assertEqual(count_params, (42,))
+        self.assertIn("FROM scan_results current_sr", count_sql)
+        self.assertEqual(count_params, (42, 41))
+
+    def test_overview_uses_current_scope_counts_and_risk_only(self):
+        classes = {
+            **{domain_id: "KNOWN" for domain_id in range(1, 58)},
+            **{domain_id: "SHADOW" for domain_id in range(58, 571)},
+            **{domain_id: "CANDIDATE" for domain_id in range(571, 653)},
+        }
+        cursor = QueueCursor()
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        self.main.calculate_scan_risks = mock.Mock(return_value=[
+            risk(1, "known.example", 8, "High"),
+            risk(58, "shadow.example", 6, "Elevated"),
+            risk(571, "legacy-outside.example", 10, "High"),
+        ])
+
+        with self.reporting_classes(classes), mock.patch.object(
+            self.main, "get_previous_authoritative_scan_id", return_value=None
+        ):
+            result = self.main.frontend_v2_overview()
+
+        self.assertEqual(result["counts"], {
+            "organizational": 570,
+            "known": 57,
+            "shadow": 513,
+            "candidate": 82,
+            "external": 0,
+        })
+        self.assertEqual(result["risk_distribution"], {
+            "High": 1, "Elevated": 1, "Review": 0, "Low": 0,
+        })
+        self.assertEqual(result["needs_attention"], [
+            {"domain": "known.example", "score": 8, "priority": "High", "reasons": []},
+            {"domain": "shadow.example", "score": 6, "priority": "Elevated", "reasons": []},
+        ])
+        self.assertEqual(set(result), {
+            "current_scan_id", "previous_scan_id", "counts", "risk_distribution",
+            "changes", "needs_attention",
+        })
 
     def test_asset_explorer_filters_current_assets_and_has_no_candidate_risk(self):
         rows = [
@@ -147,7 +194,10 @@ class FrontendV2ContractTests(unittest.TestCase):
             risk(2, "shadow.example", 6, "Elevated", ("shadow_asset",)),
         ])
 
-        result = self.main.frontend_v2_assets(asset_class="SHADOW")
+        with self.reporting_classes({
+            1: "KNOWN", 2: "SHADOW", 3: "CANDIDATE",
+        }):
+            result = self.main.frontend_v2_assets(asset_class="SHADOW")
 
         self.assertEqual(result["count"], 1)
         self.assertEqual(result["assets"][0]["domain"], "shadow.example")
@@ -160,7 +210,10 @@ class FrontendV2ContractTests(unittest.TestCase):
         cursor = QueueCursor(fetchalls=[rows])
         self.main.get_conn = lambda: FakeConnection(cursor)
         self.main.calculate_scan_risks = mock.Mock(return_value=[])
-        candidate = self.main.frontend_v2_assets(ownership="candidate")
+        with self.reporting_classes({
+            1: "KNOWN", 2: "SHADOW", 3: "CANDIDATE",
+        }):
+            candidate = self.main.frontend_v2_assets(ownership="candidate")
         self.assertEqual(candidate["assets"][0]["asset_class"], "CANDIDATE")
         self.assertIsNone(candidate["assets"][0]["risk"])
 
@@ -196,7 +249,9 @@ class FrontendV2ContractTests(unittest.TestCase):
             risk(2, "shadow.example", 8, "High", ("shadow_asset",)),
         ])
 
-        with mock.patch.object(
+        with self.reporting_classes({
+            1: "KNOWN", 2: "SHADOW", 3: "CANDIDATE", 4: "EXTERNAL",
+        }), mock.patch.object(
             self.main, "StreamingResponse", CapturedStreamingResponse
         ):
             response = self.main.frontend_v2_assets_export(
@@ -220,7 +275,9 @@ class FrontendV2ContractTests(unittest.TestCase):
         cursor = QueueCursor(fetchalls=[rows])
         self.main.get_conn = lambda: FakeConnection(cursor)
         self.main.calculate_scan_risks = mock.Mock(return_value=[])
-        with mock.patch.object(
+        with self.reporting_classes({
+            1: "KNOWN", 2: "SHADOW", 3: "CANDIDATE", 4: "EXTERNAL",
+        }), mock.patch.object(
             self.main, "StreamingResponse", CapturedStreamingResponse
         ):
             response = self.main.frontend_v2_assets_export()
@@ -251,7 +308,11 @@ class FrontendV2ContractTests(unittest.TestCase):
             cursor = QueueCursor(fetchalls=[rows])
             self.main.get_conn = lambda: FakeConnection(cursor)
             self.main.calculate_scan_risks = mock.Mock(return_value=risks)
-            return self.main.frontend_v2_assets(**kwargs)
+            with self.reporting_classes({
+                1: "SHADOW", 2: "KNOWN", 3: "SHADOW",
+                4: "KNOWN", 5: "KNOWN", 6: "CANDIDATE",
+            }):
+                return self.main.frontend_v2_assets(**kwargs)
 
         self.assertEqual(
             [asset["domain"] for asset in query(limit=2)["assets"]],
@@ -313,7 +374,10 @@ class FrontendV2ContractTests(unittest.TestCase):
             risk(5, "delta.example", 1, "Low"),
         ])
 
-        with mock.patch.object(self.main, "StreamingResponse", CapturedStreamingResponse):
+        with self.reporting_classes({
+            1: "SHADOW", 2: "KNOWN", 3: "SHADOW",
+            4: "KNOWN", 5: "KNOWN", 6: "CANDIDATE",
+        }), mock.patch.object(self.main, "StreamingResponse", CapturedStreamingResponse):
             response = self.main.frontend_v2_assets_export(
                 sort_by="priority", sort_dir="asc"
             )
@@ -367,7 +431,8 @@ class FrontendV2ContractTests(unittest.TestCase):
 
         with mock.patch.object(self.main, "date") as date_type:
             date_type.today.return_value = datetime(2026, 10, 28).date()
-            result = self.main.frontend_v2_asset_detail("app.example")
+            with self.reporting_classes({7: "SHADOW"}):
+                result = self.main.frontend_v2_asset_detail("app.example")
 
         self.assertEqual(result["asset_class"], "SHADOW")
         self.assertEqual(result["risk"]["score"], 8)

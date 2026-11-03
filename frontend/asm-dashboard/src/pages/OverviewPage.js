@@ -63,7 +63,7 @@ function OwnershipComposition({ counts }) {
   const values = [
     ["Known", counts.known, "#/assets?asset_class=KNOWN&limit=25"],
     ["Shadow", counts.shadow, "#/shadow"],
-    ["Candidate", counts.candidate, "#/brand?ownership=CANDIDATE"],
+    ["Candidate", counts.candidate, "#/assets?asset_class=CANDIDATE&limit=25"],
     ["External", counts.external, "#/brand?ownership=EXTERNAL"],
   ];
   const max = Math.max(...values.map(([, value]) => value), 1);

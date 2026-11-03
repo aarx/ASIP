@@ -165,7 +165,9 @@ class Package4BApiTests(unittest.TestCase):
         self.main.get_conn = lambda: FakeConnection(cursor)
         self.main.calculate_scan_risks = mock.Mock(return_value=[])
 
-        with mock.patch(
+        with mock.patch.object(
+            self.main, "_current_scan_asset_classes", return_value={}
+        ), mock.patch(
             "fastapi.responses.StreamingResponse", CapturedStreamingResponse
         ):
             response = self.main.export_enriched_csv()
@@ -199,7 +201,10 @@ class Package4BApiTests(unittest.TestCase):
         self.main.get_conn = lambda: FakeConnection(cursor)
         self.main.calculate_scan_risks = mock.Mock(return_value=[])
 
-        result = self.main.investigation_assets(page=1, limit=20)
+        with mock.patch.object(
+            self.main, "_current_scan_asset_classes", return_value={1: "KNOWN", 2: "SHADOW"}
+        ):
+            result = self.main.investigation_assets(page=1, limit=20)
 
         self.assertEqual(result["count"], 2)
         self.assertEqual(len(result["assets"]), 2)

@@ -359,8 +359,10 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   const redirect = redirectBoundary(data.domain, data.http?.final_url);
   const classificationContext = data.asset_class === "SHADOW"
     ? { href: "#/shadow", label: "Open Shadow workflow" }
-    : ["CANDIDATE", "EXTERNAL"].includes(data.ownership_status)
-      ? { href: `#/brand?ownership=${data.ownership_status}`, label: "Open Brand Perimeter" }
+    : ["CANDIDATE", "EXTERNAL"].includes(data.asset_class)
+      ? data.ownership_status === data.asset_class
+        ? { href: `#/brand?ownership=${data.ownership_status}`, label: "Open Brand Perimeter" }
+        : { href: `#/assets?asset_class=${data.asset_class}`, label: "Open asset inventory" }
       : null;
   return (
     <div className="asset-detail">
@@ -396,7 +398,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
               </div>
             </>
           ) : (
-            <div className="non-org-risk-note">No organizational canonical risk applies to {data.ownership_status} assets.</div>
+            <div className="non-org-risk-note">No organizational canonical risk applies to {data.asset_class} assets.</div>
           )}
         </div>
       </section>

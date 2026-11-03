@@ -165,7 +165,7 @@ test("review indicators have truthful empty and isolated failure states", async 
   expect(screen.getByText("Canonical risk posture")).toBeInTheDocument();
 });
 
-test("Shadow Centre requests and displays only confirmed Shadow assets", async () => {
+test("Shadow Centre uses effective asset class rather than stored ownership status", async () => {
   window.location.hash = "#/shadow";
   getV2Assets.mockResolvedValue({
     scan_id: 42,
@@ -191,6 +191,13 @@ test("Shadow Centre requests and displays only confirmed Shadow assets", async (
         first_seen_scan: 42,
         risk: null,
       },
+      {
+        domain: "legacy-outside.example.net",
+        ownership_status: "CONFIRMED",
+        asset_class: "CANDIDATE",
+        first_seen_scan: 5,
+        risk: null,
+      },
     ],
   });
 
@@ -201,6 +208,7 @@ test("Shadow Centre requests and displays only confirmed Shadow assets", async (
   expect(screen.getByText("New in scan #42")).toBeInTheDocument();
   expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
   expect(screen.queryByText("candidate.example.net")).not.toBeInTheDocument();
+  expect(screen.queryByText("legacy-outside.example.net")).not.toBeInTheDocument();
   expect(screen.queryByText("Mark as Known")).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open shadow.example.com" })).toHaveAttribute(
     "href", "#/assets/shadow.example.com?return=shadow"

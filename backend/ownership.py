@@ -124,6 +124,42 @@ def trusted_boundary_sql(domain_expression):
     """
 
 
+def exact_known_domain_sql(domain_expression):
+    """SQL predicate matching a documented hostname exactly."""
+    candidate_raw = f"LOWER(BTRIM({domain_expression}))"
+    candidate = f"TRIM(TRAILING '.' FROM {candidate_raw})"
+    known_raw = "LOWER(BTRIM(known_host.domain))"
+    known_host = f"TRIM(TRAILING '.' FROM {known_raw})"
+    return f"""
+        (
+            {candidate_raw} ~ '{_DNS_NAME_SQL_RE}'
+            AND LENGTH({candidate}) <= 253
+            AND EXISTS (
+                SELECT 1
+                FROM known_domains known_host
+                WHERE {known_raw} ~ '{_DNS_NAME_SQL_RE}'
+                  AND LENGTH({known_host}) <= 253
+                  AND {candidate} = {known_host}
+            )
+        )
+    """
+
+
+def reporting_asset_class_sql(domain_expression, ownership_expression):
+    """Return the current-scope asset class without changing stored ownership."""
+    known_match = exact_known_domain_sql(domain_expression)
+    trusted_match = trusted_boundary_sql(domain_expression)
+    return f"""
+        CASE
+            WHEN {ownership_expression} = 'EXTERNAL' THEN 'EXTERNAL'
+            WHEN {ownership_expression} = 'CANDIDATE' THEN 'CANDIDATE'
+            WHEN {known_match} THEN 'KNOWN'
+            WHEN {trusted_match} THEN 'SHADOW'
+            ELSE 'CANDIDATE'
+        END
+    """
+
+
 def ownership_for_discovery(
     domain, sources, seeds, is_known=False, trusted_domains=None,
 ):

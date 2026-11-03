@@ -19,6 +19,7 @@ from ownership import (
     OWNERSHIP_CONFIRMED,
     OWNERSHIP_EXTERNAL,
     normalize_ownership_status,
+    reporting_asset_class_sql,
     trusted_boundary_sql,
 )
 from ownership_ingest import apply_ownership
@@ -680,7 +681,7 @@ def risky_domains():
         conn.close()
         return []
 
-    canonical_risks = calculate_scan_risks(cur, scan_id)
+    canonical_risks = _current_scan_risks(cur, scan_id)
     conn.close()
 
     results = [
@@ -865,7 +866,7 @@ def shadow_assets():
         conn.close()
         return []
 
-    canonical_risks = calculate_scan_risks(cur, scan_id)
+    canonical_risks = _current_scan_risks(cur, scan_id)
     conn.close()
 
     ranked = sorted(
@@ -894,7 +895,7 @@ def risk_leaderboard():
         conn.close()
         return []
 
-    canonical_risks = calculate_scan_risks(cur, scan_id)
+    canonical_risks = _current_scan_risks(cur, scan_id)
     conn.close()
 
     ranked = sorted(
@@ -996,7 +997,7 @@ def domain_detail(domain_name: str):
     canonical_risk = next(
         (
             risk
-            for risk in calculate_scan_risks(cur, scan_id)
+            for risk in _current_scan_risks(cur, scan_id)
             if risk.domain_id == domain_id
         ),
         None,
@@ -1299,7 +1300,7 @@ def export_enriched_csv():
 
     canonical_by_domain = {
         risk.domain: risk
-        for risk in calculate_scan_risks(cur, scan_id)
+        for risk in _current_scan_risks(cur, scan_id)
     }
 
     query = """
@@ -1571,7 +1572,7 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
 
     canonical_by_domain = {
         risk.domain: risk
-        for risk in calculate_scan_risks(cur, scan_id)
+        for risk in _current_scan_risks(cur, scan_id)
     }
 
     population = """
@@ -1777,7 +1778,7 @@ def shadow_summary():
         conn.close()
         return []
 
-    risks = calculate_scan_risks(cur, scan_id)
+    risks = _current_scan_risks(cur, scan_id)
     conn.close()
 
     counts = {}
@@ -1832,7 +1833,7 @@ def non_web_summary():
         conn.close()
         return []
 
-    risks = calculate_scan_risks(cur, scan_id)
+    risks = _current_scan_risks(cur, scan_id)
     conn.close()
 
     counts = {}
@@ -1857,7 +1858,7 @@ def unknown_high_risk():
         conn.close()
         return []
 
-    canonical_risks = calculate_scan_risks(cur, scan_id)
+    canonical_risks = _current_scan_risks(cur, scan_id)
     conn.close()
 
     ranked = sorted(
@@ -1957,10 +1958,29 @@ def discovery_sources():
     return result
 
 
-def _frontend_asset_class(ownership_status, is_known):
-    if ownership_status == "CONFIRMED":
-        return "KNOWN" if is_known else "SHADOW"
-    return ownership_status
+def _current_scan_asset_classes(cursor, scan_id):
+    """Resolve display classes from current trusted inventory for scan members."""
+    classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
+    cursor.execute(f"""
+        SELECT d.id, {classification} AS asset_class
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        WHERE sr.scan_id = %s
+    """, (scan_id,))
+    return dict(cursor.fetchall())
+
+
+def _current_scan_risks(cursor, scan_id, asset_classes=None):
+    if asset_classes is None:
+        asset_classes = _current_scan_asset_classes(cursor, scan_id)
+    eligible_ids = {
+        domain_id for domain_id, asset_class in asset_classes.items()
+        if asset_class in ("KNOWN", "SHADOW")
+    }
+    return [
+        risk for risk in calculate_scan_risks(cursor, scan_id)
+        if risk.domain_id in eligible_ids
+    ]
 
 
 def _frontend_risk_payload(risk):
@@ -2011,17 +2031,13 @@ def _frontend_asset_matches(
     return True
 
 
-def _frontend_inventory_status(ownership_status, is_known):
-    if ownership_status == "CONFIRMED":
-        if is_known is True:
-            return "Known"
-        if is_known is False:
-            return "Shadow"
-    if ownership_status == "CANDIDATE":
-        return "Candidate"
-    if ownership_status == "EXTERNAL":
-        return "External"
-    return ""
+def _frontend_inventory_status(asset_class):
+    return {
+        "KNOWN": "Known",
+        "SHADOW": "Shadow",
+        "CANDIDATE": "Candidate",
+        "EXTERNAL": "External",
+    }.get(asset_class, "")
 
 
 _FRONTEND_ASSET_SORT_FIELDS = frozenset({"domain", "priority", "risk_score"})
@@ -2416,32 +2432,23 @@ def frontend_v2_overview():
             "needs_attention": [],
         }
 
-    cur.execute("""
-        SELECT
-            COUNT(*) FILTER (WHERE d.ownership_status = 'CONFIRMED'),
-            COUNT(*) FILTER (
-                WHERE d.ownership_status = 'CONFIRMED' AND d.is_known = TRUE
-            ),
-            COUNT(*) FILTER (
-                WHERE d.ownership_status = 'CONFIRMED' AND d.is_known = FALSE
-            ),
-            COUNT(*) FILTER (WHERE d.ownership_status = 'CANDIDATE'),
-            COUNT(*) FILTER (WHERE d.ownership_status = 'EXTERNAL')
-        FROM scan_results sr
-        JOIN domains d ON d.id = sr.domain_id
-        WHERE sr.scan_id = %s
-    """, (current,))
-    organizational, known, shadow, candidate, external = cur.fetchone()
+    asset_classes = _current_scan_asset_classes(cur, current)
+    known = sum(value == "KNOWN" for value in asset_classes.values())
+    shadow = sum(value == "SHADOW" for value in asset_classes.values())
+    candidate = sum(value == "CANDIDATE" for value in asset_classes.values())
+    external = sum(value == "EXTERNAL" for value in asset_classes.values())
+    organizational = known + shadow
 
     new_assets = 0
     disappeared_assets = 0
     if previous is not None:
-        cur.execute("""
+        current_class = reporting_asset_class_sql("d.domain", "d.ownership_status")
+        cur.execute(f"""
             SELECT COUNT(*)
             FROM scan_results current_sr
             JOIN domains d ON d.id = current_sr.domain_id
             WHERE current_sr.scan_id = %s
-              AND d.ownership_status = 'CONFIRMED'
+              AND ({current_class}) IN ('KNOWN', 'SHADOW')
               AND NOT EXISTS (
                   SELECT 1
                   FROM scan_results previous_sr
@@ -2451,12 +2458,12 @@ def frontend_v2_overview():
         """, (current, previous))
         new_assets = cur.fetchone()[0]
 
-        cur.execute("""
+        cur.execute(f"""
             SELECT COUNT(*)
             FROM scan_results previous_sr
             JOIN domains d ON d.id = previous_sr.domain_id
             WHERE previous_sr.scan_id = %s
-              AND d.ownership_status = 'CONFIRMED'
+              AND ({current_class}) IN ('KNOWN', 'SHADOW')
               AND NOT EXISTS (
                   SELECT 1
                   FROM scan_results current_sr
@@ -2466,7 +2473,7 @@ def frontend_v2_overview():
         """, (previous, current))
         disappeared_assets = cur.fetchone()[0]
 
-    risks = calculate_scan_risks(cur, current)
+    risks = _current_scan_risks(cur, current, asset_classes)
     conn.close()
 
     risk_distribution = {
@@ -2531,9 +2538,7 @@ def frontend_v2_assets(
         conn.close()
         return {"scan_id": None, "page": page, "limit": limit, "count": 0, "assets": []}
 
-    risk_by_domain = {
-        risk.domain_id: risk for risk in calculate_scan_risks(cur, scan_id)
-    }
+    asset_classes = _current_scan_asset_classes(cur, scan_id)
     cur.execute("""
         SELECT
             d.id, d.domain, d.is_known, d.ownership_status,
@@ -2554,6 +2559,10 @@ def frontend_v2_assets(
         ORDER BY d.domain ASC, d.id ASC
     """, (scan_id,))
     rows = cur.fetchall()
+    risk_by_domain = {
+        risk.domain_id: risk
+        for risk in _current_scan_risks(cur, scan_id, asset_classes)
+    }
     conn.close()
 
     assets = []
@@ -2563,7 +2572,7 @@ def frontend_v2_assets(
             first_seen, last_seen, ip, has_ip, http_outcome, http_status,
             title, final_url, asset_provider, asn,
         ) = row
-        classification = _frontend_asset_class(ownership_status, is_known)
+        classification = asset_classes.get(domain_id, "CANDIDATE")
         risk = risk_by_domain.get(domain_id)
 
         if not _frontend_asset_matches(
@@ -2624,9 +2633,7 @@ def frontend_v2_assets_export(
         conn.close()
         raise HTTPException(status_code=404, detail="no authoritative scan yet")
 
-    risk_by_domain = {
-        risk.domain_id: risk for risk in calculate_scan_risks(cur, scan_id)
-    }
+    asset_classes = _current_scan_asset_classes(cur, scan_id)
     cur.execute("""
         SELECT
             d.id, d.domain, d.is_known, d.ownership_status,
@@ -2666,6 +2673,10 @@ def frontend_v2_assets_export(
         ORDER BY d.domain ASC, d.id ASC
     """, (scan_id,))
     rows = cur.fetchall()
+    risk_by_domain = {
+        risk.domain_id: risk
+        for risk in _current_scan_risks(cur, scan_id, asset_classes)
+    }
     conn.close()
 
     output = io.StringIO(newline="")
@@ -2685,7 +2696,7 @@ def frontend_v2_assets_export(
             title, final_url, asset_provider, asn, ports, technologies,
             findings,
         ) = row
-        classification = _frontend_asset_class(ownership_status, is_known)
+        classification = asset_classes.get(domain_id, "CANDIDATE")
         risk = risk_by_domain.get(domain_id)
         if not _frontend_asset_matches(
             domain, ownership_status, classification, asset_provider,
@@ -2715,7 +2726,7 @@ def frontend_v2_assets_export(
         writer.writerow([
             domain,
             ownership_status,
-            _frontend_inventory_status(ownership_status, is_known),
+            _frontend_inventory_status(asset_classes.get(domain_id, "CANDIDATE")),
             ip,
             http_status,
             final_url,
@@ -2769,6 +2780,8 @@ def frontend_v2_asset_detail(domain_name: str):
         domain_id, is_known, ownership_status, first_seen_scan,
         last_seen_scan, first_seen_at, last_seen_at, seed,
     ) = identity
+    asset_classes = _current_scan_asset_classes(cur, scan_id)
+    asset_class = asset_classes.get(domain_id, "CANDIDATE")
 
     cur.execute("""
         SELECT ip, has_ip, reverse_dns, http_observation_status,
@@ -2875,6 +2888,7 @@ def frontend_v2_asset_detail(domain_name: str):
         (
             item for item in calculate_scan_risks(cur, scan_id)
             if item.domain_id == domain_id
+            and asset_class in ("KNOWN", "SHADOW")
         ),
         None,
     )
@@ -2885,7 +2899,7 @@ def frontend_v2_asset_detail(domain_name: str):
         "domain": domain_name,
         "ownership_status": ownership_status,
         "is_known": is_known,
-        "asset_class": _frontend_asset_class(ownership_status, is_known),
+        "asset_class": asset_class,
         "first_seen_scan": first_seen_scan,
         "last_seen_scan": last_seen_scan,
         "first_seen_at": first_seen_at,
@@ -2949,7 +2963,7 @@ def frontend_v2_review_ownership(
 
         cur.execute(
             """
-            SELECT d.is_known, d.ownership_status
+            SELECT d.id, d.is_known, d.ownership_status
             FROM scan_results sr
             JOIN domains d ON d.id = sr.domain_id
             WHERE sr.scan_id = %s AND d.domain = %s
@@ -2963,7 +2977,7 @@ def frontend_v2_review_ownership(
                 detail="domain not found in current authoritative scan",
             )
 
-        is_known, previous_status = current
+        current_domain_id, is_known, previous_status = current
         try:
             updated = apply_ownership(cur, domain, target_status)
         except ValueError as exc:
@@ -2971,6 +2985,9 @@ def frontend_v2_review_ownership(
         if not updated:
             raise HTTPException(status_code=404, detail="domain not found")
 
+        asset_class = _current_scan_asset_classes(cur, scan_id).get(
+            current_domain_id, "CANDIDATE"
+        )
         conn.commit()
         return {
             "scan_id": scan_id,
@@ -2978,7 +2995,7 @@ def frontend_v2_review_ownership(
             "previous_ownership_status": previous_status,
             "ownership_status": target_status,
             "is_known": bool(is_known),
-            "asset_class": _frontend_asset_class(target_status, bool(is_known)),
+            "asset_class": asset_class,
         }
     except HTTPException:
         conn.rollback()
@@ -3318,9 +3335,10 @@ def frontend_v2_review_indicators():
     )
     redirect_rows = cur.fetchall()
 
+    asset_classes = _current_scan_asset_classes(cur, scan_id)
     cur.execute(
         """
-        SELECT d.domain, d.ownership_status, d.is_known
+        SELECT d.id, d.domain, d.ownership_status, d.is_known
         FROM scan_results sr
         JOIN domains d ON d.id = sr.domain_id
         WHERE sr.scan_id = %s
@@ -3328,8 +3346,8 @@ def frontend_v2_review_indicators():
         (scan_id,),
     )
     current_assets = {
-        domain.lower().rstrip("."): (ownership_status, is_known)
-        for domain, ownership_status, is_known in cur.fetchall()
+        domain.lower().rstrip("."): (domain_id, ownership_status, is_known)
+        for domain_id, domain, ownership_status, is_known in cur.fetchall()
     }
     conn.close()
 
@@ -3347,16 +3365,25 @@ def frontend_v2_review_indicators():
         if final_hostname == source_hostname:
             continue
 
+        source_asset = current_assets.get(source_hostname)
+        source_class = (
+            asset_classes.get(source_asset[0], "CANDIDATE")
+            if source_asset else "CANDIDATE"
+        )
         destination = current_assets.get(final_hostname)
-        destination_ownership = destination[0] if destination else None
-        destination_known = bool(destination[1]) if destination else False
-        destination_confirmed = destination_ownership == "CONFIRMED"
+        destination_domain_id = destination[0] if destination else None
+        destination_ownership = destination[1] if destination else None
+        destination_class = (
+            asset_classes.get(destination_domain_id, "CANDIDATE")
+            if destination else None
+        )
+        destination_confirmed = destination_class in ("KNOWN", "SHADOW")
         indicators.append({
             "type": "CROSS_HOST_HTTP_REDIRECT",
             "domain": domain,
             "ownership_status": ownership_status,
             "is_known": bool(is_known),
-            "asset_class": _frontend_asset_class(ownership_status, is_known),
+            "asset_class": source_class,
             "http_observation_status": observation_status,
             "http_status": http_status,
             "final_url": final_url,
@@ -3364,10 +3391,7 @@ def frontend_v2_review_indicators():
             "final_hostname": final_hostname,
             "destination_confirmed": destination_confirmed,
             "destination_ownership_status": destination_ownership,
-            "destination_asset_class": (
-                _frontend_asset_class(destination_ownership, destination_known)
-                if destination else None
-            ),
+            "destination_asset_class": destination_class,
         })
 
     return {

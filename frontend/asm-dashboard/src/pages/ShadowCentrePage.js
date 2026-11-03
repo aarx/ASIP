@@ -55,9 +55,7 @@ export default function ShadowCentrePage({ query }) {
   if (status === "error") return <ErrorState title="Shadow Centre unavailable" copy="The current Shadow inventory could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
   if (data.scan_id == null) return <EmptyState />;
 
-  const assets = (data.assets || []).filter((asset) => (
-    asset.ownership_status === "CONFIRMED" && asset.asset_class === "SHADOW"
-  ));
+  const assets = (data.assets || []).filter((asset) => asset.asset_class === "SHADOW");
   const totalPages = Math.max(Math.ceil(data.count / LIMIT), 1);
   return (
     <div className="shadow-workspace">

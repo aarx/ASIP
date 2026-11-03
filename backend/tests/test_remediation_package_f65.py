@@ -85,6 +85,9 @@ class OwnershipReviewApiTests(unittest.TestCase):
         cursor = QueueCursor(rows)
         connection = FakeConnection(cursor)
         self.main.get_conn = lambda: connection
+        self.main._current_scan_asset_classes = mock.Mock(return_value={
+            99: "EXTERNAL" if target == "EXTERNAL" else "SHADOW",
+        })
         request = self.main.OwnershipReviewRequest(ownership_status=target)
         result = self.main.frontend_v2_review_ownership(domain, request)
         return result, connection, cursor
@@ -92,7 +95,7 @@ class OwnershipReviewApiTests(unittest.TestCase):
     def test_candidate_can_be_confirmed_and_remains_shadow_when_not_known(self):
         result, connection, cursor = self.call_review(
             "CONFIRMED",
-            [(False, "CANDIDATE"), (False,), ("candidate.example",)],
+            [(99, False, "CANDIDATE"), (False,), ("candidate.example",)],
         )
 
         self.assertEqual(result["ownership_status"], "CONFIRMED")
@@ -107,7 +110,7 @@ class OwnershipReviewApiTests(unittest.TestCase):
     def test_candidate_can_be_marked_external_for_only_requested_domain(self):
         result, connection, cursor = self.call_review(
             "EXTERNAL",
-            [(False, "CANDIDATE"), (False,), ("candidate.example",)],
+            [(99, False, "CANDIDATE"), (False,), ("candidate.example",)],
         )
 
         self.assertEqual(result["ownership_status"], "EXTERNAL")
@@ -150,7 +153,7 @@ class OwnershipReviewApiTests(unittest.TestCase):
             )
 
     def test_known_inventory_cannot_be_marked_external(self):
-        cursor = QueueCursor([(True, "CONFIRMED"), (True,)])
+        cursor = QueueCursor([(99, True, "CONFIRMED"), (True,)])
         connection = FakeConnection(cursor)
         self.main.get_conn = lambda: connection
         with self.assertRaises(HTTPException) as rejected:

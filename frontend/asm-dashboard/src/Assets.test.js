@@ -413,6 +413,26 @@ test("asset detail preserves legacy-only technology labels and empty states", as
   expect(await screen.findByText("No technology evidence available.")).toBeInTheDocument();
 });
 
+test("asset detail uses effective outside-scope class over historical confirmation", async () => {
+  window.location.hash = "#/assets/legacy-outside.example";
+  getV2AssetDetail.mockResolvedValue({
+    ...candidateDetail,
+    domain: "legacy-outside.example",
+    ownership_status: "CONFIRMED",
+    asset_class: "CANDIDATE",
+    risk: null,
+  });
+
+  render(<App />);
+
+  expect((await screen.findAllByText("CANDIDATE")).length).toBeGreaterThan(0);
+  expect(screen.getByText("Current ownership").parentElement).toHaveTextContent("CONFIRMED");
+  expect(screen.getByText("No organizational canonical risk applies to CANDIDATE assets.")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open asset inventory" })).toHaveAttribute(
+    "href", "#/assets?asset_class=CANDIDATE"
+  );
+});
+
 test("ownership review confirms only after confirmation and refreshes classification", async () => {
   window.location.hash = "#/assets/candidate.example?return=brand";
   getV2AssetDetail

@@ -280,7 +280,7 @@ class CanonicalIntegrationContractTests(unittest.TestCase):
             start = main.index(f"def {function_name}(")
             end = main.find("\n@app.get", start)
             block = main[start:end]
-            self.assertIn("calculate_scan_risks(cur, scan_id)", block)
+            self.assertIn("_current_scan_risks(cur, scan_id)", block)
             self.assertIn('http_observation_status == "NO_RESPONSE"', block)
             self.assertNotIn("COUNT(sp.port)", block)
 

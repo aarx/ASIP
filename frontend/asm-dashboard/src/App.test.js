@@ -102,7 +102,7 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByRole("link", { name: "Low 11" })).toHaveAttribute("href", "#/assets?priority=Low&limit=25");
   expect(screen.getByRole("link", { name: "Open Known assets" })).toHaveAttribute("href", "#/assets?asset_class=KNOWN&limit=25");
   expect(screen.getByRole("link", { name: "Open Shadow assets" })).toHaveAttribute("href", "#/shadow");
-  expect(screen.getByRole("link", { name: "Open Candidate assets" })).toHaveAttribute("href", "#/brand?ownership=CANDIDATE");
+  expect(screen.getByRole("link", { name: "Open Candidate assets" })).toHaveAttribute("href", "#/assets?asset_class=CANDIDATE&limit=25");
   expect(screen.getByRole("link", { name: "Open External assets" })).toHaveAttribute("href", "#/brand?ownership=EXTERNAL");
   const attentionPanel = screen.getByText("Needs attention").closest("section");
   const certificatePanel = screen.getByText("Certificate health").closest("section");

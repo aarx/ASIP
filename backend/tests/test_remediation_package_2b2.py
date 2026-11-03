@@ -713,7 +713,10 @@ class AuthoritativeHistoryTests(unittest.TestCase):
         self.assertLess(sql.index("s.status = 'succeeded'"), sql.index("lag("))
 
     def test_risky_domains_volatility_filters_before_lag(self):
-        response, cursor = self.run_endpoint("risky_domains")
+        with mock.patch.object(
+            self.main, "_current_scan_asset_classes", return_value={}
+        ):
+            response, cursor = self.run_endpoint("risky_domains")
 
         self.assertEqual(response, [])
         volatility_sql = next(

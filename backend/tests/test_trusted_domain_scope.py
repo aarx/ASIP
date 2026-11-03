@@ -26,6 +26,7 @@ from ownership import (  # noqa: E402
     is_within_trusted_boundary,
     normalize_hostname,
     ownership_for_discovery,
+    reporting_asset_class_sql,
     trusted_boundary_sql,
 )
 
@@ -286,6 +287,41 @@ class EligibilityAndAuthorizationTests(unittest.TestCase):
         self.assertIn("LENGTH(", sql)
         self.assertIn("TRIM(TRAILING '.'", sql)
         self.assertIn("AND TRIM(TRAILING '.' FROM LOWER(BTRIM(d.domain))) = TRIM(TRAILING '.' FROM LOWER(BTRIM(known_host.domain)))", " ".join(sql.split()))
+
+    def test_reporting_class_sql_uses_current_trust_and_preserves_manual_status(self):
+        sql = " ".join(reporting_asset_class_sql("d.domain", "d.ownership_status").split())
+        external = sql.index("WHEN d.ownership_status = 'EXTERNAL'")
+        candidate = sql.index("WHEN d.ownership_status = 'CANDIDATE'")
+        known = sql.index("WHEN ( LOWER(BTRIM(d.domain))")
+        self.assertLess(external, candidate)
+        self.assertLess(candidate, known)
+        self.assertIn("FROM known_domains known_host", sql)
+        self.assertIn("FROM seed_domains seed_root", sql)
+        self.assertIn("ELSE 'CANDIDATE'", sql)
+        self.assertNotIn("ownership_status = 'CONFIRMED' THEN 'SHADOW'", sql)
+        self.assertNotIn("active_scan_scopes", sql.lower())
+
+    def test_reporting_class_query_is_limited_to_current_scan_members(self):
+        import main
+
+        class Cursor:
+            def __init__(self):
+                self.executed = None
+
+            def execute(self, sql, params):
+                self.executed = (sql, params)
+
+            def fetchall(self):
+                return [(1, "KNOWN"), (2, "SHADOW"), (3, "CANDIDATE")]
+
+        cursor = Cursor()
+        classes = main._current_scan_asset_classes(cursor, 17)
+        sql, params = cursor.executed
+        self.assertEqual(classes, {1: "KNOWN", 2: "SHADOW", 3: "CANDIDATE"})
+        self.assertIn("FROM scan_results sr", sql)
+        self.assertIn("WHERE sr.scan_id = %s", sql)
+        self.assertEqual(params, (17,))
+        self.assertNotRegex(sql, r"(?i)\b(update|insert|delete)\b")
 
 
 if __name__ == "__main__":
