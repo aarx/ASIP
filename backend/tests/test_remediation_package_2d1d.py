@@ -707,6 +707,22 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def runtime_check_by_name(self, domain_name, testing_level="HTTP_TLS_OBSERVATION",
+                              scan_id=42, required_scan_status="RUNNING"):
+        connection = self.connect()
+        try:
+            with connection:
+                with connection.cursor() as cursor:
+                    return recheck_active_authorization(
+                        cursor,
+                        scan_id=scan_id,
+                        domain_name=domain_name,
+                        testing_level=testing_level,
+                        required_scan_status=required_scan_status,
+                    )
+        finally:
+            connection.close()
+
     def test_runtime_recheck_enforces_current_sql_authorization_state(self):
         domain_id = self.domain("app.example.com", 42)
         self.assertEqual(self.runtime_check(domain_id), (True, "authorized"))
@@ -736,6 +752,18 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.sql("UPDATE active_scan_scopes SET testing_level='PORT_SCAN'")
         self.sql("UPDATE scans SET status='SUCCEEDED' WHERE id=42")
         self.assertFalse(self.runtime_check(domain_id, "PORT_SCAN")[0])
+
+    def test_redirect_host_recheck_requires_current_membership_and_full_policy(self):
+        domain_id = self.domain("child.example.com", 42)
+        self.sql("UPDATE domains SET ownership_status='CONFIRMED' WHERE id=%s", (domain_id,))
+        self.sql("INSERT INTO seed_domains VALUES ('example.com')")
+        self.authorize_scope("example.com", "HTTP_TLS_OBSERVATION")
+        self.assertEqual(self.runtime_check_by_name("CHILD.EXAMPLE.COM."),
+                         (True, "authorized"))
+        self.assertFalse(self.runtime_check_by_name("outside.example.com")[0])
+        self.sql("UPDATE domains SET scannable=FALSE WHERE id=%s", (domain_id,))
+        self.assertFalse(self.runtime_check_by_name("child.example.com")[0])
+
 
     def test_runtime_recheck_requires_central_operation_policy_for_manual_rows(self):
         domain_id = self.domain("manual.example.com", 42)

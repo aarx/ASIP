@@ -1,9 +1,10 @@
 import http.client
 import ipaddress
+import os
 import re
 import socket
 import ssl
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 
 TIMEOUT = 8
@@ -12,6 +13,8 @@ HTTP_RESPONDED = "RESPONDED"
 HTTP_NO_RESPONSE = "NO_RESPONSE"
 HTTP_FAILED = "FAILED"
 HTTP_UNKNOWN = "UNKNOWN"
+DEFAULT_MAX_REDIRECT_HOPS = 5
+MAX_REDIRECT_HOPS_LIMIT = 10
 
 
 class AuthorizationDeniedError(RuntimeError):
@@ -31,6 +34,7 @@ def _empty_result(status, *, requested_url=None, stop_reason="observation_unavai
             "http_status": None,
             "first_hop_location": None,
             "first_hop_destination": None,
+            "last_observed_destination": None,
             "observed_hops": [],
             "verified_terminal_url": None,
             "completion_status": "UNKNOWN",
@@ -129,14 +133,60 @@ def _title(text):
     return re.sub(r"\s+", " ", match.group(1)).strip() if match else ""
 
 
+def _max_redirect_hops():
+    try:
+        configured = int(os.environ.get("ASIP_MAX_REDIRECT_HOPS", DEFAULT_MAX_REDIRECT_HOPS))
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_REDIRECT_HOPS
+    return min(max(configured, 0), MAX_REDIRECT_HOPS_LIMIT)
+
+
+def _normalize_http_url(value, base_url=None):
+    value = str(value or "").strip()
+    if (
+        not value
+        or any(ord(char) < 0x20 or char.isspace() for char in value)
+        or "\\" in value
+        or re.search(r"%(?![0-9a-fA-F]{2})", value)
+    ):
+        raise ValueError("invalid URL characters")
+    candidate = urljoin(base_url, value) if base_url else value
+    parsed = urlsplit(candidate)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise ValueError("unsupported URL scheme")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("userinfo URLs are not permitted")
+    if not parsed.hostname:
+        raise ValueError("URL hostname is required")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("invalid URL port") from exc
+    expected_port = 443 if scheme == "https" else 80
+    if port is not None and port != expected_port:
+        raise ValueError("nonstandard URL port is not permitted")
+
+    host = parsed.hostname.rstrip(".").lower()
+    try:
+        host = ipaddress.ip_address(host).compressed
+    except ValueError:
+        host = host.encode("idna").decode("ascii")
+    if ":" in host:
+        host = f"[{host}]"
+    path = parsed.path or "/"
+    return urlunsplit((scheme, host, path, parsed.query, ""))
+
+
 def _redirect_evidence(requested_url, status, location):
-    """Describe only the response observed; never request its Location."""
+    """Describe an observed redirect response without following it."""
     is_redirect = 300 <= int(status or 0) < 400
     evidence = {
         "requested_url": requested_url,
         "http_status": int(status or 0),
         "first_hop_location": location if is_redirect else None,
         "first_hop_destination": None,
+        "last_observed_destination": None,
         "observed_hops": [],
         "verified_terminal_url": requested_url if not is_redirect else None,
         "completion_status": "COMPLETE" if not is_redirect else "UNRESOLVED",
@@ -150,17 +200,13 @@ def _redirect_evidence(requested_url, status, location):
         return evidence
 
     try:
-        destination = urljoin(requested_url, str(location).strip())
-        parsed = urlsplit(destination)
-        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("Location must resolve to an HTTP(S) URL")
-        # Accessing port validates malformed port syntax without making a request.
-        _ = parsed.port
+        destination = _normalize_http_url(location, requested_url)
     except (TypeError, ValueError):
         evidence["stop_reason"] = "invalid_location"
         return evidence
 
     evidence["first_hop_destination"] = destination
+    evidence["last_observed_destination"] = destination
     evidence["observed_hops"] = [{
         "source_url": requested_url,
         "http_status": int(status),
@@ -172,55 +218,83 @@ def _redirect_evidence(requested_url, status, location):
     return evidence
 
 
-def _observe_once(domain, scheme, expected_ip=None, before_request=None):
+def _request_url(url, *, expected_ip=None, before_request=None, on_request=None):
     if before_request is None:
         raise AuthorizationDeniedError("authorization check is required")
+    normalized_url = _normalize_http_url(url)
+    parsed = urlsplit(normalized_url)
+    domain = parsed.hostname
+    scheme = parsed.scheme
     port = 443 if scheme == "https" else 80
+    target_domain = domain
+    # Do not even resolve a redirect destination until its exact hostname has
+    # passed a fresh current-scan authorization check.
+    def recheck():
+        try:
+            return bool(before_request(target_domain))
+        except Exception as exc:
+            raise AuthorizationDeniedError("authorization check failed") from exc
+
+    if not recheck():
+        raise AuthorizationDeniedError("authorization is no longer valid")
     addresses = _resolve_allowed_addresses(domain, port, expected_ip)
     if not addresses:
         raise OSError("no permitted destination address")
 
     last_error = None
     for address in addresses:
-        if not before_request():
+        if not recheck():
             raise AuthorizationDeniedError("authorization is no longer valid")
         connection = None
         sock = None
+        request_started = False
         try:
             sock = _connect_pinned(domain, scheme, address)
-            connection = http.client.HTTPConnection(domain, timeout=TIMEOUT)
+            connection = http.client.HTTPConnection(domain, port=port, timeout=TIMEOUT)
             connection.sock = sock
+            authority = f"[{domain}]" if ":" in domain else domain
+            if not recheck():
+                raise AuthorizationDeniedError("authorization is no longer valid")
+            if on_request is not None:
+                on_request()
+            request_started = True
             connection.request(
-                "GET", "/",
+                "GET", urlunsplit(("", "", parsed.path or "/", parsed.query, "")),
                 headers={
-                    "Host": domain,
+                    "Host": authority,
                     "User-Agent": "ShadowRecon-observer/1.0",
                     "Connection": "close",
                 },
             )
             response = connection.getresponse()
-            body = response.read(MAX_BODY_BYTES).decode("utf-8", errors="replace")
+            try:
+                body = response.read(MAX_BODY_BYTES).decode("utf-8", errors="replace")
+                read_error = None
+            except (OSError, TimeoutError, http.client.HTTPException) as exc:
+                body = ""
+                read_error = exc
             location = response.getheader("Location")
-            requested_url = f"{scheme}://{domain}/"
             redirect_evidence = _redirect_evidence(
-                requested_url, response.status, location
+                normalized_url, response.status, location
             )
-            terminal_url = redirect_evidence["verified_terminal_url"]
-            terminal_status = response.status if terminal_url else None
             return {
                 "http_observation_status": HTTP_RESPONDED,
                 "http_status": response.status,
                 "http_reason": response.reason or "",
-                # Redirect destinations are evidence only; traversal stays disabled.
-                "final_url": terminal_url,
-                "final_status": terminal_status,
+                "final_url": normalized_url if not 300 <= response.status < 400 and read_error is None else None,
+                "final_status": response.status if not 300 <= response.status < 400 and read_error is None else None,
                 "redirect_count": len(redirect_evidence["observed_hops"]),
                 "redirect_evidence": redirect_evidence,
                 "title": _title(body),
+                "read_error": read_error,
             }
         except AuthorizationDeniedError:
             raise
         except Exception as exc:
+            if request_started:
+                # Do not duplicate an HTTP request after an ambiguous timeout
+                # or response failure. The current hop ends unresolved.
+                raise
             last_error = exc
         finally:
             if connection is not None:
@@ -236,8 +310,136 @@ def _observe_once(domain, scheme, expected_ip=None, before_request=None):
     raise last_error or OSError("observation failed")
 
 
+def _observe_once(domain, scheme, expected_ip=None, before_request=None):
+    """Observe one URL without redirects; retained for existing callers/tests."""
+    url = _normalize_http_url(f"{scheme}://{domain}/")
+    return _request_url(
+        url,
+        expected_ip=expected_ip,
+        before_request=before_request,
+    )
+
+
+def _observe_chain(start_url, *, expected_ip=None, before_request=None):
+    evidence = {
+        "requested_url": start_url,
+        "http_status": None,
+        "first_hop_location": None,
+        "first_hop_destination": None,
+        "last_observed_destination": None,
+        "observed_hops": [],
+        "verified_terminal_url": None,
+        "completion_status": "UNRESOLVED",
+        "stop_reason": None,
+    }
+    first_status = None
+    first_reason = ""
+    title = ""
+    current_url = start_url
+    seen = {_normalize_http_url(start_url)}
+    followed_hops = 0
+    max_hops = _max_redirect_hops()
+    pending_hop = None
+
+    while True:
+        is_initial = current_url == start_url
+
+        def mark_followed():
+            if pending_hop is not None:
+                pending_hop["followed"] = True
+
+        try:
+            response = _request_url(
+                current_url,
+                expected_ip=expected_ip if is_initial else None,
+                before_request=before_request,
+                on_request=None if is_initial else mark_followed,
+            )
+        except AuthorizationDeniedError:
+            evidence["stop_reason"] = "authorization_denied"
+            break
+        except (OSError, TimeoutError, http.client.HTTPException, ValueError):
+            evidence["stop_reason"] = "network_or_url_error"
+            break
+
+        status = int(response["http_status"])
+        if pending_hop is not None:
+            pending_hop = None
+        if first_status is None:
+            first_status = status
+            first_reason = response["http_reason"]
+            title = response["title"]
+            evidence["http_status"] = status
+        if not 300 <= status < 400:
+            if response.get("read_error") is not None:
+                evidence["stop_reason"] = "response_read_timeout"
+                break
+            evidence["verified_terminal_url"] = current_url
+            evidence["completion_status"] = "COMPLETE"
+            evidence["stop_reason"] = None
+            return {
+                "http_observation_status": HTTP_RESPONDED,
+                "http_status": first_status,
+                "http_reason": first_reason,
+                "final_url": current_url,
+                "final_status": status,
+                "redirect_count": len(evidence["observed_hops"]),
+                "redirect_evidence": evidence,
+                "title": response["title"] or title,
+            }
+
+        hop_evidence = response["redirect_evidence"]
+        location = hop_evidence.get("first_hop_location")
+        destination = hop_evidence.get("first_hop_destination")
+        if evidence["first_hop_location"] is None:
+            evidence["first_hop_location"] = location
+            evidence["first_hop_destination"] = destination
+        if not destination:
+            evidence["stop_reason"] = hop_evidence.get("stop_reason") or "invalid_location"
+            break
+
+        evidence["last_observed_destination"] = destination
+        hop = {
+            "source_url": current_url,
+            "http_status": status,
+            "location": location,
+            "destination_url": destination,
+            "followed": False,
+        }
+        evidence["observed_hops"].append(hop)
+        canonical_destination = _normalize_http_url(destination)
+        if canonical_destination in seen:
+            evidence["stop_reason"] = "redirect_loop"
+            break
+        if followed_hops >= max_hops:
+            evidence["stop_reason"] = "maximum_redirect_hops"
+            break
+
+        # Authorization occurs before destination DNS resolution inside
+        # _request_url, and again immediately before each pinned connection.
+        pending_hop = hop
+        seen.add(canonical_destination)
+        followed_hops += 1
+        current_url = canonical_destination
+
+    return {
+        "http_observation_status": (
+            HTTP_RESPONDED if first_status is not None
+            else HTTP_UNKNOWN if evidence["stop_reason"] == "authorization_denied"
+            else HTTP_NO_RESPONSE
+        ),
+        "http_status": first_status or 0,
+        "http_reason": first_reason,
+        "final_url": None,
+        "final_status": None,
+        "redirect_count": len(evidence["observed_hops"]),
+        "redirect_evidence": evidence,
+        "title": title,
+    }
+
+
 def http_probe(domain, *, before_request=None, expected_ip=None):
-    """Perform bounded observation only after a fresh policy recheck."""
+    """Perform a bounded authorized request chain using individually pinned hops."""
     if before_request is None:
         return _empty_result(HTTP_UNKNOWN, stop_reason="authorization_required")
 
@@ -254,14 +456,27 @@ def http_probe(domain, *, before_request=None, expected_ip=None):
                 stop_reason="authorization_denied",
             )
         attempted = True
-        last_requested_url = f"{scheme}://{domain}/"
         try:
-            return _observe_once(
-                domain,
-                scheme,
+            last_requested_url = _normalize_http_url(f"{scheme}://{domain}/")
+        except ValueError:
+            return _empty_result(
+                HTTP_UNKNOWN,
+                requested_url=None,
+                stop_reason="invalid_requested_url",
+            )
+        try:
+            result = _observe_chain(
+                last_requested_url,
                 expected_ip=expected_ip,
                 before_request=before_request,
             )
+            if (
+                scheme == "https"
+                and result["http_observation_status"] == HTTP_NO_RESPONSE
+                and result["redirect_evidence"].get("stop_reason") == "network_or_url_error"
+            ):
+                continue
+            return result
         except AuthorizationDeniedError:
             return _empty_result(
                 HTTP_UNKNOWN,

@@ -324,10 +324,17 @@ def active_scope_coverage_sql(domain_alias="d", testing_level=None):
 
 
 def recheck_active_authorization(
-    cur, *, scan_id, domain_id, testing_level, required_scan_status="RUNNING"
+    cur, *, scan_id, domain_id=None, domain_name=None, testing_level,
+    required_scan_status="RUNNING"
 ):
     """Perform a fresh, fail-closed authorization check before network I/O."""
     try:
+        if domain_name is None:
+            identity_sql = "d.id = %s"
+            identity_params = (domain_id,)
+        else:
+            identity_sql = "LOWER(TRIM(TRAILING '.' FROM d.domain)) = %s"
+            identity_params = (str(domain_name).strip().lower().rstrip("."),)
         cur.execute(
             f"""
             SELECT 1
@@ -337,12 +344,12 @@ def recheck_active_authorization(
              AND sr.scan_id = %s
             JOIN scans scan
               ON scan.id = sr.scan_id
-            WHERE d.id = %s
+            WHERE {identity_sql}
               AND scan.status = %s
               AND {active_scan_authorization_sql('d', testing_level)}
             LIMIT 1
             """,
-            (scan_id, domain_id, required_scan_status),
+            (scan_id, *identity_params, required_scan_status),
         )
         if cur.fetchone() is None:
             return False, "authorization no longer valid"

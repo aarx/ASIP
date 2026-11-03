@@ -15,11 +15,12 @@ scan_id = int(sys.argv[1])
 TESTING_LEVEL = "HTTP_TLS_OBSERVATION"
 
 
-def _authorize(cur, conn, domain_id):
+def _authorize(cur, conn, domain_id, domain_name=None):
     allowed, reason = recheck_active_authorization(
         cur,
         scan_id=scan_id,
         domain_id=domain_id,
+        domain_name=domain_name,
         testing_level=TESTING_LEVEL,
     )
     # End the policy query transaction before opening a network connection so
@@ -59,8 +60,8 @@ def main():
         result = http_probe(
             domain,
             expected_ip=ip,
-            before_request=lambda domain_id=domain_id: _authorize(
-                cur, conn, domain_id
+            before_request=lambda target_domain=None, domain_id=domain_id: _authorize(
+                cur, conn, domain_id, target_domain
             ),
         )
         if not result:

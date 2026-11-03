@@ -44,11 +44,12 @@ def main():
     for row in rows:
         domain_id, domain = row[:2]
         ip = row[2] if len(row) > 2 else None
-        def authorized():
+        def authorized(target_domain=None):
             allowed, reason = recheck_active_authorization(
                 cur,
                 scan_id=scan_id,
                 domain_id=domain_id,
+                domain_name=target_domain,
                 testing_level="HTTP_TLS_OBSERVATION",
             )
             conn.commit()
