@@ -116,9 +116,9 @@ export default function RiskExposurePage({ query }) {
               <tbody>{reviewIndicators.indicators.map((indicator) => (
                 <tr key={`${indicator.type}-${indicator.domain}-${indicator.final_url}`}>
                   <td><AssetLink domain={indicator.domain} returnTo="risk" /><StatusBadge value={indicator.asset_class} /></td>
-                  <td><strong>Cross-host redirect</strong><span className="asset-secondary">Review only · not a vulnerability conclusion</span></td>
+                  <td><strong>{indicator.final_url_verification === "LEGACY_UNKNOWN" ? "Legacy redirect URL (verification unknown)" : "Cross-host redirect observed"}</strong><span className="asset-secondary">Review only · not a vulnerability conclusion</span></td>
                   <td><StatusBadge value={indicator.http_observation_status} /><span className="asset-secondary">{indicator.http_status} → {indicator.final_status ?? "—"}</span></td>
-                  <td><span className="review-destination technical-value" title={indicator.final_url}>{indicator.final_url}</span><span className="asset-secondary">{indicator.final_hostname}</span></td>
+                  <td><span className="review-destination technical-value" title={indicator.observed_redirect_destination || indicator.final_url}>{indicator.observed_redirect_destination || indicator.final_url}</span><span className="asset-secondary">{indicator.final_hostname}</span></td>
                   <td>{indicator.destination_confirmed ? <><StatusBadge value={indicator.destination_asset_class} /><span className="asset-secondary">Independently confirmed current asset</span></> : <><span className="not-applicable">Not currently confirmed</span><span className="asset-secondary">No ownership or testing authorization by redirect</span></>}</td>
                   <td><AssetLink domain={indicator.domain} returnTo="risk" className="row-action">→</AssetLink></td>
                 </tr>

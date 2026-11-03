@@ -1,5 +1,6 @@
 """Authorized HTTP/TLS observation for the current scan."""
 
+import json
 import sys
 
 from authorization_policy import (
@@ -69,7 +70,8 @@ def main():
         if outcome != "RESPONDED":
             cur.execute("""
                 UPDATE domain_states
-                   SET http_observation_status = %s
+                   SET http_observation_status = %s,
+                       http_redirect_evidence = %s::jsonb
                  WHERE domain_id = %s
                    AND scan_id = %s
                    AND COALESCE(http_status, 0) = 0
@@ -78,7 +80,12 @@ def main():
                         WHERE sr.scan_id = domain_states.scan_id
                           AND sr.domain_id = domain_states.domain_id
                    )
-            """, (outcome, domain_id, scan_id))
+            """, (
+                outcome,
+                json.dumps(result.get("redirect_evidence")),
+                domain_id,
+                scan_id,
+            ))
             observed += cur.rowcount
             continue
 
@@ -90,6 +97,7 @@ def main():
                    http_reason = %s,
                    final_url = %s,
                    final_status = %s,
+                   http_redirect_evidence = %s::jsonb,
                    title = %s,
                    http_observation_status = %s
              WHERE domain_id = %s
@@ -106,6 +114,8 @@ def main():
             result["http_reason"],
             result["final_url"],
             result["final_status"],
+            json.dumps(result.get("redirect_evidence"))
+            if result.get("redirect_evidence") is not None else None,
             result["title"][:500],
             outcome,
             domain_id,

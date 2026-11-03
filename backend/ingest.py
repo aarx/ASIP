@@ -1,8 +1,10 @@
 import io
+import json
 import pandas as pd
 import logging
 import os
 import sys
+from urllib.parse import urlsplit
 from db import get_conn, require_running_scan
 from ownership import (
     load_trusted_domains,
@@ -183,12 +185,47 @@ try:
 
         reverse_dns = normalize_artifact_text(row.get("Reverse_DNS", ""))
         http_reason = normalize_artifact_text(row.get("HTTP_Reason", ""))
-        final_url = normalize_artifact_text(row.get("Final_URL", ""))
+        redirect_evidence = {
+            "requested_url": None,
+            "http_status": http_status if http_status else None,
+            "first_hop_location": None,
+            "first_hop_destination": None,
+            "observed_hops": [],
+            "verified_terminal_url": None,
+            "completion_status": "UNKNOWN",
+            "stop_reason": "artifact_redirect_evidence_unavailable",
+        }
+        raw_redirect_evidence = normalize_artifact_text(
+            row.get("HTTP_Redirect_Evidence", "")
+        )
+        if raw_redirect_evidence:
+            try:
+                candidate_evidence = json.loads(raw_redirect_evidence)
+                if isinstance(candidate_evidence, dict):
+                    redirect_evidence = candidate_evidence
+            except (TypeError, ValueError):
+                redirect_evidence["stop_reason"] = "invalid_artifact_redirect_evidence"
 
-        try:
-            final_status = int(row.get("Final_Status", 0))
-        except:
-            final_status = 0
+        # A legacy Final_URL cell is not proof of a terminal response.
+        # New final_url values require structured evidence of a terminal response.
+        final_url = None
+        final_status = None
+        if redirect_evidence.get("completion_status") == "COMPLETE":
+            verified_url = redirect_evidence.get("verified_terminal_url")
+            try:
+                terminal_status = int(redirect_evidence.get("http_status"))
+                parsed_url = urlsplit(str(verified_url or ""))
+                _ = parsed_url.port
+                if (
+                    verified_url
+                    and parsed_url.scheme.lower() in {"http", "https"}
+                    and parsed_url.hostname
+                    and not 300 <= terminal_status < 400
+                ):
+                    final_url = str(verified_url)
+                    final_status = terminal_status
+            except (TypeError, ValueError):
+                pass
 
         title = normalize_artifact_text(row.get("Title", ""))[:500]
         http_observation_status = normalize_http_observation_status(
@@ -274,9 +311,10 @@ try:
                 final_url,
                 final_status,
                 title,
-                http_observation_status
+                http_observation_status,
+                http_redirect_evidence
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
             ON CONFLICT (domain_id, scan_id)
             DO UPDATE SET
                 ip = EXCLUDED.ip,
@@ -288,7 +326,8 @@ try:
                 final_url = EXCLUDED.final_url,
                 final_status = EXCLUDED.final_status,
                 title = EXCLUDED.title,
-                http_observation_status = EXCLUDED.http_observation_status
+                http_observation_status = EXCLUDED.http_observation_status,
+                http_redirect_evidence = EXCLUDED.http_redirect_evidence
             """,
             (
                 scan_id,
@@ -302,7 +341,8 @@ try:
                 final_url,
                 final_status,
                 title,
-                http_observation_status
+                http_observation_status,
+                json.dumps(redirect_evidence)
             )
         )
 

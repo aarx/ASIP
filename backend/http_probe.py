@@ -3,7 +3,7 @@ import ipaddress
 import re
 import socket
 import ssl
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 
 TIMEOUT = 8
@@ -18,14 +18,24 @@ class AuthorizationDeniedError(RuntimeError):
     """A fresh policy check denied a direct target operation."""
 
 
-def _empty_result(status):
+def _empty_result(status, *, requested_url=None, stop_reason="observation_unavailable"):
     return {
         "http_observation_status": status,
         "http_status": 0,
         "http_reason": "",
-        "final_url": "",
-        "final_status": 0,
+        "final_url": None,
+        "final_status": None,
         "redirect_count": 0,
+        "redirect_evidence": {
+            "requested_url": requested_url,
+            "http_status": None,
+            "first_hop_location": None,
+            "first_hop_destination": None,
+            "observed_hops": [],
+            "verified_terminal_url": None,
+            "completion_status": "UNKNOWN",
+            "stop_reason": stop_reason,
+        },
         "title": ""
     }
 
@@ -119,6 +129,49 @@ def _title(text):
     return re.sub(r"\s+", " ", match.group(1)).strip() if match else ""
 
 
+def _redirect_evidence(requested_url, status, location):
+    """Describe only the response observed; never request its Location."""
+    is_redirect = 300 <= int(status or 0) < 400
+    evidence = {
+        "requested_url": requested_url,
+        "http_status": int(status or 0),
+        "first_hop_location": location if is_redirect else None,
+        "first_hop_destination": None,
+        "observed_hops": [],
+        "verified_terminal_url": requested_url if not is_redirect else None,
+        "completion_status": "COMPLETE" if not is_redirect else "UNRESOLVED",
+        "stop_reason": None,
+    }
+    if not is_redirect:
+        return evidence
+
+    if not location or not str(location).strip():
+        evidence["stop_reason"] = "missing_location"
+        return evidence
+
+    try:
+        destination = urljoin(requested_url, str(location).strip())
+        parsed = urlsplit(destination)
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("Location must resolve to an HTTP(S) URL")
+        # Accessing port validates malformed port syntax without making a request.
+        _ = parsed.port
+    except (TypeError, ValueError):
+        evidence["stop_reason"] = "invalid_location"
+        return evidence
+
+    evidence["first_hop_destination"] = destination
+    evidence["observed_hops"] = [{
+        "source_url": requested_url,
+        "http_status": int(status),
+        "location": str(location),
+        "destination_url": destination,
+        "followed": False,
+    }]
+    evidence["stop_reason"] = "redirect_traversal_disabled"
+    return evidence
+
+
 def _observe_once(domain, scheme, expected_ip=None, before_request=None):
     if before_request is None:
         raise AuthorizationDeniedError("authorization check is required")
@@ -149,14 +202,20 @@ def _observe_once(domain, scheme, expected_ip=None, before_request=None):
             body = response.read(MAX_BODY_BYTES).decode("utf-8", errors="replace")
             location = response.getheader("Location")
             requested_url = f"{scheme}://{domain}/"
+            redirect_evidence = _redirect_evidence(
+                requested_url, response.status, location
+            )
+            terminal_url = redirect_evidence["verified_terminal_url"]
+            terminal_status = response.status if terminal_url else None
             return {
                 "http_observation_status": HTTP_RESPONDED,
                 "http_status": response.status,
                 "http_reason": response.reason or "",
-                # Location is metadata only; it is never requested.
-                "final_url": urljoin(requested_url, location) if location else requested_url,
-                "final_status": response.status,
-                "redirect_count": 1 if location else 0,
+                # Redirect destinations are evidence only; traversal stays disabled.
+                "final_url": terminal_url,
+                "final_status": terminal_status,
+                "redirect_count": len(redirect_evidence["observed_hops"]),
+                "redirect_evidence": redirect_evidence,
                 "title": _title(body),
             }
         except AuthorizationDeniedError:
@@ -180,16 +239,22 @@ def _observe_once(domain, scheme, expected_ip=None, before_request=None):
 def http_probe(domain, *, before_request=None, expected_ip=None):
     """Perform bounded observation only after a fresh policy recheck."""
     if before_request is None:
-        return _empty_result(HTTP_UNKNOWN)
+        return _empty_result(HTTP_UNKNOWN, stop_reason="authorization_required")
 
     attempted = False
+    last_requested_url = None
     for scheme in ("https", "http"):
         # Keep policy failures outside the transport exception handler.  A
         # transient database error must stop this target rather than allowing
         # a later fallback authorization query to initiate network traffic.
         if not before_request():
-            return _empty_result(HTTP_UNKNOWN)
+            return _empty_result(
+                HTTP_UNKNOWN,
+                requested_url=last_requested_url,
+                stop_reason="authorization_denied",
+            )
         attempted = True
+        last_requested_url = f"{scheme}://{domain}/"
         try:
             return _observe_once(
                 domain,
@@ -198,7 +263,15 @@ def http_probe(domain, *, before_request=None, expected_ip=None):
                 before_request=before_request,
             )
         except AuthorizationDeniedError:
-            return _empty_result(HTTP_UNKNOWN)
+            return _empty_result(
+                HTTP_UNKNOWN,
+                requested_url=last_requested_url,
+                stop_reason="authorization_denied",
+            )
         except Exception:
             continue
-    return _empty_result(HTTP_NO_RESPONSE if attempted else HTTP_UNKNOWN)
+    return _empty_result(
+        HTTP_NO_RESPONSE if attempted else HTTP_UNKNOWN,
+        requested_url=last_requested_url,
+        stop_reason="no_response" if attempted else "authorization_unavailable",
+    )

@@ -105,8 +105,8 @@ class Package4BApiTests(unittest.TestCase):
             fetchalls=[
                 [("example.com",)],
                 [
-                    ("app.organization.test", 302, "https://example.com/path"),
-                    ("shop.example.com", 301, "https://vendor.example/path"),
+                    ("app.organization.test", 302, "https://example.com/path", None),
+                    ("shop.example.com", 301, "https://vendor.example/path", None),
                 ],
             ]
         )
@@ -117,8 +117,9 @@ class Package4BApiTests(unittest.TestCase):
         self.assertEqual(result, {
             "total": 2,
             "internal": 0,
-            "trusted_external": 1,
-            "untrusted_external": 1,
+            "trusted_external": 0,
+            "untrusted_external": 0,
+            "legacy_unverified": 2,
         })
         redirect_sql, params = cursor.executions[1]
         self.assertIn("JOIN scan_results sr", redirect_sql)

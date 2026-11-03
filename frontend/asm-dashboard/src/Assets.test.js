@@ -38,7 +38,18 @@ const currentAsset = {
   http_observation_status: "RESPONDED",
   http_status: 302,
   title: "Application",
-  final_url: "https://login.example.com",
+  final_url: null,
+  final_status: null,
+  redirect_evidence: {
+    requested_url: "https://app.example.com/",
+    http_status: 302,
+    first_hop_location: "https://login.example.com",
+    first_hop_destination: "https://login.example.com",
+    observed_hops: [{ source_url: "https://app.example.com/", http_status: 302, location: "https://login.example.com", destination_url: "https://login.example.com", followed: false }],
+    verified_terminal_url: null,
+    completion_status: "UNRESOLVED",
+    stop_reason: "redirect_traversal_disabled",
+  },
   provider: "Example Cloud",
   asn: "AS64500",
   risk: { score: 8, priority: "High", reasons: ["shadow_asset", "finding"] },
@@ -70,8 +81,18 @@ const candidateDetail = {
     live: true,
     status: 302,
     reason: "redirect",
-    final_url: "https://vendor.example/login",
-    final_status: 200,
+    final_url: null,
+    final_status: null,
+    redirect_evidence: {
+      requested_url: "https://candidate.example/",
+      http_status: 302,
+      first_hop_location: "https://vendor.example/login",
+      first_hop_destination: "https://vendor.example/login",
+      observed_hops: [{ source_url: "https://candidate.example/", http_status: 302, location: "https://vendor.example/login", destination_url: "https://vendor.example/login", followed: false }],
+      verified_terminal_url: null,
+      completion_status: "UNRESOLVED",
+      stop_reason: "redirect_traversal_disabled",
+    },
     title: "Vendor login",
   },
   ports: [{ port: 443, service: "https" }],
@@ -346,7 +367,7 @@ test("asset detail renders exact evidence and no risk for a Candidate", async ()
   expect(screen.getByText("nginx")).toBeInTheDocument();
   expect(screen.getByText("brand_tld")).toBeInTheDocument();
   expect(screen.getByText("external target")).toBeInTheDocument();
-  expect(screen.getByText("Final destination is outside the reviewed hostname.")).toBeInTheDocument();
+  expect(screen.getByText("Observed redirect destination is outside the reviewed hostname.")).toBeInTheDocument();
   expect(screen.getByText(/observational evidence only and is not authorized for active testing by association/i)).toBeInTheDocument();
   expect(screen.getByText(/does not establish external ownership, malicious activity, or a vulnerability/i)).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open Brand Perimeter" })).toHaveAttribute(

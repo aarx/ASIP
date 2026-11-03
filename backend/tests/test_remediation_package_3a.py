@@ -179,6 +179,16 @@ class SanHttpOutcomePersistenceTests(unittest.TestCase):
             "http_reason": "Not Found",
             "final_url": "https://child.example",
             "final_status": 404,
+            "redirect_evidence": {
+                "requested_url": "https://child.example/",
+                "http_status": 404,
+                "first_hop_location": None,
+                "first_hop_destination": None,
+                "observed_hops": [],
+                "verified_terminal_url": "https://child.example/",
+                "completion_status": "COMPLETE",
+                "stop_reason": None,
+            },
             "title": "",
         }
         module, cursor, connection = self.load_worker(result)
@@ -188,13 +198,24 @@ class SanHttpOutcomePersistenceTests(unittest.TestCase):
         update_sql, update_params = cursor.executions[1]
         self.assertIn("http_observation_status", update_sql)
         self.assertEqual(update_params[0], 404)
-        self.assertEqual(update_params[6], "RESPONDED")
+        self.assertIn('"completion_status": "COMPLETE"', update_params[5])
+        self.assertEqual(update_params[7], "RESPONDED")
         self.assertTrue(connection.committed)
 
     def test_san_http_no_response_persists_outcome_without_response_evidence(self):
         module, cursor, connection = self.load_worker({
             "http_observation_status": "NO_RESPONSE",
             "http_status": 0,
+            "redirect_evidence": {
+                "requested_url": "http://child.example/",
+                "http_status": None,
+                "first_hop_location": None,
+                "first_hop_destination": None,
+                "observed_hops": [],
+                "verified_terminal_url": None,
+                "completion_status": "UNKNOWN",
+                "stop_reason": "no_response",
+            },
         })
 
         module.main()
@@ -203,6 +224,7 @@ class SanHttpOutcomePersistenceTests(unittest.TestCase):
         self.assertIn("SET http_observation_status = %s", update_sql)
         self.assertNotIn("http_status = %s", update_sql)
         self.assertEqual(update_params[0], "NO_RESPONSE")
+        self.assertIn('"stop_reason": "no_response"', update_params[1])
         self.assertTrue(connection.committed)
 
     def test_san_http_failed_persists_failed_outcome(self):

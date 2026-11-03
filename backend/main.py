@@ -53,6 +53,29 @@ logging.basicConfig(
 app = FastAPI(title="ShadowRecon Attack Surface Management API")
 
 
+def _redirect_evidence_payload(evidence, legacy_url=None, legacy_status=None):
+    """Preserve old URL values while explicitly marking their semantics unknown."""
+    if isinstance(evidence, str):
+        try:
+            evidence = json.loads(evidence)
+        except (TypeError, ValueError):
+            evidence = None
+    if isinstance(evidence, dict):
+        return evidence
+    return {
+        "requested_url": None,
+        "http_status": None,
+        "first_hop_location": None,
+        "first_hop_destination": None,
+        "observed_hops": [],
+        "verified_terminal_url": None,
+        "completion_status": "LEGACY_UNKNOWN",
+        "stop_reason": "historical_record_predates_redirect_evidence",
+        "legacy_url": legacy_url,
+        "legacy_status": legacy_status,
+    }
+
+
 class OwnershipReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2544,7 +2567,8 @@ def frontend_v2_assets(
             d.id, d.domain, d.is_known, d.ownership_status,
             d.first_seen_scan, d.last_seen_scan,
             ds.ip, ds.has_ip, ds.http_observation_status, ds.http_status,
-            ds.title, ds.final_url,
+            ds.title, ds.final_url, ds.final_status,
+            ds.http_redirect_evidence,
             COALESCE(dp.provider, 'Unknown'),
             da.asn
         FROM scan_results sr
@@ -2570,7 +2594,8 @@ def frontend_v2_assets(
         (
             domain_id, domain, is_known, ownership_status,
             first_seen, last_seen, ip, has_ip, http_outcome, http_status,
-            title, final_url, asset_provider, asn,
+            title, final_url, final_status, redirect_evidence,
+            asset_provider, asn,
         ) = row
         classification = asset_classes.get(domain_id, "CANDIDATE")
         risk = risk_by_domain.get(domain_id)
@@ -2595,6 +2620,14 @@ def frontend_v2_assets(
             "http_status": http_status,
             "title": title,
             "final_url": final_url,
+            "final_status": final_status,
+            "redirect_evidence": _redirect_evidence_payload(
+                redirect_evidence, final_url, final_status
+            ),
+            "final_url_verification": (
+                redirect_evidence.get("completion_status", "UNKNOWN")
+                if isinstance(redirect_evidence, dict) else "LEGACY_UNKNOWN"
+            ),
             "provider": asset_provider,
             "asn": asn,
             "risk": _frontend_risk_payload(risk),
@@ -2661,6 +2694,7 @@ def frontend_v2_assets_export(
                 FROM domain_findings f
                 WHERE f.domain_id = sr.domain_id AND f.scan_id = sr.scan_id
             ), '')
+            , ds.final_status, ds.http_redirect_evidence
         FROM scan_results sr
         JOIN domains d ON d.id = sr.domain_id
         LEFT JOIN domain_states ds
@@ -2686,6 +2720,8 @@ def frontend_v2_assets_export(
         "HTTP Status", "Final URL", "Title", "Provider", "ASN", "Ports",
         "Technologies", "Findings", "Risk Score", "Priority",
         "Risk Reasons", "First Seen", "Last Seen", "Authoritative Scan",
+        "Final URL Verification", "Observed Redirect Destination",
+        "Redirect Stop Reason",
     ])
 
     export_rows = []
@@ -2694,7 +2730,7 @@ def frontend_v2_assets_export(
             domain_id, domain, is_known, ownership_status,
             first_seen, last_seen, ip, _has_ip, http_outcome, http_status,
             title, final_url, asset_provider, asn, ports, technologies,
-            findings,
+            findings, final_status, redirect_evidence,
         ) = row
         classification = asset_classes.get(domain_id, "CANDIDATE")
         risk = risk_by_domain.get(domain_id)
@@ -2720,8 +2756,11 @@ def frontend_v2_assets_export(
             domain_id, domain, is_known, ownership_status,
             first_seen, last_seen, ip, _has_ip, http_outcome, http_status,
             title, final_url, asset_provider, asn, ports, technologies,
-            findings,
+            findings, final_status, redirect_evidence,
         ) = row
+        evidence = _redirect_evidence_payload(
+            redirect_evidence, final_url, final_status
+        )
         risk = risk_by_domain.get(domain_id)
         writer.writerow([
             domain,
@@ -2742,6 +2781,9 @@ def frontend_v2_assets_export(
             first_seen,
             last_seen,
             scan_id,
+            evidence.get("completion_status"),
+            evidence.get("first_hop_destination"),
+            evidence.get("stop_reason"),
         ])
 
     response = StreamingResponse(
@@ -2786,7 +2828,7 @@ def frontend_v2_asset_detail(domain_name: str):
     cur.execute("""
         SELECT ip, has_ip, reverse_dns, http_observation_status,
                http_live, http_status, http_reason,
-               final_url, final_status, title
+               final_url, final_status, title, http_redirect_evidence
         FROM domain_states
         WHERE domain_id = %s AND scan_id = %s
     """, (domain_id, scan_id))
@@ -2919,6 +2961,15 @@ def frontend_v2_asset_detail(domain_name: str):
             "final_url": state[7] if state else None,
             "final_status": state[8] if state else None,
             "title": state[9] if state else None,
+            "redirect_evidence": _redirect_evidence_payload(
+                state[10] if state else None,
+                state[7] if state else None,
+                state[8] if state else None,
+            ),
+            "final_url_verification": (
+                state[10].get("completion_status", "UNKNOWN")
+                if state and isinstance(state[10], dict) else "LEGACY_UNKNOWN"
+            ),
         },
         "ports": ports,
         "asn": {
@@ -3253,7 +3304,8 @@ def frontend_v2_brand_assets(
             ds.ip, ds.has_ip, ds.http_observation_status,
             ds.http_status, ds.final_url, ds.final_status, ds.title,
             STRING_AGG(DISTINCT src.source, ',' ORDER BY src.source),
-            STRING_AGG(DISTINCT src.seed, ',' ORDER BY src.seed)
+            STRING_AGG(DISTINCT src.seed, ',' ORDER BY src.seed),
+            ds.http_redirect_evidence
         FROM scan_results sr
         JOIN domains d ON d.id = sr.domain_id
         LEFT JOIN domain_states ds
@@ -3267,7 +3319,8 @@ def frontend_v2_brand_assets(
           )
         GROUP BY d.id, d.domain, d.ownership_status,
                  ds.ip, ds.has_ip, ds.http_observation_status,
-                 ds.http_status, ds.final_url, ds.final_status, ds.title
+                 ds.http_status, ds.final_url, ds.final_status, ds.title,
+                 ds.http_redirect_evidence
         ORDER BY d.domain ASC, d.id ASC
     """, (scan_id,))
     rows = cur.fetchall()
@@ -3291,6 +3344,13 @@ def frontend_v2_brand_assets(
             "final_url": row[6],
             "final_status": row[7],
             "title": row[8],
+            "redirect_evidence": _redirect_evidence_payload(
+                row[11], row[6], row[7]
+            ),
+            "final_url_verification": (
+                row[11].get("completion_status", "UNKNOWN")
+                if isinstance(row[11], dict) else "LEGACY_UNKNOWN"
+            ),
             "discovery_sources": row[9].split(",") if row[9] else [],
             "seeds": row[10].split(",") if row[10] else [],
             "risk": None,
@@ -3320,7 +3380,7 @@ def frontend_v2_review_indicators():
         """
         SELECT d.domain, d.ownership_status, d.is_known,
                ds.http_observation_status, ds.http_status,
-               ds.final_url, ds.final_status
+               ds.final_url, ds.final_status, ds.http_redirect_evidence
         FROM scan_results sr
         JOIN domains d ON d.id = sr.domain_id
         JOIN domain_states ds
@@ -3328,7 +3388,13 @@ def frontend_v2_review_indicators():
         WHERE sr.scan_id = %s
           AND ds.http_observation_status = 'RESPONDED'
           AND ds.http_status BETWEEN 300 AND 399
-          AND NULLIF(TRIM(ds.final_url), '') IS NOT NULL
+          AND (
+              NULLIF(TRIM(ds.http_redirect_evidence->>'first_hop_destination'), '') IS NOT NULL
+              OR (
+                  ds.http_redirect_evidence IS NULL
+                  AND NULLIF(TRIM(ds.final_url), '') IS NOT NULL
+              )
+          )
         ORDER BY d.domain ASC, d.id ASC
         """,
         (scan_id,),
@@ -3354,10 +3420,24 @@ def frontend_v2_review_indicators():
     indicators = []
     for (
         domain, ownership_status, is_known, observation_status,
-        http_status, final_url, final_status,
+        http_status, final_url, final_status, raw_redirect_evidence,
     ) in redirect_rows:
+        redirect_evidence = _redirect_evidence_payload(
+            raw_redirect_evidence, final_url, final_status
+        )
+        observed_destination = (
+            redirect_evidence.get("first_hop_destination")
+            if redirect_evidence.get("completion_status") != "LEGACY_UNKNOWN"
+            else None
+        )
+        destination_url = observed_destination or (
+            final_url if redirect_evidence.get("completion_status") == "LEGACY_UNKNOWN"
+            else None
+        )
+        if not destination_url:
+            continue
         source_hostname = domain.lower().rstrip(".")
-        final_hostname = _url_hostname(final_url)
+        final_hostname = _url_hostname(destination_url)
         if observation_status != "RESPONDED" or not final_hostname:
             continue
         if not (300 <= int(http_status or 0) <= 399):
@@ -3387,6 +3467,9 @@ def frontend_v2_review_indicators():
             "http_observation_status": observation_status,
             "http_status": http_status,
             "final_url": final_url,
+            "observed_redirect_destination": observed_destination,
+            "redirect_evidence": redirect_evidence,
+            "final_url_verification": redirect_evidence.get("completion_status"),
             "final_status": final_status,
             "final_hostname": final_hostname,
             "destination_confirmed": destination_confirmed,
@@ -3928,6 +4011,7 @@ def redirect_summary():
             "internal": 0,
             "trusted_external": 0,
             "untrusted_external": 0,
+            "legacy_unverified": 0,
         }
 
     # trusted roots
@@ -3943,7 +4027,8 @@ def redirect_summary():
     SELECT
         d.domain,
         ds.http_status,
-        ds.final_url
+        ds.final_url,
+        ds.http_redirect_evidence
     FROM domain_states ds
     JOIN scan_results sr
         ON sr.domain_id = ds.domain_id
@@ -3953,8 +4038,14 @@ def redirect_summary():
     WHERE ds.scan_id = %s
       AND d.ownership_status = 'CONFIRMED'
       AND ds.http_status BETWEEN 300 AND 399
-      AND ds.final_url <> ''
-      AND ds.final_url <> 'nan'
+      AND (
+          NULLIF(TRIM(ds.http_redirect_evidence->>'first_hop_destination'), '') IS NOT NULL
+          OR (
+              ds.http_redirect_evidence IS NULL
+              AND ds.final_url <> ''
+              AND ds.final_url <> 'nan'
+          )
+      )
     """, (scan_id,))
 
     rows = cur.fetchall()
@@ -3962,8 +4053,16 @@ def redirect_summary():
     internal = 0
     trusted_external = 0
     untrusted_external = 0
+    legacy_unverified = 0
     
-    for source_domain, http_status, final_url in rows:
+    for source_domain, http_status, legacy_url, raw_evidence in rows:
+        evidence = _redirect_evidence_payload(raw_evidence, legacy_url)
+        if evidence.get("completion_status") == "LEGACY_UNKNOWN":
+            legacy_unverified += 1
+            continue
+        final_url = evidence.get("first_hop_destination")
+        if not final_url:
+            continue
     
         classification = classify_redirect(
             source_domain,
@@ -3984,10 +4083,11 @@ def redirect_summary():
     conn.close()
     
     return {
-        "total": internal + trusted_external + untrusted_external,
+        "total": internal + trusted_external + untrusted_external + legacy_unverified,
         "internal": internal,
         "trusted_external": trusted_external,
-        "untrusted_external": untrusted_external
+        "untrusted_external": untrusted_external,
+        "legacy_unverified": legacy_unverified,
     }
     
 @app.get("/naming-asset-exposure")

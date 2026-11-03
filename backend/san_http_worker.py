@@ -1,3 +1,4 @@
+import json
 import sys
 
 from authorization_policy import (
@@ -69,8 +70,9 @@ def main():
         outcome = result.get("http_observation_status", "UNKNOWN")
         if outcome != "RESPONDED":
             cur.execute("""
-                UPDATE domain_states
-                SET http_observation_status = %s
+            UPDATE domain_states
+            SET http_observation_status = %s,
+                http_redirect_evidence = %s::jsonb
                 WHERE domain_id = %s
                 AND scan_id = %s
                 AND COALESCE(http_status, 0) = 0
@@ -82,6 +84,7 @@ def main():
                 )
             """, (
                 outcome,
+                json.dumps(result.get("redirect_evidence")),
                 domain_id,
                 scan_id
             ))
@@ -96,6 +99,7 @@ def main():
                 http_reason = %s,
                 final_url = %s,
                 final_status = %s,
+                http_redirect_evidence = %s::jsonb,
                 title = %s,
                 http_observation_status = %s
             WHERE domain_id = %s
@@ -113,6 +117,8 @@ def main():
             result["http_reason"],
             result["final_url"],
             result["final_status"],
+            json.dumps(result.get("redirect_evidence"))
+            if result.get("redirect_evidence") is not None else None,
             result["title"][:500],
             outcome,
             domain_id,

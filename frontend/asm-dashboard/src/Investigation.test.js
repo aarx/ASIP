@@ -33,7 +33,12 @@ const selectedAsset = {
   seed: "example.com",
   risk: { score: 8, priority: "High", reasons: ["shadow_asset", "finding"] },
   dns: { ip: "192.0.2.10", has_ip: true, reverse_dns: "edge.example.net" },
-  http: { observation_status: "RESPONDED", status: 302, final_url: "https://login.example.com", title: "Login" },
+  http: { observation_status: "RESPONDED", status: 302, final_url: null, final_status: null, redirect_evidence: {
+    requested_url: "https://investigate.example.com/", http_status: 302,
+    first_hop_location: "https://login.example.com", first_hop_destination: "https://login.example.com",
+    observed_hops: [], verified_terminal_url: null, completion_status: "UNRESOLVED",
+    stop_reason: "redirect_traversal_disabled",
+  }, title: "Login" },
   ports: [{ port: 443, service: "https" }],
   asn: { asn: "AS64500", organization: "Example Networks" },
   provider: "Example Cloud",
@@ -207,5 +212,6 @@ test("presentation treats null and NaN-like strings as missing without hiding se
   expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
   expect(screen.getByText("0")).toBeInTheDocument();
   expect(screen.getAllByText("Not observed")).toHaveLength(2);
+  expect(screen.getByText("Unresolved or unavailable")).toBeInTheDocument();
   expect(screen.queryByText(/^nan$/i)).not.toBeInTheDocument();
 });

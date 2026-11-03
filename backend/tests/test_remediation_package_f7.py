@@ -72,19 +72,19 @@ class ReviewIndicatorContractTests(unittest.TestCase):
         redirect_rows = [
             (
                 "same.example", "CONFIRMED", True, "RESPONDED", 302,
-                "https://same.example/path", 200,
+                "https://same.example/path", 200, None,
             ),
             (
                 "shadow.example", "CONFIRMED", False, "RESPONDED", 302,
-                "https://external.example/login", 200,
+                "https://external.example/login", 200, None,
             ),
             (
                 "candidate.example", "CANDIDATE", False, "RESPONDED", 301,
-                "https://known.example/home", 200,
+                "https://known.example/home", 200, None,
             ),
             (
                 "unknown.example", "CONFIRMED", True, "UNKNOWN", 302,
-                "https://external.example/unknown", 200,
+                "https://external.example/unknown", 200, None,
             ),
         ]
         current_assets = [
@@ -113,6 +113,8 @@ class ReviewIndicatorContractTests(unittest.TestCase):
         shadow, candidate = result["indicators"]
         self.assertEqual(shadow["asset_class"], "SHADOW")
         self.assertEqual(shadow["final_hostname"], "external.example")
+        self.assertEqual(shadow["final_url_verification"], "LEGACY_UNKNOWN")
+        self.assertIsNone(shadow["observed_redirect_destination"])
         self.assertFalse(shadow["destination_confirmed"])
         self.assertEqual(shadow["destination_ownership_status"], "EXTERNAL")
         self.assertEqual(candidate["asset_class"], "CANDIDATE")
@@ -139,6 +141,39 @@ class ReviewIndicatorContractTests(unittest.TestCase):
         self.assertEqual(result, {"scan_id": None, "count": 0, "indicators": []})
         self.assertEqual(cursor.executions, [])
         self.assertTrue(connection.closed)
+
+    def test_structured_first_hop_is_returned_as_observed_not_final(self):
+        evidence = {
+            "requested_url": "https://source.example/",
+            "http_status": 302,
+            "first_hop_location": "https://vendor.example/login",
+            "first_hop_destination": "https://vendor.example/login",
+            "observed_hops": [{
+                "source_url": "https://source.example/",
+                "http_status": 302,
+                "location": "https://vendor.example/login",
+                "destination_url": "https://vendor.example/login",
+                "followed": False,
+            }],
+            "verified_terminal_url": None,
+            "completion_status": "UNRESOLVED",
+            "stop_reason": "redirect_traversal_disabled",
+        }
+        rows = [(
+            "source.example", "CONFIRMED", True, "RESPONDED", 302,
+            None, None, evidence,
+        )]
+        cursor = QueueCursor([rows, [(1, "source.example", "CONFIRMED", True)]])
+        connection = FakeConnection(cursor)
+        self.main.get_conn = lambda: connection
+        with mock.patch.object(self.main, "_current_scan_asset_classes", return_value={1: "KNOWN"}):
+            result = self.main.frontend_v2_review_indicators()
+        self.assertEqual(result["count"], 1)
+        item = result["indicators"][0]
+        self.assertIsNone(item["final_url"])
+        self.assertEqual(item["observed_redirect_destination"], "https://vendor.example/login")
+        self.assertEqual(item["final_url_verification"], "UNRESOLVED")
+        self.assertIsNone(item["redirect_evidence"]["verified_terminal_url"])
 
     def test_review_indicator_contract_is_read_only_and_does_not_change_risk(self):
         source = (BACKEND / "main.py").read_text(encoding="utf-8")

@@ -224,13 +224,14 @@ function TechnologyIntelligence({ technologies, observations }) {
   );
 }
 
-function redirectBoundary(domain, finalUrl) {
-  if (!finalUrl) return null;
+function redirectBoundary(domain, redirectEvidence) {
+  const observedDestination = redirectEvidence?.first_hop_destination;
+  if (!observedDestination) return null;
   try {
-    const finalHostname = new URL(finalUrl).hostname.toLowerCase().replace(/\.$/, "");
+    const finalHostname = new URL(observedDestination).hostname.toLowerCase().replace(/\.$/, "");
     const reviewedHostname = String(domain || "").toLowerCase().replace(/\.$/, "");
     return finalHostname && finalHostname !== reviewedHostname
-      ? { finalHostname, finalUrl }
+      ? { finalHostname, destination: observedDestination }
       : null;
   } catch {
     return null;
@@ -356,7 +357,8 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   }
 
   const risk = data.risk;
-  const redirect = redirectBoundary(data.domain, data.http?.final_url);
+  const redirectEvidence = data.http?.redirect_evidence || {};
+  const redirect = redirectBoundary(data.domain, redirectEvidence);
   const classificationContext = data.asset_class === "SHADOW"
     ? { href: "#/shadow", label: "Open Shadow workflow" }
     : ["CANDIDATE", "EXTERNAL"].includes(data.asset_class)
@@ -437,14 +439,30 @@ export default function AssetDetailPage({ domain, returnQuery }) {
             <div className="evidence-row"><span className="evidence-label">Observation</span><span className="evidence-value"><StatusBadge value={data.http?.observation_status} /></span></div>
             <EvidenceRow label="Initial status" value={data.http?.status} mono />
             <EvidenceRow label="Reason" value={data.http?.reason} />
-            <EvidenceRow label="Final status" value={data.http?.final_status} mono />
+            {redirectEvidence.completion_status === "COMPLETE" && (
+              <EvidenceRow label="Verified final status" value={data.http?.final_status} mono />
+            )}
+            {redirectEvidence.completion_status === "LEGACY_UNKNOWN" && data.http?.final_status != null && (
+              <EvidenceRow label="Legacy status (verification unknown)" value={data.http.final_status} mono />
+            )}
             <EvidenceRow label="Title" value={data.http?.title} wide />
-            <EvidenceRow label="Final URL" value={data.http?.final_url} mono wide />
+            <EvidenceRow label="Observed redirect destination" value={redirectEvidence.first_hop_destination} mono wide />
+            <EvidenceRow
+              label={redirectEvidence.completion_status === "COMPLETE" ? "Verified final URL" : "Final URL unresolved"}
+              value={redirectEvidence.completion_status === "COMPLETE" ? redirectEvidence.verified_terminal_url : null}
+              mono wide
+            />
+            {["UNRESOLVED", "UNKNOWN"].includes(redirectEvidence.completion_status) && (
+              <EvidenceRow label="Final URL unresolved" value={redirectEvidence.stop_reason} wide />
+            )}
+            {redirectEvidence.completion_status === "LEGACY_UNKNOWN" && data.http?.final_url && (
+              <EvidenceRow label="Legacy URL (verification unknown)" value={data.http.final_url} mono wide />
+            )}
           </div>
           {redirect && (
             <div className="redirect-boundary" role="note">
-              <strong>Final destination is outside the reviewed hostname.</strong>
-              <div><span className="technical-value">{data.domain}</span><span aria-hidden="true">↓</span><span className="technical-value">{redirect.finalUrl}</span></div>
+              <strong>Observed redirect destination is outside the reviewed hostname.</strong>
+              <div><span className="technical-value">{data.domain}</span><span aria-hidden="true">↓</span><span className="technical-value">{redirect.destination}</span></div>
               <p>The redirect destination is observational evidence only and is not authorized for active testing by association. A different hostname does not establish external ownership, malicious activity, or a vulnerability.</p>
             </div>
           )}

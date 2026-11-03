@@ -1,4 +1,5 @@
 import csv
+import json
 import importlib.util
 import logging
 import os
@@ -26,6 +27,7 @@ CSV_COLUMNS = (
     "Final_Status",
     "Title",
     "HTTP_Observation_Status",
+    "HTTP_Redirect_Evidence",
     "Domain_Status",
 )
 
@@ -236,6 +238,7 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
                         final_status integer,
                         title text,
                         http_observation_status text DEFAULT 'UNKNOWN' NOT NULL,
+                        http_redirect_evidence jsonb,
                         UNIQUE (domain_id, scan_id)
                     );
                     CREATE TABLE domain_sources (
@@ -506,7 +509,7 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
         self.ingest(42, [unresolved])
         state = self.projection()["states"][0]
         self.assertEqual(state[1:6], ("", False, 0, False, "no-ptr.example"))
-        self.assertEqual(state[6:], ("unresolved", "", 0, "New Empty Title"))
+        self.assertEqual(state[6:], ("unresolved", None, None, "New Empty Title"))
 
         improved = self.row(
             "a.example",
@@ -522,8 +525,58 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
         state = self.projection()["states"][0]
         self.assertEqual(state[1:], (
             "198.51.100.20", True, 302, True, "new.ptr.example", "Found",
-            "https://a.example/new", 200, "New Title",
+            None, None, "New Title",
         ))
+
+    def test_legacy_artifact_final_url_is_not_promoted_to_verified_data(self):
+        self.ingest(42, [self.row(
+            "a.example",
+            HTTP_Status="302",
+            Final_URL="https://external.example/path",
+            Final_Status="200",
+        )])
+        self.assertEqual(
+            self.fetchall("SELECT final_url, final_status FROM domain_states WHERE scan_id=42"),
+            [(None, None)],
+        )
+        self.assertEqual(
+            self.fetchall(
+                "SELECT http_redirect_evidence->>'completion_status', "
+                "http_redirect_evidence->>'stop_reason' "
+                "FROM domain_states WHERE scan_id=42"
+            ),
+            [("UNKNOWN", "artifact_redirect_evidence_unavailable")],
+        )
+
+    def test_structured_terminal_evidence_is_persisted_as_final_url(self):
+        evidence = {
+            "requested_url": "https://a.example/",
+            "http_status": 200,
+            "first_hop_location": None,
+            "first_hop_destination": None,
+            "observed_hops": [],
+            "verified_terminal_url": "https://a.example/",
+            "completion_status": "COMPLETE",
+            "stop_reason": None,
+        }
+        self.ingest(42, [self.row(
+            "a.example",
+            HTTP_Status="200",
+            Final_URL="https://untrusted-old-value.example/",
+            Final_Status="301",
+            HTTP_Redirect_Evidence=json.dumps(evidence),
+        )])
+        self.assertEqual(
+            self.fetchall("SELECT final_url, final_status FROM domain_states WHERE scan_id=42"),
+            [("https://a.example/", 200)],
+        )
+        self.assertEqual(
+            self.fetchall(
+                "SELECT http_redirect_evidence->>'completion_status' "
+                "FROM domain_states WHERE scan_id=42"
+            ),
+            [("COMPLETE",)],
+        )
 
     def test_http_observation_outcome_is_persisted_and_legacy_input_is_unknown(self):
         self.ingest(42, [self.row(
@@ -566,7 +619,7 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
                 "membership": [("a.example", "root.example")],
                 "states": [(
                     "a.example", "192.0.2.10", True, 200, True,
-                    "ptr.example", "OK", "https://a.example/", 200,
+                    "ptr.example", "OK", None, None,
                     "Populated Title",
                 )],
                 "sources": [("a.example", "certspotter", "root.example")],
@@ -579,10 +632,16 @@ class PostgreSQLIngestConvergenceTests(unittest.TestCase):
         self.assertEqual(projection["membership"], [("a.example", "")])
         self.assertEqual(
             projection["states"],
-            [("a.example", "", False, 0, False, "", "", "", 0, "")],
+            [("a.example", "", False, 0, False, "", "", None, None, "")],
         )
         self.assertEqual(projection["sources"], [])
-        flattened = [str(value).lower() for rows in projection.values() for row in rows for value in row]
+        flattened = [
+            str(value).lower()
+            for rows in projection.values()
+            for row in rows
+            for value in row
+            if value is not None
+        ]
         self.assertNotIn("nan", flattened)
         self.assertNotIn("<na>", flattened)
         self.assertNotIn("none", flattened)

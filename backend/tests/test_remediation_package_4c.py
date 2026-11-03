@@ -174,17 +174,17 @@ class FrontendV2ContractTests(unittest.TestCase):
             (
                 1, "known.example", True, "CONFIRMED", 10, 42,
                 "192.0.2.1", True, "RESPONDED", 200, "Known", None,
-                "Cloud", "AS64500",
+                None, None, "Cloud", "AS64500",
             ),
             (
                 2, "shadow.example", False, "CONFIRMED", 40, 42,
                 "192.0.2.2", True, "NO_RESPONSE", 0, None, None,
-                "Cloud", "AS64501",
+                None, None, "Cloud", "AS64501",
             ),
             (
                 3, "candidate.example", False, "CANDIDATE", 42, 42,
                 None, False, "UNKNOWN", 0, None, None,
-                "Unknown", None,
+                None, None, "Unknown", None,
             ),
         ]
         cursor = QueueCursor(fetchalls=[rows])
@@ -225,21 +225,22 @@ class FrontendV2ContractTests(unittest.TestCase):
                 'Title, "quoted"\nline', "https://known.example/path?a=1,2",
                 "Cloud", "AS64500", "80,443", "React,Vite",
                 'finding, HIGH: evidence "quoted"\nline',
+                None, None,
             ),
             (
                 2, "shadow.example", False, "CONFIRMED", 40, 42,
                 "192.0.2.2", True, "NO_RESPONSE", None, None, None,
-                "Cloud", "AS64501", "22", "", "",
+                "Cloud", "AS64501", "22", "", "", None, None,
             ),
             (
                 3, "candidate.example", False, "CANDIDATE", 42, 42,
                 None, False, "UNKNOWN", None, None, None,
-                "Unknown", None, "", "", "",
+                "Unknown", None, "", "", "", None, None,
             ),
             (
                 4, "external.example", False, "EXTERNAL", 42, 42,
                 None, False, "UNKNOWN", None, None, None,
-                "Unknown", None, "", "", "",
+                "Unknown", None, "", "", "", None, None,
             ),
         ]
         cursor = QueueCursor(fetchalls=[rows])
@@ -289,12 +290,12 @@ class FrontendV2ContractTests(unittest.TestCase):
 
     def test_asset_explorer_sorting_is_filtered_before_pagination(self):
         rows = [
-            (1, "zulu.example", False, "CONFIRMED", 10, 42, "192.0.2.1", True, "RESPONDED", 200, None, None, "Cloud", "AS64501"),
-            (2, "beta.example", True, "CONFIRMED", 10, 42, "192.0.2.2", True, "RESPONDED", 200, None, None, "Cloud", "AS64502"),
-            (3, "alpha.example", False, "CONFIRMED", 10, 42, "192.0.2.3", True, "RESPONDED", 200, None, None, "Cloud", "AS64503"),
-            (4, "charlie.example", True, "CONFIRMED", 10, 42, "192.0.2.4", True, "RESPONDED", 200, None, None, "Cloud", "AS64504"),
-            (5, "delta.example", True, "CONFIRMED", 10, 42, "192.0.2.5", True, "RESPONDED", 200, None, None, "Cloud", "AS64505"),
-            (6, "candidate.example", False, "CANDIDATE", 42, 42, None, False, "UNKNOWN", None, None, None, "Unknown", None),
+            (1, "zulu.example", False, "CONFIRMED", 10, 42, "192.0.2.1", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64501"),
+            (2, "beta.example", True, "CONFIRMED", 10, 42, "192.0.2.2", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64502"),
+            (3, "alpha.example", False, "CONFIRMED", 10, 42, "192.0.2.3", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64503"),
+            (4, "charlie.example", True, "CONFIRMED", 10, 42, "192.0.2.4", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64504"),
+            (5, "delta.example", True, "CONFIRMED", 10, 42, "192.0.2.5", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64505"),
+            (6, "candidate.example", False, "CANDIDATE", 42, 42, None, False, "UNKNOWN", None, None, None, None, None, "Unknown", None),
         ]
         risks = [
             risk(1, "zulu.example", 4, "Review"),
@@ -356,12 +357,12 @@ class FrontendV2ContractTests(unittest.TestCase):
         rows = [
             (*row, "", "", "")
             for row in [
-                (1, "zulu.example", False, "CONFIRMED", 10, 42, "192.0.2.1", True, "RESPONDED", 200, None, None, "Cloud", "AS64501"),
-                (2, "beta.example", True, "CONFIRMED", 10, 42, "192.0.2.2", True, "RESPONDED", 200, None, None, "Cloud", "AS64502"),
-                (3, "alpha.example", False, "CONFIRMED", 10, 42, "192.0.2.3", True, "RESPONDED", 200, None, None, "Cloud", "AS64503"),
-                (4, "charlie.example", True, "CONFIRMED", 10, 42, "192.0.2.4", True, "RESPONDED", 200, None, None, "Cloud", "AS64504"),
-                (5, "delta.example", True, "CONFIRMED", 10, 42, "192.0.2.5", True, "RESPONDED", 200, None, None, "Cloud", "AS64505"),
-                (6, "candidate.example", False, "CANDIDATE", 42, 42, None, False, "UNKNOWN", None, None, None, "Unknown", None),
+                (1, "zulu.example", False, "CONFIRMED", 10, 42, "192.0.2.1", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64501"),
+                (2, "beta.example", True, "CONFIRMED", 10, 42, "192.0.2.2", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64502"),
+                (3, "alpha.example", False, "CONFIRMED", 10, 42, "192.0.2.3", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64503"),
+                (4, "charlie.example", True, "CONFIRMED", 10, 42, "192.0.2.4", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64504"),
+                (5, "delta.example", True, "CONFIRMED", 10, 42, "192.0.2.5", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64505"),
+                (6, "candidate.example", False, "CANDIDATE", 42, 42, None, False, "UNKNOWN", None, None, None, None, None, "Unknown", None),
             ]
         ]
         cursor = QueueCursor(fetchalls=[rows])
@@ -407,7 +408,7 @@ class FrontendV2ContractTests(unittest.TestCase):
                 (
                     "192.0.2.7", True, "ptr.example", "RESPONDED",
                     True, 302, "redirect", "https://target.example", 200,
-                    "Title",
+                    "Title", None,
                 ),
                 ("AS64500", "Example Org", "192.0.2.7"),
                 ("Cloud",),
@@ -533,12 +534,12 @@ class FrontendV2ContractTests(unittest.TestCase):
             (
                 "candidate.example", "CANDIDATE", "192.0.2.8", True,
                 "RESPONDED", 404, "https://vendor.example", 404, "Candidate",
-                "brand_tld,crtsh", "example.com",
+                "brand_tld,crtsh", "example.com", None,
             ),
             (
                 "external.example", "EXTERNAL", None, False,
                 "UNKNOWN", 0, None, None, None,
-                "brand_pattern", "example.com",
+                "brand_pattern", "example.com", None,
             ),
         ]
         cursor = QueueCursor(fetchalls=[rows])

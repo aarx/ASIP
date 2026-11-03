@@ -22,9 +22,12 @@ class HttpProbeTests(unittest.TestCase):
             "http_observation_status": "RESPONDED",
             "http_status": 302,
             "http_reason": "Found",
-            "final_url": "https://outside.example/secret",
-            "final_status": 302,
+            "final_url": None,
+            "final_status": None,
             "redirect_count": 1,
+            "redirect_evidence": http_probe._redirect_evidence(
+                "https://example.test/", 302, "https://outside.example/secret"
+            ),
             "title": "",
         }
         authorized = mock.Mock(return_value=True)
@@ -49,6 +52,9 @@ class HttpProbeTests(unittest.TestCase):
                 "final_url": "http://example.test/",
                 "final_status": 204,
                 "redirect_count": 0,
+                "redirect_evidence": http_probe._redirect_evidence(
+                    "http://example.test/", 204, None
+                ),
                 "title": "",
             }],
         ) as observe:
@@ -150,10 +156,106 @@ class HttpProbeTests(unittest.TestCase):
 
         connection.request.assert_called_once()
         self.assertEqual(result["http_status"], 302)
-        self.assertEqual(result["final_status"], 302)
-        self.assertEqual(result["final_url"], "https://outside.test/")
+        self.assertIsNone(result["final_status"])
+        self.assertIsNone(result["final_url"])
+        self.assertEqual(
+            result["redirect_evidence"]["first_hop_destination"],
+            "https://outside.test/",
+        )
+        self.assertEqual(
+            result["redirect_evidence"]["completion_status"], "UNRESOLVED"
+        )
         self.assertEqual(result["title"], "Moved")
         connection.close.assert_called_once()
+
+    def test_non_redirect_response_is_a_verified_terminal_response(self):
+        response = mock.Mock(status=200, reason="OK")
+        response.read.return_value = b"ok"
+        response.getheader.return_value = None
+        connection = mock.Mock()
+        connection.getresponse.return_value = response
+        with mock.patch.object(
+            http_probe, "_resolve_allowed_addresses", return_value=["8.8.8.8"]
+        ), mock.patch.object(http_probe, "_connect_pinned", return_value=mock.Mock()), mock.patch.object(
+            http_probe.http.client, "HTTPConnection", return_value=connection
+        ):
+            result = http_probe._observe_once(
+                "inside.example", "http", before_request=lambda: True
+            )
+        self.assertEqual(result["final_url"], "http://inside.example/")
+        self.assertEqual(result["final_status"], 200)
+        self.assertEqual(result["redirect_evidence"]["completion_status"], "COMPLETE")
+
+    def test_redirect_statuses_keep_destination_metadata_without_following(self):
+        for status in (301, 302, 307, 308):
+            with self.subTest(status=status):
+                evidence = http_probe._redirect_evidence(
+                    "https://inside.example/path/", status, "../next"
+                )
+                self.assertEqual(evidence["first_hop_location"], "../next")
+                self.assertEqual(evidence["first_hop_destination"], "https://inside.example/next")
+                self.assertIsNone(evidence["verified_terminal_url"])
+                self.assertEqual(evidence["observed_hops"][0]["followed"], False)
+
+    def test_same_host_and_cross_host_locations_remain_observational(self):
+        cases = (
+            ("/login", "https://inside.example/login"),
+            ("https://outside.example/path", "https://outside.example/path"),
+        )
+        for location, destination in cases:
+            with self.subTest(location=location):
+                evidence = http_probe._redirect_evidence(
+                    "https://inside.example/", 302, location
+                )
+                self.assertEqual(evidence["first_hop_destination"], destination)
+                self.assertEqual(evidence["stop_reason"], "redirect_traversal_disabled")
+
+    def test_missing_or_invalid_location_is_unresolved(self):
+        for location, stop_reason in (
+            (None, "missing_location"),
+            ("", "missing_location"),
+            ("javascript:alert(1)", "invalid_location"),
+            ("http://[invalid", "invalid_location"),
+        ):
+            with self.subTest(location=location):
+                evidence = http_probe._redirect_evidence(
+                    "https://inside.example/", 301, location
+                )
+                self.assertIsNone(evidence["first_hop_destination"])
+                self.assertIsNone(evidence["verified_terminal_url"])
+                self.assertEqual(evidence["stop_reason"], stop_reason)
+
+    def test_historical_verification_state_is_explicit(self):
+        # The API labels rows without structured evidence as legacy unknown;
+        # it must not promote their old final_url value to a verified final.
+        from importlib.util import spec_from_file_location, module_from_spec
+        from pathlib import Path
+        import logging
+        import types
+        main_path = Path(__file__).resolve().parents[1] / "main.py"
+        fake_db = types.ModuleType("db")
+        fake_db.get_conn = lambda: None
+        fake_db.get_latest_authoritative_scan_id = lambda cursor: None
+        fake_db.get_previous_authoritative_scan_id = lambda cursor, current=None: None
+        fake_llm = types.ModuleType("llm_service")
+        fake_llm.ask_llm = lambda prompt: "unused"
+        spec = spec_from_file_location("redirect_legacy_main", main_path)
+        module = module_from_spec(spec)
+        old = {key: __import__("sys").modules.get(key) for key in ("db", "llm_service")}
+        try:
+            __import__("sys").modules.update({"db": fake_db, "llm_service": fake_llm})
+            with mock.patch("logging.FileHandler", return_value=logging.NullHandler()):
+                spec.loader.exec_module(module)
+            evidence = module._redirect_evidence_payload(None, "https://old.example/", 200)
+            self.assertEqual(evidence["completion_status"], "LEGACY_UNKNOWN")
+            self.assertEqual(evidence["legacy_url"], "https://old.example/")
+            self.assertIsNone(evidence["verified_terminal_url"])
+        finally:
+            for key, value in old.items():
+                if value is None:
+                    __import__("sys").modules.pop(key, None)
+                else:
+                    __import__("sys").modules[key] = value
 
     def test_socket_is_closed_if_http_client_setup_fails(self):
         sock = mock.Mock()
