@@ -105,6 +105,8 @@
 .supporting-intelligence-action { flex: 0 0 auto; color: var(--asip-accent-bright); font-family: var(--asip-font-mono); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .supporting-intelligence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 0 16px 16px; }
 .supporting-intelligence-grid > .panel { grid-column: auto; }
+.supporting-intelligence-grid > .naming-exposure-panel { grid-column: 1 / -1; }
+.overview-http-status-chart { min-width: 0; }
 .change-panel, .certificate-health-panel { grid-column: span 6; }
 .attention-panel, .discovery-validation-panel { grid-column: 1 / -1; }
 .risk-panel, .ownership-panel { grid-column: span 6; }
@@ -563,6 +565,10 @@
   .adhoc-scan-context { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .adhoc-scan-context p { grid-column: 1 / -1; padding: 12px 0 0; border-top: 1px solid var(--asip-border); border-left: 0; }
   .scan-detail-grid { grid-template-columns: repeat(3, minmax(100px, 1fr)); }
+}
+
+@media (max-width: 1024px) {
+  .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 900px) {

@@ -33,6 +33,7 @@ test("renders supported aggregate charts with their scope", () => {
   expect(screen.getByTestId("overview-asset-growth-chart")).toHaveClass("overview-chart-canvas");
   expect(screen.getByText("Current authoritative confirmed-organizational scan")).toBeInTheDocument();
   expect(screen.getByTestId("overview-http-status-chart")).toHaveClass("overview-chart-canvas");
+  expect(screen.getByTestId("overview-http-status-chart").parentElement).toHaveClass("overview-http-status-chart");
   expect(screen.getByText(/not the explicit NO_RESPONSE observation enum/i)).toBeInTheDocument();
   expect(screen.getByTestId("overview-http-status-chart")).toHaveAttribute(
     "aria-label",

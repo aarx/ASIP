@@ -150,18 +150,20 @@ export function HttpStatusPanel({ value, status }) {
     content = <ChartState title="No HTTP observations" copy="No observed status data is available for the current confirmed surface." />;
   } else {
     content = (
-      <div className="overview-chart-canvas" data-testid="overview-http-status-chart" aria-label="HTTP status distribution chart: 2xx, 3xx, 4xx, 5xx, No recorded HTTP status">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 4, right: 12, bottom: 4, left: 0 }}>
-            <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
-            <YAxis allowDecimals={false} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} width={28} />
-            <Tooltip contentStyle={chartTooltipStyle} />
-            <Bar dataKey="count" name="Assets" radius={[3, 3, 0, 0]} barSize={22}>
-              {data.map((entry) => <Cell key={entry.key} fill={entry.color} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+      <div className="overview-http-status-chart">
+        <div className="overview-chart-canvas" data-testid="overview-http-status-chart" aria-label="HTTP status distribution chart: 2xx, 3xx, 4xx, 5xx, No recorded HTTP status">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data} margin={{ top: 4, right: 12, bottom: 4, left: 0 }}>
+              <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
+              <YAxis allowDecimals={false} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} width={28} />
+              <Tooltip contentStyle={chartTooltipStyle} />
+              <Bar dataKey="count" name="Assets" radius={[3, 3, 0, 0]} barSize={22}>
+                {data.map((entry) => <Cell key={entry.key} fill={entry.color} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
         <p className="overview-chart-note">Aggregate bucket for assets without a recognized numeric HTTP status; not the explicit NO_RESPONSE observation enum.</p>
       </div>
     );
