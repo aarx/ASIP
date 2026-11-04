@@ -9,6 +9,11 @@ import threading
 import uuid
 from db import get_conn
 from worker_outcome import RETRYABLE_INCOMPLETE_EXIT_CODE
+from scan_diagnostics import (
+    extract_worker_summary,
+    finish_stage_attempt,
+    start_stage_attempt,
+)
 
 ASIP_ORCHESTRATION_LOCK_ID = 0x41534950
 MAX_STAGE_ATTEMPTS = 2
@@ -21,6 +26,7 @@ DEFAULT_RUNNER_ORPHAN_GRACE_SECONDS = 120
 PROCESS_GROUP_POLL_INTERVAL_SECONDS = 0.05
 
 _ACTIVE_STAGE_PROCESS = None
+_ACTIVE_STAGE_DIAGNOSTICS = None
 
 
 class StageExecutionError(RuntimeError):
@@ -220,9 +226,18 @@ def create_scan(scan_identity=None):
         cur.execute("""
         INSERT INTO scans(
             started_at, completed_at, status,
-            runner_token, heartbeat_at, failure_reason
+            runner_token, heartbeat_at, failure_reason, stage_diagnostics
         )
-        VALUES (NOW(), NULL, 'RUNNING', %s, NOW(), NULL)
+        VALUES (
+            NOW(), NULL, 'RUNNING', %s, NOW(), NULL,
+            jsonb_build_object(
+                'version', 1,
+                'current_stage', NULL,
+                'attempts', '[]'::jsonb,
+                'scan_outcome', NULL,
+                'last_updated_at', NOW()
+            )
+        )
         RETURNING id
         """, (runner_token,))
         scan_id = cur.fetchone()[0]
@@ -257,7 +272,25 @@ def mark_scan_terminal(scan_id, status, failure_reason=None, runner_token=None):
         WHERE id = %s
         AND status = 'RUNNING'
         """
-        params = [status, failure_reason, scan_id]
+        params = [status, failure_reason]
+        if runner_token is not None:
+            category = (
+                "INTERRUPTED" if failure_reason == "INTERRUPTED"
+                else "SCAN_FAILED" if status == "FAILED" else None
+            )
+            query = query.replace(
+                "failure_reason = %s",
+                "failure_reason = %s,\n            stage_diagnostics = "
+                "COALESCE(stage_diagnostics, jsonb_build_object("
+                "'version', 1, 'current_stage', NULL, 'attempts', '[]'::jsonb, "
+                "'scan_outcome', NULL)) || jsonb_build_object("
+                "'version', 1, 'current_stage', NULL, "
+                "'scan_outcome', jsonb_build_object("
+                "'status', %s, 'completed_at', NOW(), 'error_category', %s), "
+                "'last_updated_at', NOW())"
+            )
+            params.extend([status, category])
+        params.append(scan_id)
         if runner_token is not None:
             query += " AND runner_token = %s"
             params.append(runner_token)
@@ -341,13 +374,81 @@ def stop_active_child(process):
         logging.exception("Child cleanup final reap failed")
 
 
-def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None):
+def _diagnostics_start(scan_id, runner_token, name, stage_order, attempt):
+    if scan_id is None or runner_token is None or stage_order is None:
+        return
+    conn = None
+    try:
+        conn = get_conn()
+        updated = start_stage_attempt(
+            conn, scan_id, runner_token, name, stage_order, attempt
+        )
+        if not updated:
+            raise RunnerLeaseError(
+                f"scan {scan_id} is no longer RUNNING under this runner token"
+            )
+    except RunnerLeaseError:
+        raise
+    except Exception:
+        logging.exception(
+            "Scan diagnostics START persistence failed for scan=%s stage=%s; "
+            "continuing with the existing stage execution policy",
+            scan_id, name,
+        )
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                logging.exception("Failed to close diagnostics connection")
+
+
+def _diagnostics_finish(scan_id, runner_token, name, stage_order, attempt,
+                        status, duration, error_category=None, summary=None):
+    if scan_id is None or runner_token is None or stage_order is None:
+        return
+    conn = None
+    try:
+        conn = get_conn()
+        updated = finish_stage_attempt(
+            conn, scan_id, runner_token, name, stage_order, attempt,
+            status, duration, error_category, summary,
+        )
+        if not updated:
+            logging.warning(
+                "Scan diagnostics outcome was not persisted for scan=%s stage=%s "
+                "attempt=%s; stage execution outcome is unchanged",
+                scan_id, name, attempt,
+            )
+    except Exception:
+        logging.exception(
+            "Scan diagnostics outcome persistence failed for scan=%s stage=%s; "
+            "stage execution outcome is unchanged",
+            scan_id, name,
+        )
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                logging.exception("Failed to close diagnostics connection")
+
+
+def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None,
+             scan_id=None, runner_token=None, stage_order=None):
+
+    if scan_id is None and runner_token is None and stage_order is None:
+        context = _ACTIVE_STAGE_DIAGNOSTICS
+        if context is not None:
+            scan_id, runner_token, stage_order = context
 
     logging.info("=" * 60)
     logging.info(f"STARTING: {name} attempt {attempt}/{max_attempts}")
     logging.info(f"Command: {cmd}")
 
+    _diagnostics_start(scan_id, runner_token, name, stage_order, attempt)
     start = time.time()
+    monotonic_start = time.monotonic()
     global _ACTIVE_STAGE_PROCESS
     process = None
 
@@ -375,6 +476,11 @@ def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None):
             output, _ = process.communicate()
             for line in (output or "").splitlines():
                 logging.info(f"[{name}] {line.strip()}")
+            _diagnostics_finish(
+                scan_id, runner_token, name, stage_order, attempt,
+                "TIMED_OUT", time.monotonic() - monotonic_start,
+                "STAGE_TIMEOUT", extract_worker_summary(output),
+            )
             return STAGE_TIMEOUT_EXIT_CODE
 
         for line in (output or "").splitlines():
@@ -383,6 +489,17 @@ def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None):
         returncode = process.returncode
 
         duration = round(time.time() - start, 2)
+        if returncode == 0:
+            diag_status, error_category = "SUCCEEDED", None
+        elif returncode == RETRYABLE_INCOMPLETE_EXIT_CODE:
+            diag_status, error_category = "FAILED", "RETRYABLE_INCOMPLETE"
+        else:
+            diag_status, error_category = "FAILED", "NONZERO_EXIT"
+        _diagnostics_finish(
+            scan_id, runner_token, name, stage_order, attempt,
+            diag_status, time.monotonic() - monotonic_start,
+            error_category, extract_worker_summary(output),
+        )
 
         if returncode == 0:
             logging.info(
@@ -405,11 +522,20 @@ def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None):
     except KeyboardInterrupt:
         if process is not None:
             stop_active_child(process)
+        _diagnostics_finish(
+            scan_id, runner_token, name, stage_order, attempt,
+            "CANCELLED", time.monotonic() - monotonic_start, "INTERRUPTED",
+        )
         logging.error(f"INTERRUPTED: {name} attempt {attempt}/{max_attempts}")
         raise
     except Exception:
         if process is not None:
             stop_active_child(process)
+        _diagnostics_finish(
+            scan_id, runner_token, name, stage_order, attempt,
+            "FAILED", time.monotonic() - monotonic_start,
+            "STAGE_LAUNCH_ERROR" if process is None else "STAGE_RUNNER_ERROR",
+        )
         logging.exception(f"ERROR in step: {name} attempt {attempt}/{max_attempts}")
         raise
     finally:
@@ -425,12 +551,7 @@ def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None):
 
 def run_required_stage(name, cmd):
     for attempt in range(1, MAX_STAGE_ATTEMPTS + 1):
-        returncode = run_step(
-            name,
-            cmd,
-            attempt,
-            MAX_STAGE_ATTEMPTS,
-        )
+        returncode = run_step(name, cmd, attempt, MAX_STAGE_ATTEMPTS)
 
         if returncode == 0:
             return
@@ -545,10 +666,15 @@ def run_pipeline():
         logging.info(f"Log File : {log_file}")
         logging.info("=" * 70)
 
-        for name, cmd in pipeline:
+        global _ACTIVE_STAGE_DIAGNOSTICS
+        for stage_order, (name, cmd) in enumerate(pipeline):
             if heartbeat is not None:
                 heartbeat.ensure_healthy()
-            run_required_stage(name, cmd)
+            _ACTIVE_STAGE_DIAGNOSTICS = (scan_id, runner_token, stage_order)
+            try:
+                run_required_stage(name, cmd)
+            finally:
+                _ACTIVE_STAGE_DIAGNOSTICS = None
             if heartbeat is not None:
                 heartbeat.ensure_healthy()
 

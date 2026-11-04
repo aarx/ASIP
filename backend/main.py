@@ -18,6 +18,7 @@ from asset_reporting import (
     current_scan_asset_classes,
     current_scan_risks,
 )
+from scan_diagnostics import api_diagnostics
 from risk_engine import calculate_scan_risks, get_asset_exposure_keywords
 from ownership import (
     OWNERSHIP_CONFIRMED,
@@ -3177,6 +3178,64 @@ def frontend_v2_scans(limit: int = 100):
             }
             for row in rows
         ],
+    }
+
+
+@app.get("/v2/scans/{scan_id}")
+def frontend_v2_scan_detail(scan_id: int):
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT s.id, s.status, s.scan_time, s.started_at, s.completed_at,
+                   s.seed, COUNT(sr.domain_id),
+                   CASE WHEN s.started_at IS NULL THEN NULL
+                        ELSE EXTRACT(EPOCH FROM
+                             (COALESCE(s.completed_at, NOW()) - s.started_at))
+                   END,
+                   s.stage_diagnostics
+              FROM scans s
+              LEFT JOIN scan_results sr ON sr.scan_id = s.id
+             WHERE s.id = %s
+             GROUP BY s.id, s.status, s.scan_time, s.started_at,
+                      s.completed_at, s.seed, s.stage_diagnostics
+        """, (scan_id,))
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    diagnostics = api_diagnostics(row[8], row[1])
+    attempts = diagnostics["attempts"] if diagnostics is not None else None
+    failure_category = None
+    if attempts is not None and row[1] == "FAILED":
+        failure_category = next((
+            item["error_category"] for item in reversed(attempts)
+            if item["status"] in {"FAILED", "TIMED_OUT", "CANCELLED"}
+            and item["error_category"] is not None
+        ), None)
+        if failure_category is None and diagnostics["scan_outcome"] is not None:
+            failure_category = diagnostics["scan_outcome"]["error_category"]
+
+    return {
+        "scan_id": row[0],
+        "status": row[1],
+        "scan_time": row[2],
+        "started_at": row[3],
+        "completed_at": row[4],
+        "seed": row[5],
+        "asset_count": row[6],
+        "duration_seconds": float(row[7]) if row[7] is not None else None,
+        "diagnostics_available": diagnostics is not None,
+        "current_stage": diagnostics["current_stage"] if diagnostics else None,
+        "stage_attempts": attempts,
+        "failure_category": failure_category,
+        "scan_outcome": diagnostics["scan_outcome"] if diagnostics else None,
+        "diagnostics_last_updated_at": (
+            diagnostics["last_updated_at"] if diagnostics else None
+        ),
     }
 
 
