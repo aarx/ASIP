@@ -19,9 +19,9 @@ from ownership import TrustedDomainBoundary  # noqa: E402
 
 
 class FakeCursor:
-    def __init__(self, rows):
+    def __init__(self, rows, executions=None):
         self.rows = rows
-        self.executions = []
+        self.executions = executions if executions is not None else []
         self.rowcount = 1
 
     def execute(self, sql, params=None):
@@ -32,15 +32,19 @@ class FakeCursor:
 
 
 class FakeConnection:
-    def __init__(self, cursor):
+    def __init__(self, cursor, state=None):
         self._cursor = cursor
-        self.commits = 0
+        self._state = state if state is not None else {"commits": 0}
+
+    @property
+    def commits(self):
+        return self._state["commits"]
 
     def cursor(self):
         return self._cursor
 
     def commit(self):
-        self.commits += 1
+        self._state["commits"] += 1
 
     def close(self):
         pass
@@ -51,10 +55,19 @@ def load_worker(filename, rows):
         f"direct_auth_{filename}_{id(rows)}", BACKEND / filename
     )
     module = importlib.util.module_from_spec(spec)
-    cursor = FakeCursor(rows)
-    connection = FakeConnection(cursor)
+    executions = []
+    state = {"commits": 0}
+    connections = []
+
+    def connect():
+        connection = FakeConnection(FakeCursor(rows, executions), state)
+        connections.append(connection)
+        return connection
+
+    connection = connect()
+    cursor = connection.cursor()
     fake_db = types.ModuleType("db")
-    fake_db.get_conn = lambda: connection
+    fake_db.get_conn = connect
     fake_db.require_running_scan = mock.Mock()
     previous = sys.modules.get("db")
     old_argv = sys.argv[:]
@@ -107,7 +120,9 @@ class DirectTargetAuthorizationTests(unittest.TestCase):
              (2, "allowed.example.com", "203.0.113.2")],
         )
         module.recheck_active_authorization = mock.Mock(
-            side_effect=[(False, "scope revoked"), (True, "authorized")]
+            side_effect=lambda _cur, *, domain_id, **_kwargs: (
+                (domain_id == 2, "authorized" if domain_id == 2 else "scope revoked")
+            )
         )
         module.http_probe = mock.Mock(return_value={
             "http_observation_status": "RESPONDED",
@@ -134,8 +149,9 @@ class DirectTargetAuthorizationTests(unittest.TestCase):
             side_effect=RuntimeError("database unavailable")
         )
         module.http_probe = mock.Mock()
-        with self.assertRaisesRegex(RuntimeError, "database unavailable"):
+        with self.assertRaises(module.ObservationStageError) as raised:
             module.main()
+        self.assertIsInstance(raised.exception.__cause__, RuntimeError)
         module.http_probe.assert_not_called()
 
     def test_takeover_http_is_disabled_until_its_own_permission_exists(self):

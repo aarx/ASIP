@@ -410,6 +410,19 @@ class WriterWiringTests(unittest.TestCase):
         for filename, mutation in self.WRITERS.items():
             with self.subTest(filename=filename):
                 source = (BACKEND / filename).read_text(encoding="utf-8")
+                if filename == "http_observation_worker.py":
+                    selection = source[source.index("def _select_targets"):source.index("def main():")]
+                    target = source[source.index("def _observe_target"):source.index("def _unique_targets")]
+                    self.assertLess(
+                        selection.index("require_running_scan(cur, target_scan_id)"),
+                        selection.index("cur.execute("),
+                    )
+                    self.assertLess(
+                        target.index("require_running_scan(cur, target_scan_id)", target.index("http_probe(")),
+                        target.index("_persist_result("),
+                    )
+                    self.assertIn("scan_results", source)
+                    continue
                 guard = source.index("require_running_scan(cur, scan_id)")
                 self.assertLess(guard, source.index(mutation))
                 self.assertIn("require_running_scan", source.splitlines()[0:15].__str__())

@@ -113,7 +113,10 @@ class StaticMembershipContractTests(unittest.TestCase):
             with self.subTest(filename=filename):
                 text = source(filename)
                 self.assertRegex(text, r"def get_[a-z_]+\(cur, scan_id\):")
-                expected_connections = 2 if filename == "port_scan_worker.py" else 1
+                expected_connections = (
+                    2 if filename in ("port_scan_worker.py", "http_observation_worker.py")
+                    else 1
+                )
                 self.assertEqual(text.count("get_conn()"), expected_connections)
 
     def test_san_parent_membership_precedes_network_observation(self):
@@ -337,8 +340,10 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                 for connection in connections:
                     connection.close()
         self.assertEqual(fake_db.get_conn.call_count, len(connections))
-        if filename != "port_scan_worker.py":
+        if filename not in ("port_scan_worker.py", "http_observation_worker.py"):
             fake_db.get_conn.assert_called_once_with()
+        elif filename == "http_observation_worker.py":
+            self.assertGreaterEqual(fake_db.get_conn.call_count, 1)
         return executions, mocks
 
     def test_all_consumers_exclude_historical_wrong_scan_and_orphan_inputs(self):

@@ -70,6 +70,7 @@ services:
       CENSYS_API_SECRET: ${CENSYS_API_SECRET:-}
       ASIP_DEFAULT_SCAN_OPERATIONS: ${ASIP_DEFAULT_SCAN_OPERATIONS:-}
       ASIP_NMAP_WORKERS: ${ASIP_NMAP_WORKERS:-2}
+      ASIP_HTTP_WORKERS: ${ASIP_HTTP_WORKERS:-2}
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
