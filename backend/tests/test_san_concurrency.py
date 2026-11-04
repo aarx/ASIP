@@ -39,20 +39,26 @@ def load_worker():
 class Cursor:
     rowcount = 1
 
-    def __init__(self):
+    def __init__(self, inserted=True):
         self.executions = []
+        self.inserted = inserted
+        self.result = (1,)
 
     def execute(self, sql, params=None):
         self.executions.append((sql, params))
+        if "INSERT INTO domains(" in sql:
+            self.result = (1, self.inserted)
+        else:
+            self.result = (1,)
 
     def fetchone(self):
-        return (1,)
+        return self.result
 
 
 class Connection:
-    def __init__(self, identity):
+    def __init__(self, identity, inserted=True):
         self.identity = identity
-        self.cur = Cursor()
+        self.cur = Cursor(inserted=inserted)
         self.commits = 0
         self.rollbacks = 0
         self.closed = False
@@ -70,8 +76,11 @@ class Connection:
         self.closed = True
 
 
-class Trusted:
+class Trusted(list):
     known_domains = frozenset()
+
+    def __init__(self):
+        super().__init__(["example"])
 
 
 class SanConcurrencyTests(unittest.TestCase):
@@ -79,10 +88,12 @@ class SanConcurrencyTests(unittest.TestCase):
         self.worker = load_worker()
         self.connections = []
         self.lock = threading.Lock()
+        self.domain_inserted = True
 
         def connect():
             with self.lock:
-                connection = Connection(len(self.connections) + 1)
+                connection = Connection(len(self.connections) + 1,
+                                        inserted=self.domain_inserted)
                 self.connections.append(connection)
                 return connection
 
@@ -160,23 +171,38 @@ class SanConcurrencyTests(unittest.TestCase):
 
     def test_cancellation_registered_before_commit_rejects_write(self):
         class CancelBeforeWriteGate(self.worker.SanCancellationGate):
-            def run_if_active(gate, operation):
+            def run_in_order(gate, ordinal, operation):
                 gate.set()
-                return super(CancelBeforeWriteGate, gate).run_if_active(operation)
+                return super(CancelBeforeWriteGate, gate).run_in_order(
+                    ordinal, operation
+                )
 
         gate = CancelBeforeWriteGate()
-        self.worker.fetch_san_domains = mock.Mock(return_value=[])
+        self.worker.fetch_san_domains = mock.Mock(
+            return_value=["*.Child.example", "child.EXAMPLE", "parent-1.example"]
+        )
         original = self.worker._persist_parent
 
         self.worker._persist_parent = mock.Mock(wraps=original)
-        with self.assertRaises(self.worker.SanInterrupted):
-            self.worker.run_san_expansion(
-                self.rows(1), 17, Trusted(), workers=1, cancel_gate=gate
-            )
+        with self.assertLogs("san_worker", level="INFO") as captured:
+            with self.assertRaises(self.worker.SanInterrupted):
+                self.worker.run_san_expansion(
+                    self.rows(1), 17, Trusted(), workers=1, cancel_gate=gate
+                )
+        self.worker.fetch_san_domains.assert_called_once()
         self.assertFalse(any("INSERT INTO domain_san" in sql
                              for sql, _ in self.connections[0].cur.executions))
         self.worker._persist_parent.assert_not_called()
         self.assertGreaterEqual(self.connections[0].rollbacks, 1)
+        stage = next(line for line in captured.output if "san_stage " in line)
+        summary = __import__("json").loads(stage.split("san_stage ", 1)[1])
+        self.assertEqual(summary["cancelled_targets"], 1)
+        self.assertEqual(summary["successful_tls_retrievals"], 1)
+        self.assertEqual(summary["raw_san_names_observed"], 3)
+        self.assertEqual(summary["unique_normalized_san_names"], 1)
+        self.assertEqual(summary["newly_created_domain_identities"], 0)
+        self.assertEqual(summary["unprocessed_incomplete_targets"], 1)
+        self.assertTrue(summary["interrupted"])
 
     def test_commit_already_inside_gate_finishes_before_cancellation_registers(self):
         gate = self.worker.SanCancellationGate()
@@ -192,7 +218,7 @@ class SanConcurrencyTests(unittest.TestCase):
                 if not release_commit.wait(timeout=2):
                     raise AssertionError("test did not release commit")
                 committed.append("committed")
-            gate.run_if_active(transaction)
+            gate.run_in_order(0, transaction)
 
         def cancel():
             cancellation_started.set()
@@ -213,15 +239,83 @@ class SanConcurrencyTests(unittest.TestCase):
         self.assertFalse(canceller.is_alive())
         self.assertEqual(committed, ["committed"])
         self.assertTrue(cancellation_registered.is_set())
-        self.assertIsNone(gate.run_if_active(lambda: committed.append("late")))
+        self.assertIsNone(gate.run_in_order(1, lambda: committed.append("late")))
         self.assertEqual(committed, ["committed"])
+
+    def test_raw_normalized_inserted_and_reused_metrics_are_distinct(self):
+        self.worker.fetch_san_domains = mock.Mock(return_value=[
+            "*.Child.example", "child.EXAMPLE", "parent-1.example", "invalid",
+        ])
+        summary = self.worker.run_san_expansion(self.rows(1), 17, Trusted(), workers=1)
+        self.assertEqual(summary["raw_san_names_observed"], 4)
+        self.assertEqual(summary["unique_normalized_san_names"], 1)
+        self.assertEqual(summary["newly_created_domain_identities"], 1)
+        self.assertEqual(summary["existing_domain_identities_reused"], 0)
+        self.assertEqual(summary["persisted_parent_san_records"], 1)
+        self.assertEqual(summary["persisted_provenance_relationships"], 1)
+        self.assertEqual(summary["persisted_scan_memberships"], 1)
+        self.assertEqual(summary["persisted_domain_identity_upserts"], 1)
+        self.assertEqual(summary["persisted_row_writes"], 4)
+
+        self.domain_inserted = False
+        reused = self.worker.run_san_expansion(self.rows(1), 17, Trusted(), workers=1)
+        self.assertEqual(reused["newly_created_domain_identities"], 0)
+        self.assertEqual(reused["existing_domain_identities_reused"], 1)
+        self.assertEqual(reused["persisted_domain_identity_upserts"], 1)
 
     def test_worker_failure_fails_stage(self):
         self.worker.fetch_san_domains = mock.Mock(
             side_effect=RuntimeError("database worker failure")
         )
-        with self.assertRaises(self.worker.SanStageError):
-            self.worker.run_san_expansion(self.rows(2), 17, Trusted(), workers=1)
+        with self.assertLogs("san_worker", level="INFO") as captured:
+            with self.assertRaises(self.worker.SanStageError):
+                self.worker.run_san_expansion(
+                    self.rows(2), 17, Trusted(), workers=1
+                )
+        stage = next(line for line in captured.output if "san_stage " in line)
+        summary = __import__("json").loads(stage.split("san_stage ", 1)[1])
+        self.assertTrue(summary["failed"])
+        self.assertEqual(summary["worker_errors"], 1)
+        self.assertEqual(summary["unprocessed_incomplete_targets"], 2)
+
+    def test_worker_failure_cancels_another_active_target_before_write(self):
+        first_started = threading.Event()
+        cancellation_registered = threading.Event()
+
+        class ObservedGate(self.worker.SanCancellationGate):
+            def set(gate):
+                super(ObservedGate, gate).set()
+                cancellation_registered.set()
+
+        gate = ObservedGate()
+
+        def retrieve(domain, before_request=None):
+            self.assertTrue(before_request())
+            if domain == "parent-1.example":
+                first_started.set()
+                self.assertTrue(cancellation_registered.wait(timeout=3))
+                self.worker._fetch_state.category = "authorization_skipped"
+                return None
+            self.assertTrue(first_started.wait(timeout=3))
+            raise RuntimeError("injected worker failure")
+
+        self.worker.fetch_san_domains = retrieve
+        with self.assertLogs("san_worker", level="INFO") as captured:
+            with self.assertRaises(self.worker.SanStageError):
+                self.worker.run_san_expansion(
+                    self.rows(2), 17, Trusted(), workers=2, cancel_gate=gate
+                )
+        stage = next(line for line in captured.output if "san_stage " in line)
+        summary = __import__("json").loads(stage.split("san_stage ", 1)[1])
+        self.assertEqual(summary["worker_errors"], 1)
+        self.assertEqual(summary["cancelled_targets"], 1)
+        self.assertEqual(summary["persisted_row_writes"], 0)
+        self.assertEqual(summary["unprocessed_incomplete_targets"], 2)
+        self.assertFalse(any(
+            "INSERT INTO domain_san" in sql
+            for connection in self.connections
+            for sql, _ in connection.cur.executions
+        ))
 
     def test_worker_setting_is_clamped_to_two(self):
         self.assertEqual(self.worker.configured_san_workers(1), 1)

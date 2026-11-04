@@ -66,25 +66,47 @@ def fetch_san_domains(domain, before_request=None):
 
 
 class SanCancellationGate:
-    """Serialize cancellation registration against scan-scoped SAN commits."""
+    """Serialize cancellation and deterministically ordered SAN commits."""
 
     def __init__(self):
         self._lock = threading.RLock()
+        self._condition = threading.Condition(self._lock)
         self._cancelled = False
+        self._next_commit_ordinal = 0
 
     def is_set(self):
         with self._lock:
             return self._cancelled
 
     def set(self):
-        with self._lock:
+        with self._condition:
             self._cancelled = True
+            self._condition.notify_all()
 
     def run_if_active(self, operation):
         with self._lock:
             if self._cancelled:
                 return None
             return operation()
+
+    def run_in_order(self, ordinal, operation):
+        """Run a short DB operation in source order, unless cancelled."""
+        with self._condition:
+            while ordinal > self._next_commit_ordinal and not self._cancelled:
+                self._condition.wait()
+            if self._cancelled:
+                return None
+            if ordinal != self._next_commit_ordinal:
+                raise RuntimeError("SAN persistence order was already consumed")
+            try:
+                result = operation()
+            except BaseException:
+                self._cancelled = True
+                self._condition.notify_all()
+                raise
+            self._next_commit_ordinal += 1
+            self._condition.notify_all()
+            return result
 
 
 class SanAuthorizationError(RuntimeError):
@@ -126,16 +148,21 @@ def configured_san_workers(value=None):
 
 
 def _target_metric(target_scan_id, domain_id, started, tls_elapsed,
-                   category, timeout, san_count):
-    logger.info("san_target %s", json.dumps({
+                   category, timeout, raw_san_names=0,
+                   unique_san_names=0, persistence=None):
+    metric = {
         "scan_id": target_scan_id,
         "domain_id": domain_id,
         "elapsed_seconds": round(time.monotonic() - started, 4),
         "tls_elapsed_seconds": round(tls_elapsed, 4),
         "result": category,
         "timeout": bool(timeout),
-        "san_count": int(san_count),
-    }, separators=(",", ":")))
+        "raw_san_names_observed": int(raw_san_names),
+        "unique_normalized_san_names": int(unique_san_names),
+    }
+    if persistence:
+        metric.update(persistence)
+    logger.info("san_target %s", json.dumps(metric, separators=(",", ":")))
 
 
 def get_san_targets(cur, target_scan_id):
@@ -179,22 +206,7 @@ def add_current_scan_membership(cur, parent_domain_id, child_domain_id,
     """, (target_scan_id, child_domain_id, parent_scan_result[0]))
     return max(0, cur.rowcount)
 
-def _persist_parent(cur, conn, parent_id, parent_domain, san_observation,
-                    trusted_domains, target_scan_id):
-    cur.execute("""
-        SELECT 1 FROM scan_results WHERE scan_id=%s AND domain_id=%s
-    """, (target_scan_id, parent_id))
-    if cur.fetchone() is None:
-        return 0
-    cur.execute("""
-        INSERT INTO domain_san(domain_id, scan_id)
-        SELECT %s, %s WHERE EXISTS (
-            SELECT 1 FROM scan_results sr
-            WHERE sr.scan_id=%s AND sr.domain_id=%s
-        ) ON CONFLICT (domain_id, scan_id) DO NOTHING
-    """, (parent_id, target_scan_id, target_scan_id, parent_id))
-    persisted = max(0, cur.rowcount)
-    known_set = trusted_domains.known_domains
+def _normalized_san_names(parent_domain, san_observation):
     parent_normalized = normalize_hostname(parent_domain)
     normalized_names = set()
     for raw_san in san_observation:
@@ -204,6 +216,39 @@ def _persist_parent(cur, conn, parent_id, parent_domain, san_observation,
         normalized = normalize_hostname(candidate)
         if normalized and normalized != parent_normalized and "." in normalized:
             normalized_names.add(normalized)
+    return normalized_names
+
+
+def _empty_persistence_metrics():
+    return {
+        "persisted_parent_san_records": 0,
+        "persisted_provenance_relationships": 0,
+        "persisted_scan_memberships": 0,
+        "persisted_domain_identity_upserts": 0,
+        "newly_created_domain_identities": 0,
+        "existing_domain_identities_reused": 0,
+        "persisted_row_writes": 0,
+    }
+
+
+def _persist_parent(cur, conn, parent_id, parent_domain, normalized_names,
+                    trusted_domains, target_scan_id):
+    metrics = _empty_persistence_metrics()
+    cur.execute("""
+        SELECT 1 FROM scan_results WHERE scan_id=%s AND domain_id=%s
+    """, (target_scan_id, parent_id))
+    if cur.fetchone() is None:
+        return metrics
+    cur.execute("""
+        INSERT INTO domain_san(domain_id, scan_id)
+        SELECT %s, %s WHERE EXISTS (
+            SELECT 1 FROM scan_results sr
+            WHERE sr.scan_id=%s AND sr.domain_id=%s
+        ) ON CONFLICT (domain_id, scan_id) DO NOTHING
+    """, (parent_id, target_scan_id, target_scan_id, parent_id))
+    metrics["persisted_parent_san_records"] += max(0, cur.rowcount)
+    metrics["persisted_row_writes"] += max(0, cur.rowcount)
+    known_set = trusted_domains.known_domains
     for san in sorted(normalized_names):
         is_known = san in known_set
         ownership_status = ownership_for_discovery(
@@ -232,11 +277,19 @@ def _persist_parent(cur, conn, parent_id, parent_domain, san_observation,
                 source = CASE WHEN domains.source='seed' THEN 'san' ELSE domains.source END
             RETURNING id, (xmax=0) AS inserted
         """, (san, target_scan_id, target_scan_id, is_known, "san", ownership_status))
-        child_id, _inserted = cur.fetchone()
-        persisted += max(0, cur.rowcount)
-        persisted += add_current_scan_membership(
+        child_id, inserted = cur.fetchone()
+        identity_rows = max(0, cur.rowcount)
+        metrics["persisted_domain_identity_upserts"] += identity_rows
+        metrics["persisted_row_writes"] += identity_rows
+        if inserted:
+            metrics["newly_created_domain_identities"] += 1
+        else:
+            metrics["existing_domain_identities_reused"] += 1
+        membership_rows = add_current_scan_membership(
             cur, parent_id, child_id, target_scan_id
         )
+        metrics["persisted_scan_memberships"] += membership_rows
+        metrics["persisted_row_writes"] += membership_rows
         cur.execute("""
             INSERT INTO domain_sources(domain_id, scan_id, source, seed)
             SELECT %s,%s,%s,%s WHERE EXISTS (
@@ -245,16 +298,41 @@ def _persist_parent(cur, conn, parent_id, parent_domain, san_observation,
             ) ON CONFLICT DO NOTHING
         """, (child_id, target_scan_id, "san", parent_domain,
               target_scan_id, child_id))
-        persisted += max(0, cur.rowcount)
-    return persisted
+        provenance_rows = max(0, cur.rowcount)
+        metrics["persisted_provenance_relationships"] += provenance_rows
+        metrics["persisted_row_writes"] += provenance_rows
+    return metrics
 
 
-def _process_parent(row, target_scan_id, trusted_domains, gate, tracker):
+def _process_parent(row, ordinal, target_scan_id, trusted_domains, gate, tracker):
     parent_id, parent_domain = row
     tracker.enter()
     started = time.monotonic()
     tls_started = started
     conn = None
+    observed_names = set()
+    raw_name_count = 0
+    tls_retrieved = False
+    committed_metrics = _empty_persistence_metrics()
+    committed = False
+
+    def log_worker_error(exc):
+        _target_metric(
+            target_scan_id, parent_id, started,
+            time.monotonic() - tls_started if tls_retrieved else 0,
+            "worker_error", False, raw_name_count, len(observed_names),
+            committed_metrics if committed else None,
+        )
+        try:
+            exc.san_worker_metrics = {
+                "tls_retrieved": tls_retrieved,
+                "raw_san_names_observed": raw_name_count,
+                "normalized_names": observed_names,
+                "persistence": committed_metrics if committed else None,
+            }
+        except Exception:
+            pass
+
     try:
         if gate.is_set():
             _target_metric(target_scan_id, parent_id, started, 0,
@@ -270,6 +348,10 @@ def _process_parent(row, target_scan_id, trusted_domains, gate, tracker):
                     (target_scan_id, parent_id))
         if cur.fetchone() is None:
             conn.commit()
+            if gate.run_in_order(ordinal, lambda: True) is None:
+                _target_metric(target_scan_id, parent_id, started, 0,
+                               "cancelled", False)
+                return {"kind": "cancelled", "domain_id": parent_id}
             _target_metric(target_scan_id, parent_id, started, 0,
                            "authorization_skipped", False, 0)
             return {"kind": "authorization_skips", "domain_id": parent_id}
@@ -288,46 +370,81 @@ def _process_parent(row, target_scan_id, trusted_domains, gate, tracker):
             return allowed
 
         if not authorized():
+            if gate.run_in_order(ordinal, lambda: True) is None:
+                _target_metric(target_scan_id, parent_id, started, 0,
+                               "cancelled", False)
+                return {"kind": "cancelled", "domain_id": parent_id}
             _target_metric(target_scan_id, parent_id, started, 0,
                            "authorization_skipped", False, 0)
             return {"kind": "authorization_skips", "domain_id": parent_id}
         tls_started = time.monotonic()
         san_observation = fetch_san_domains(parent_domain, before_request=authorized)
         tls_elapsed = time.monotonic() - tls_started
+        normalized_names = (
+            _normalized_san_names(parent_domain, san_observation)
+            if san_observation is not None else set()
+        )
+        if san_observation is not None:
+            tls_retrieved = True
+            raw_name_count = len(san_observation)
+            observed_names = normalized_names
         if san_observation is None:
             category = getattr(_fetch_state, "category", None) or "other_failure"
+            if gate.run_in_order(ordinal, lambda: True) is None:
+                _target_metric(target_scan_id, parent_id, started, tls_elapsed,
+                               "cancelled", category == "timeout")
+                return {"kind": "cancelled", "domain_id": parent_id,
+                        "tls_category": category}
             _target_metric(target_scan_id, parent_id, started, tls_elapsed,
                            category, category == "timeout", 0)
             return {"kind": category, "domain_id": parent_id}
 
         def persist_and_commit():
             require_running_scan(cur, target_scan_id)
-            count = _persist_parent(
+            metrics = _persist_parent(
                 cur, conn, parent_id, parent_domain,
-                san_observation, trusted_domains, target_scan_id,
+                normalized_names, trusted_domains, target_scan_id,
             )
             conn.commit()
-            return count
+            return metrics
 
-        persisted = gate.run_if_active(persist_and_commit)
-        if persisted is None:
+        persistence = gate.run_in_order(ordinal, persist_and_commit)
+        if persistence is None:
             conn.rollback()
-            return {"kind": "cancelled", "domain_id": parent_id}
+            _target_metric(target_scan_id, parent_id, started, tls_elapsed,
+                           "cancelled", False, len(san_observation),
+                           len(normalized_names))
+            return {"kind": "cancelled", "domain_id": parent_id,
+                    "tls_retrieved": True,
+                    "raw_san_names_observed": len(san_observation),
+                    "normalized_names": normalized_names}
+        committed_metrics = persistence
+        committed = True
         category = "successful"
         _target_metric(target_scan_id, parent_id, started, tls_elapsed,
-                       category, False, len(san_observation))
+                       category, False, len(san_observation),
+                       len(normalized_names), persistence)
         return {"kind": category, "domain_id": parent_id,
-                "persisted": persisted, "san_count": len(san_observation)}
-    except SanAuthorizationError:
+                "tls_retrieved": True,
+                "raw_san_names_observed": len(san_observation),
+                "normalized_names": normalized_names,
+                **persistence}
+    except SanAuthorizationError as exc:
+        log_worker_error(exc)
         raise
-    except Exception:
+    except Exception as exc:
         if conn is not None:
             conn.rollback()
+        log_worker_error(exc)
         raise
     finally:
         try:
             if conn is not None:
-                conn.close()
+                try:
+                    conn.close()
+                except Exception as exc:
+                    log_worker_error(exc)
+                    raise
         finally:
             tracker.exit()
 
@@ -339,26 +456,37 @@ def run_san_expansion(rows, target_scan_id, trusted_domains, workers=None,
     selected_by_id = {}
     for row in rows:
         selected_by_id.setdefault(int(row[0]), (int(row[0]), row[1]))
-    selected = list(selected_by_id.values())
+    # get_san_targets has historically supplied d.id order.  Keep that rule
+    # explicit so completion timing never chooses scan_results.seed.
+    selected = sorted(selected_by_id.values(), key=lambda row: row[0])
     started = time.monotonic()
     counts = {key: 0 for key in (
-        "successful", "no_permitted_destination", "timeout", "other_failure",
-        "authorization_skips", "persisted_records", "worker_errors",
+        "completed_parent_targets", "successful_tls_retrievals",
+        "no_permitted_destinations", "tls_timeouts", "other_tls_failures",
+        "authorization_skips", "worker_errors", "cancelled_targets",
+        "raw_san_names_observed", "newly_created_domain_identities",
+        "existing_domain_identities_reused", "persisted_parent_san_records",
+        "persisted_provenance_relationships", "persisted_scan_memberships",
+        "persisted_domain_identity_upserts", "persisted_row_writes",
     )}
+    unique_normalized_names = set()
     tracker = _ConcurrencyTracker()
     next_index = 0
     pending = {}
     pool = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="san")
-    failed = None
+    failure = None
+    interrupted = False
+    successful_targets = 0
 
-    def submit_one(row):
-        future = pool.submit(_process_parent, row, target_scan_id,
+    def submit_one(ordinal, row):
+        future = pool.submit(_process_parent, row, ordinal, target_scan_id,
                              trusted_domains, gate, tracker)
-        pending[future] = row
+        pending[future] = (ordinal, row)
 
     try:
         while next_index < len(selected) and len(pending) < worker_count and not gate.is_set():
-            submit_one(selected[next_index]); next_index += 1
+            ordinal = next_index
+            submit_one(ordinal, selected[ordinal]); next_index += 1
         while pending:
             done, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
             for future in done:
@@ -368,34 +496,105 @@ def run_san_expansion(rows, target_scan_id, trusted_domains, workers=None,
                     kind = result["kind"]
                     if kind == "cancelled":
                         gate.set()
+                        counts["cancelled_targets"] += 1
+                        _count_tls_category(counts, result.get("tls_category"))
+                        if result.get("tls_retrieved"):
+                            counts["successful_tls_retrievals"] += 1
+                            counts["raw_san_names_observed"] += result.get(
+                                "raw_san_names_observed", 0
+                            )
+                            unique_normalized_names.update(
+                                result.get("normalized_names", ())
+                            )
                     else:
-                        if kind == "authorization_skipped":
-                            kind = "authorization_skips"
-                        counts[kind] = counts.get(kind, 0) + 1
-                        counts["persisted_records"] += result.get("persisted", 0)
+                        counts["completed_parent_targets"] += 1
+                        if kind == "authorization_skips":
+                            counts["authorization_skips"] += 1
+                        elif kind == "successful":
+                            successful_targets += 1
+                            counts["successful_tls_retrievals"] += 1
+                            counts["raw_san_names_observed"] += result.get(
+                                "raw_san_names_observed", 0
+                            )
+                            unique_normalized_names.update(
+                                result.get("normalized_names", ())
+                            )
+                            for metric in (
+                                "newly_created_domain_identities",
+                                "existing_domain_identities_reused",
+                                "persisted_parent_san_records",
+                                "persisted_provenance_relationships",
+                                "persisted_scan_memberships",
+                                "persisted_domain_identity_upserts",
+                                "persisted_row_writes",
+                            ):
+                                counts[metric] += result.get(metric, 0)
+                        else:
+                            _count_tls_category(counts, kind)
                 except Exception as exc:
                     counts["worker_errors"] += 1
-                    failed = exc
+                    worker_metrics = getattr(exc, "san_worker_metrics", None) or {}
+                    if worker_metrics.get("tls_retrieved"):
+                        counts["successful_tls_retrievals"] += 1
+                        counts["raw_san_names_observed"] += worker_metrics.get(
+                            "raw_san_names_observed", 0
+                        )
+                        unique_normalized_names.update(
+                            worker_metrics.get("normalized_names", ())
+                        )
+                    if worker_metrics.get("persistence"):
+                        for metric, value in worker_metrics["persistence"].items():
+                            counts[metric] += value
+                    failure = exc
                     gate.set()
-            while (failed is None and not gate.is_set() and next_index < len(selected)
+            while (failure is None and not gate.is_set() and next_index < len(selected)
                    and len(pending) < worker_count):
-                submit_one(selected[next_index]); next_index += 1
-        if gate.is_set() and failed is None:
-            raise SanInterrupted("SAN expansion cancelled before completion")
-        if failed is not None:
-            raise SanStageError("SAN worker failed") from failed
+                ordinal = next_index
+                submit_one(ordinal, selected[ordinal]); next_index += 1
+        interrupted = gate.is_set() and failure is None
     finally:
         pool.shutdown(wait=not gate.is_set(), cancel_futures=True)
         summary = {
-            "selected": len(selected), **counts,
+            "selected_parent_targets": len(selected), **counts,
+            "unique_normalized_san_names": len(unique_normalized_names),
+            "unprocessed_incomplete_targets": max(
+                0, len(selected) - counts["completed_parent_targets"]
+            ),
             "elapsed_seconds": round(time.monotonic() - started, 4),
-            "maximum_concurrency": tracker.maximum,
+            "maximum_active_concurrency": tracker.maximum,
             "workers": worker_count,
+            "interrupted": interrupted,
+            "failed": failure is not None,
         }
+        # Keep the prior log keys for any existing local log consumers.
+        summary.update({
+            "selected": summary["selected_parent_targets"],
+            "successful": successful_targets,
+            "no_permitted_destination": counts["no_permitted_destinations"],
+            "timeout": counts["tls_timeouts"],
+            "other_failure": counts["other_tls_failures"],
+            "persisted_records": counts["persisted_row_writes"],
+            "maximum_concurrency": tracker.maximum,
+        })
         logger.info("san_stage %s", json.dumps(
             summary, sort_keys=True, separators=(",", ":")
         ))
+    if interrupted:
+        raise SanInterrupted("SAN expansion cancelled before completion")
+    if failure is not None:
+        raise SanStageError("SAN worker failed") from failure
     return summary
+
+
+def _count_tls_category(counts, category):
+    if category == "no_permitted_destination":
+        counts["no_permitted_destinations"] += 1
+    elif category == "timeout":
+        counts["tls_timeouts"] += 1
+    elif category == "other_failure":
+        counts["other_tls_failures"] += 1
+    elif category in {"authorization_skipped", "authorization_skips"}:
+        counts["authorization_skips"] += 1
 
 
 def main():

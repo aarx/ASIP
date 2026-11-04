@@ -2,6 +2,7 @@ import ast
 import hashlib
 import os
 import pathlib
+import threading
 import types
 import unittest
 from unittest import mock
@@ -580,6 +581,121 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.assertEqual(self.sql('SELECT to_jsonb(t)::text FROM domain_states t WHERE scan_id=41'), previous)
         self.assertEqual(self.sql('SELECT domain_id FROM scan_results WHERE scan_id=41'), [(historic,)])
         self.assertEqual(self.sql('SELECT domain_id FROM domain_san WHERE scan_id=42'), [(parent,)])
+
+    def _run_shared_san_children(self, completion_order, existing_child=False):
+        parent_a = self.domain('parent-a.example', 42)
+        parent_b = self.domain('parent-b.example', 42)
+        self.sql("UPDATE scan_results SET seed='seed-a.example' WHERE scan_id=42 AND domain_id=%s",
+                 (parent_a,))
+        self.sql("UPDATE scan_results SET seed='seed-b.example' WHERE scan_id=42 AND domain_id=%s",
+                 (parent_b,))
+        self.authorize_scope('example', 'HTTP_TLS_OBSERVATION')
+
+        if existing_child:
+            child_id = self.domain('shared.example', 42, state_scan=41)
+            self.sql("UPDATE domains SET ownership_status='EXTERNAL' WHERE id=%s", (child_id,))
+            self.sql("UPDATE scan_results SET seed='pre-existing-seed' WHERE scan_id=42 AND domain_id=%s",
+                     (child_id,))
+            self.sql("INSERT INTO domain_sources VALUES (%s,42,'recon','pre-existing-seed')",
+                     (child_id,))
+
+        entered = threading.Barrier(2)
+        parent_a_completed = threading.Event()
+        parent_b_completed = threading.Event()
+
+        def observe(domain, before_request=None):
+            if not before_request():
+                raise AssertionError('SAN authorization unexpectedly denied')
+            entered.wait(timeout=3)
+            if domain == 'parent-a.example':
+                if completion_order == 'b_first':
+                    if not parent_b_completed.wait(timeout=3):
+                        raise AssertionError('parent B did not finish TLS retrieval')
+                parent_a_completed.set()
+            else:
+                if completion_order == 'a_first':
+                    if not parent_a_completed.wait(timeout=3):
+                        raise AssertionError('parent A did not finish TLS retrieval')
+                parent_b_completed.set()
+            return ['shared.example']
+
+        with self.assertLogs('san_worker', level='INFO') as captured:
+            self.run_worker('san_worker.py', overrides={'fetch_san_domains': observe})
+
+        summary_line = next(line for line in captured.output if 'san_stage ' in line)
+        summary = __import__('json').loads(summary_line.split('san_stage ', 1)[1])
+        child_id = self.sql("SELECT id FROM domains WHERE domain='shared.example'")[0][0]
+        self.assertEqual(self.sql("SELECT count(*) FROM domains WHERE domain='shared.example'"), [(1,)])
+        self.assertEqual(self.sql("SELECT count(*) FROM scan_results WHERE scan_id=42 AND domain_id=%s",
+                                  (child_id,)), [(1,)])
+        self.assertEqual(self.sql("SELECT count(*) FROM scan_results WHERE scan_id=43 AND domain_id=%s",
+                                  (child_id,)), [(0,)])
+        self.assertEqual(set(self.sql("""
+            SELECT seed FROM domain_sources
+            WHERE domain_id=%s AND scan_id=42 AND source='san'
+        """, (child_id,))), {('parent-a.example',), ('parent-b.example',)})
+        self.assertEqual(self.sql("SELECT count(*) FROM domain_san WHERE scan_id=42 AND domain_id IN (%s,%s)",
+                                  (parent_a, parent_b)), [(2,)])
+        self.assertEqual(summary['selected_parent_targets'], 2)
+        self.assertEqual(summary['completed_parent_targets'], 2)
+        self.assertEqual(summary['raw_san_names_observed'], 2)
+        self.assertEqual(summary['unique_normalized_san_names'], 1)
+        self.assertEqual(summary['newly_created_domain_identities'],
+                         0 if existing_child else 1)
+        self.assertEqual(summary['existing_domain_identities_reused'],
+                         2 if existing_child else 1)
+        self.assertEqual(summary['persisted_parent_san_records'], 2)
+        self.assertEqual(summary['persisted_provenance_relationships'], 2)
+        self.assertEqual(summary['persisted_scan_memberships'],
+                         0 if existing_child else 1)
+        self.assertEqual(summary['unprocessed_incomplete_targets'], 0)
+
+        if existing_child:
+            self.assertEqual(self.sql("SELECT seed FROM scan_results WHERE scan_id=42 AND domain_id=%s",
+                                      (child_id,)), [('pre-existing-seed',)])
+            self.assertEqual(self.sql("SELECT ownership_status FROM domains WHERE id=%s",
+                                      (child_id,)), [('EXTERNAL',)])
+            self.assertEqual(self.sql("SELECT source,seed FROM domain_sources WHERE domain_id=%s AND scan_id=42 AND source='recon'",
+                                      (child_id,)), [('recon','pre-existing-seed')])
+        else:
+            # Parent A has the lowest ID, matching the old serial target order,
+            # regardless of which TLS fetch returned first.
+            self.assertEqual(self.sql("SELECT seed FROM scan_results WHERE scan_id=42 AND domain_id=%s",
+                                      (child_id,)), [('seed-a.example',)])
+
+    def test_san_shared_child_seed_is_canonical_when_parent_a_finishes_first(self):
+        self._run_shared_san_children('a_first')
+
+    def test_san_shared_child_seed_is_canonical_when_parent_b_finishes_first(self):
+        self._run_shared_san_children('b_first')
+
+    def test_san_preserves_existing_non_san_seed_and_external_ownership(self):
+        self._run_shared_san_children('b_first', existing_child=True)
+
+    def test_san_transaction_rolls_back_partial_child_writes(self):
+        parent = self.domain('rollback.example', 42)
+        self.authorize_scope('example', 'HTTP_TLS_OBSERVATION')
+        with self.assertLogs('san_worker', level='INFO') as captured:
+            with self.assertRaisesRegex(RuntimeError, 'SAN worker failed'):
+                self.run_worker('san_worker.py', overrides={
+                    'fetch_san_domains': mock.Mock(
+                        return_value=['a-partial.example', 'explode.example']
+                    )
+                })
+        self.assertEqual(self.sql("SELECT count(*) FROM domain_san WHERE domain_id=%s AND scan_id=42",
+                                  (parent,)), [(0,)])
+        self.assertEqual(self.sql("SELECT count(*) FROM domains WHERE domain='a-partial.example'"), [(0,)])
+        self.assertEqual(self.sql("""
+            SELECT count(*) FROM scan_results
+            WHERE scan_id=42 AND domain_id IN (
+                SELECT id FROM domains WHERE domain='a-partial.example'
+            )
+        """), [(0,)])
+        summary_line = next(line for line in captured.output if 'san_stage ' in line)
+        summary = __import__('json').loads(summary_line.split('san_stage ', 1)[1])
+        self.assertTrue(summary['failed'])
+        self.assertEqual(summary['worker_errors'], 1)
+        self.assertEqual(summary['persisted_row_writes'], 0)
 
     def test_nonmember_san_parent_never_observed_or_produces_child(self):
         self.domain('orphan.example', 41)
