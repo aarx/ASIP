@@ -36,32 +36,39 @@ Never commit `.env` or paste secret values into issue reports or logs. Credentia
 
 ## Start, stop, and rebuild
 
+The backend image is pinned to an approved committed release and is not built
+by Compose. For backend release verification, promotion, or recovery, follow
+[Backend release pin](BACKEND_RELEASE.md). A missing pinned image is an
+intentional hard failure; do not remove the pin or build from a dirty checkout.
+
 ```bash
 # Validate interpolation without printing the resolved configuration
-docker compose config --quiet
+docker compose -p asip -f docker-compose.yml config --quiet
 
-# Build and start
-docker compose build
-docker compose up -d
-docker compose ps
+# Build only the services that retain Compose build contexts (not the pinned backend)
+docker compose -p asip -f docker-compose.yml build mcp frontend
+
+# Start/reconcile using the configured images
+docker compose -p asip -f docker-compose.yml up -d
+docker compose -p asip -f docker-compose.yml ps
 
 # Logs
 docker compose logs -f backend
 docker compose logs -f mcp
 docker compose logs -f db
 
-# Rebuild application services after code/dependency changes
-docker compose build backend mcp frontend
-docker compose up -d --no-deps backend mcp frontend
+# Rebuild MCP/frontend after their code or dependency changes
+docker compose -p asip -f docker-compose.yml build mcp frontend
+docker compose -p asip -f docker-compose.yml up -d --no-deps mcp frontend
 
 # Restart without rebuilding
-docker compose restart backend mcp frontend
+docker compose -p asip -f docker-compose.yml restart backend mcp frontend
 
 # Stop containers while preserving the PostgreSQL volume
-docker compose stop
+docker compose -p asip -f docker-compose.yml stop
 
 # Stop and remove containers/network while preserving named volumes
-docker compose down
+docker compose -p asip -f docker-compose.yml down
 ```
 
 Never add `--volumes` to `docker compose down` unless intentional database destruction has been separately approved and a verified backup exists.

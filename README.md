@@ -19,15 +19,20 @@ PostgreSQL data is stored in the named Compose volume `asm_pgdata`. Runtime arti
 
 Prerequisites: Docker Engine with the Compose plugin, Git, and enough network/tool access for the approved discovery sources you intend to use.
 
+The backend uses the approved image pinned in `docker-compose.yml`; Compose
+will not build or pull a substitute. Install/verify that release image using
+the [backend release instructions](docs/BACKEND_RELEASE.md) before starting a
+new host. MCP and frontend retain their Compose build contexts.
+
 ```bash
 cp .env.example .env
 chmod 600 .env
 # Edit .env and replace DB_PASSWORD. Configure optional integrations as needed.
 
-docker compose config --quiet
-docker compose build
-docker compose up -d
-docker compose ps
+docker compose -p asip -f docker-compose.yml config --quiet
+docker compose -p asip -f docker-compose.yml build mcp frontend
+docker compose -p asip -f docker-compose.yml up -d
+docker compose -p asip -f docker-compose.yml ps
 ```
 
 On the first start of an **empty** `asm_pgdata` volume, PostgreSQL loads the checked-in current schema automatically. Existing volumes are never reinitialized by Compose.

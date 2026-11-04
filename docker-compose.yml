@@ -40,7 +40,10 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
 
   backend:
-    build: ./backend
+    # Production backend releases are built from committed source and promoted
+    # by updating this exact image reference. Do not add an implicit build here.
+    image: asip-backend:45f5d1b149e808a94908da81fabd02f58b1121aa
+    pull_policy: never
     container_name: asm_backend
 
     depends_on:
@@ -68,10 +71,10 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       CENSYS_API_ID: ${CENSYS_API_ID:-}
       CENSYS_API_SECRET: ${CENSYS_API_SECRET:-}
-      ASIP_DEFAULT_SCAN_OPERATIONS: ${ASIP_DEFAULT_SCAN_OPERATIONS:-}
-      ASIP_NMAP_WORKERS: ${ASIP_NMAP_WORKERS:-2}
-      ASIP_HTTP_WORKERS: ${ASIP_HTTP_WORKERS:-2}
-      ASIP_SAN_WORKERS: ${ASIP_SAN_WORKERS:-2}
+      ASIP_DEFAULT_SCAN_OPERATIONS: HTTP_TLS_OBSERVATION,TECHNOLOGY_HTTP,PORT_SCAN
+      ASIP_NMAP_WORKERS: "2"
+      ASIP_HTTP_WORKERS: "2"
+      ASIP_SAN_WORKERS: "2"
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
