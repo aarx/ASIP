@@ -95,6 +95,16 @@
 .panel-title { margin: 0; color: var(--asip-text-primary); font-size: 14px; font-weight: 680; }
 .panel-subtitle { margin: 4px 0 0; color: var(--asip-text-muted); font-size: 11px; line-height: 1.45; }
 .panel-body { padding: 18px 20px 20px; }
+.supporting-intelligence { grid-column: 1 / -1; min-width: 0; overflow: hidden; border: 1px solid var(--asip-border); border-radius: var(--asip-radius); background: rgba(16, 29, 47, .42); }
+.supporting-intelligence-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 58px; padding: 14px 18px; color: var(--asip-text-primary); cursor: pointer; list-style: none; }
+.supporting-intelligence-summary::-webkit-details-marker { display: none; }
+.supporting-intelligence-summary:focus-visible { outline: 2px solid var(--asip-accent); outline-offset: -2px; }
+.supporting-intelligence-summary > span:first-child { display: grid; gap: 3px; min-width: 0; }
+.supporting-intelligence-summary strong { font-size: 13px; font-weight: 680; }
+.supporting-intelligence-summary small { color: var(--asip-text-muted); font-size: 10px; line-height: 1.4; }
+.supporting-intelligence-action { flex: 0 0 auto; color: var(--asip-accent-bright); font-family: var(--asip-font-mono); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.supporting-intelligence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 0 16px 16px; }
+.supporting-intelligence-grid > .panel { grid-column: auto; }
 .change-panel, .certificate-health-panel { grid-column: span 6; }
 .attention-panel, .discovery-validation-panel { grid-column: 1 / -1; }
 .risk-panel, .ownership-panel { grid-column: span 6; }
@@ -567,6 +577,7 @@
   .certificate-health-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .discovery-validation-signals { grid-template-columns: 1fr; }
   .naming-exposure-signals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .supporting-intelligence-grid { grid-template-columns: 1fr; }
   .change-panel, .attention-panel, .risk-panel, .ownership-panel, .intelligence-panel { grid-column: 1 / -1; }
   .operation-panel-third, .operation-panel-wide, .operation-panel-half { grid-column: 1 / -1; }
   .operations-kpis, .actionable-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }

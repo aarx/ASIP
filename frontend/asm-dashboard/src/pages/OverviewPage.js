@@ -97,6 +97,47 @@ function OwnershipComposition({ counts }) {
   );
 }
 
+function SupportingIntelligence({ children }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const handleSummaryKeyDown = (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    setExpanded((value) => !value);
+  };
+
+  return (
+    <details
+      className="supporting-intelligence"
+      data-testid="supporting-intelligence"
+      open={expanded}
+    >
+      <summary
+        className="supporting-intelligence-summary"
+        aria-controls="supporting-intelligence-content"
+        aria-expanded={expanded}
+        aria-label={`Supporting intelligence, ${expanded ? "collapse" : "expand"}`}
+        onClick={(event) => {
+          event.preventDefault();
+          setExpanded((value) => !value);
+        }}
+        onKeyDown={handleSummaryKeyDown}
+      >
+        <span>
+          <strong>Supporting intelligence</strong>
+          <small>Risk, ownership, trends, status, and naming signals</small>
+        </span>
+        <span className="supporting-intelligence-action" aria-hidden="true">
+          {expanded ? "Collapse" : "Expand"}
+        </span>
+      </summary>
+      <div id="supporting-intelligence-content" className="supporting-intelligence-grid">
+        {children}
+      </div>
+    </details>
+  );
+}
+
 function relativeCompletion(value) {
   if (!value) return "completion time unavailable";
   const completed = new Date(value);
@@ -236,17 +277,19 @@ export default function OverviewPage() {
         scanId={data.discoverySummary?.scan_id}
       />
 
-      <Panel title="Risk distribution" subtitle="Canonical priorities across confirmed organizational assets" className="risk-panel">
-        <RiskDistributionChart distribution={data.risk_distribution} priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}&limit=25`} />
-      </Panel>
+      <SupportingIntelligence>
+        <Panel title="Risk distribution" subtitle="Canonical priorities across confirmed organizational assets" className="risk-panel">
+          <RiskDistributionChart distribution={data.risk_distribution} priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}&limit=25`} />
+        </Panel>
 
-      <Panel title="Ownership & asset composition" subtitle="Organizational surface and adjacent Brand Perimeter" className="ownership-panel">
-        <OwnershipComposition counts={counts} />
-      </Panel>
+        <Panel title="Ownership & asset composition" subtitle="Organizational surface and adjacent Brand Perimeter" className="ownership-panel">
+          <OwnershipComposition counts={counts} />
+        </Panel>
 
-      <AssetGrowthPanel value={data.assetGrowth} status={data.assetGrowthStatus} />
-      <HttpStatusPanel value={data.httpStatus} status={data.httpStatusStatus} />
-      <NamingExposurePanel value={data.namingExposure} status={data.namingExposureStatus} scanId={data.current_scan_id} />
+        <AssetGrowthPanel value={data.assetGrowth} status={data.assetGrowthStatus} />
+        <HttpStatusPanel value={data.httpStatus} status={data.httpStatusStatus} />
+        <NamingExposurePanel value={data.namingExposure} status={data.namingExposureStatus} scanId={data.current_scan_id} />
+      </SupportingIntelligence>
     </div>
   );
 }

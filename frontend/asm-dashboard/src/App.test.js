@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { getCertExpiry, getNamingAssetExposure, getV2BrandAssets, getV2Overview, getV2Scans } from "./services/api";
+import { getAssetGrowth, getCertExpiry, getHttpStatus, getNamingAssetExposure, getV2BrandAssets, getV2Overview, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -48,8 +48,10 @@ const overview = {
 beforeEach(() => {
   window.location.hash = "#/overview";
   getV2Overview.mockReset();
+  getAssetGrowth.mockReset();
   getV2Scans.mockReset();
   getV2BrandAssets.mockReset();
+  getHttpStatus.mockReset();
   getNamingAssetExposure.mockReset();
   getCertExpiry.mockReset();
 });
@@ -124,6 +126,40 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByText("Naming exposure")).toBeInTheDocument();
   expect(screen.getByLabelText("DEV: 2 matching confirmed assets")).toBeInTheDocument();
   expect(getNamingAssetExposure).toHaveBeenCalledTimes(1);
+
+  const supporting = screen.getByTestId("supporting-intelligence");
+  const supportingSummary = within(supporting).getByText("Supporting intelligence").closest("summary");
+  expect(supporting).not.toHaveAttribute("open");
+  expect(supportingSummary).toHaveAttribute("aria-expanded", "false");
+  expect(supportingSummary).toHaveAttribute("aria-label", "Supporting intelligence, expand");
+  expect(supportingSummary.tagName).toBe("SUMMARY");
+
+  const requestCounts = {
+    assetGrowth: getAssetGrowth.mock.calls.length,
+    httpStatus: getHttpStatus.mock.calls.length,
+    certExpiry: getCertExpiry.mock.calls.length,
+    namingExposure: getNamingAssetExposure.mock.calls.length,
+  };
+  fireEvent.click(supportingSummary);
+  expect(supporting).toHaveAttribute("open");
+  expect(supportingSummary).toHaveAttribute("aria-expanded", "true");
+  expect(supportingSummary).toHaveAttribute("aria-label", "Supporting intelligence, collapse");
+  expect(within(supporting).getByText("Risk distribution")).toBeInTheDocument();
+  expect(within(supporting).getByText("Ownership & asset composition")).toBeInTheDocument();
+  expect(within(supporting).getByText("Asset growth trend")).toBeInTheDocument();
+  expect(within(supporting).getByText("HTTP status distribution")).toBeInTheDocument();
+  expect(within(supporting).getByText("Naming exposure")).toBeInTheDocument();
+  expect(getAssetGrowth).toHaveBeenCalledTimes(requestCounts.assetGrowth);
+  expect(getHttpStatus).toHaveBeenCalledTimes(requestCounts.httpStatus);
+  expect(getCertExpiry).toHaveBeenCalledTimes(requestCounts.certExpiry);
+  expect(getNamingAssetExposure).toHaveBeenCalledTimes(requestCounts.namingExposure);
+
+  fireEvent.keyDown(supportingSummary, { key: " " });
+  expect(supporting).not.toHaveAttribute("open");
+  expect(supportingSummary).toHaveAttribute("aria-expanded", "false");
+  fireEvent.keyDown(supportingSummary, { key: "Enter" });
+  expect(supporting).toHaveAttribute("open");
+  expect(window.location.hash).toBe("#/overview");
   Date.now.mockRestore();
 });
 
