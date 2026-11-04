@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
 import {
   getExposureSummary,
@@ -8,6 +8,7 @@ import {
   getV2Assets,
   getV2Overview,
   getV2ReviewIndicators,
+  getV2ScanDetail,
   getV2Scans,
 } from "./services/api";
 
@@ -16,6 +17,7 @@ jest.mock("./services/api", () => ({
   getV2Assets: jest.fn(),
   getV2AssetDetail: jest.fn(),
   updateV2AssetOwnership: jest.fn(),
+  getV2ScanDetail: jest.fn(),
   getV2Scans: jest.fn(),
   getV2BrandAssets: jest.fn(),
   getV2ReviewIndicators: jest.fn(),
@@ -54,6 +56,7 @@ beforeEach(() => {
     getV2Assets,
     getV2Overview,
     getV2ReviewIndicators,
+    getV2ScanDetail,
     getV2Scans,
   ].forEach((mockFunction) => mockFunction.mockReset());
 });
@@ -240,6 +243,252 @@ test("Scan Centre marks only successful authoritative scans as authoritative", a
   ["#43", "#40", "#39"].forEach((scanId) => {
     expect(within(within(historyTable).getByText(scanId).closest("tr")).getByText("Not authoritative")).toBeInTheDocument();
   });
+});
+
+test("Scan Centre loads persistent stage diagnostics on demand", async () => {
+  window.location.hash = "#/scans";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Scans.mockResolvedValue({
+    current_authoritative_scan_id: 42,
+    previous_authoritative_scan_id: null,
+    scans: [{
+      scan_id: 42, status: "SUCCEEDED", started_at: "2026-11-01T12:00:00Z",
+      completed_at: "2026-11-01T12:01:00Z", duration_seconds: 60,
+      asset_count: 10, seed: "example.com", is_current_authoritative: true,
+      is_previous_authoritative: false,
+    }],
+  });
+  getV2ScanDetail.mockResolvedValue({
+    scan_id: 42,
+    status: "SUCCEEDED",
+    scan_time: "2026-11-01T12:00:00Z",
+    started_at: "2026-11-01T12:00:00Z",
+    completed_at: "2026-11-01T12:01:00Z",
+    seed: "example.com",
+    asset_count: 10,
+    duration_seconds: 60,
+    diagnostics_available: true,
+    current_stage: null,
+    stage_attempts: [
+      {
+        stage: "Recon", order: 0, attempt: 1, status: "FAILED",
+        started_at: "2026-11-01T12:00:00Z", completed_at: "2026-11-01T12:00:02Z",
+        duration_seconds: 2, error_category: "RETRYABLE_INCOMPLETE",
+        worker_summary: { authorization_skips: 2, failed_incomplete: 1 },
+      },
+      {
+        stage: "Recon", order: 0, attempt: 2, status: "SUCCEEDED",
+        started_at: "2026-11-01T12:00:03Z", completed_at: "2026-11-01T12:00:12Z",
+        duration_seconds: 9, error_category: null,
+        worker_summary: { completed_observations: 4 },
+      },
+    ],
+    failure_category: null,
+    scan_outcome: { status: "SUCCEEDED", completed_at: "2026-11-01T12:01:00Z", error_category: null },
+    diagnostics_last_updated_at: "2026-11-01T12:01:00Z",
+  });
+
+  render(<App />);
+  expect(await screen.findByText("Scan history")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Expand scan 42" }));
+  expect(getV2ScanDetail).toHaveBeenCalledWith(42);
+  expect(await screen.findByText("Stage breakdown")).toBeInTheDocument();
+  expect(screen.getByText("Completed stages").nextSibling).toHaveTextContent("1");
+  expect(screen.getByText("Failed stages").nextSibling).toHaveTextContent("0");
+  expect(screen.getByText("Retry attempts").nextSibling).toHaveTextContent("1");
+  expect(screen.getByText("Advanced Diagnostics").closest("details")).not.toHaveAttribute("open");
+  fireEvent.click(screen.getByText("Advanced Diagnostics"));
+  expect(screen.getAllByText("authorization_skips").length).toBe(2);
+  expect(screen.getAllByText("RETRYABLE_INCOMPLETE").length).toBe(2);
+});
+
+test("Scan Centre shows the current stage for a running scan", async () => {
+  window.location.hash = "#/scans";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Scans.mockResolvedValue({
+    current_authoritative_scan_id: null,
+    previous_authoritative_scan_id: null,
+    scans: [{
+      scan_id: 43, status: "RUNNING", started_at: "2026-11-01T12:00:00Z",
+      completed_at: null, duration_seconds: null, asset_count: 3,
+      seed: "example.com", is_current_authoritative: false, is_previous_authoritative: false,
+    }],
+  });
+  getV2ScanDetail.mockResolvedValue({
+    scan_id: 43, status: "RUNNING", scan_time: "2026-11-01T12:00:00Z",
+    started_at: "2026-11-01T12:00:00Z", completed_at: null, seed: "example.com",
+    asset_count: 3, duration_seconds: 12, diagnostics_available: true,
+    current_stage: { stage: "DNS Resolution", order: 6, attempt: 1, started_at: "2026-11-01T12:00:10Z" },
+    stage_attempts: [], failure_category: null, scan_outcome: null,
+    diagnostics_last_updated_at: "2026-11-01T12:00:12Z",
+  });
+
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Expand scan 43" }));
+  expect(await screen.findByText("DNS Resolution")).toBeInTheDocument();
+  expect(screen.getByText("Current stage").nextSibling).toHaveTextContent("DNS Resolution");
+});
+
+test("Scan Centre does not fabricate diagnostics for historical scans", async () => {
+  window.location.hash = "#/scans";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Scans.mockResolvedValue({
+    current_authoritative_scan_id: 42,
+    previous_authoritative_scan_id: 41,
+    scans: [{
+      scan_id: 41, status: "SUCCEEDED", started_at: "2026-10-01T12:00:00Z",
+      completed_at: "2026-10-01T12:01:00Z", duration_seconds: 60,
+      asset_count: 9, seed: "example.com", is_current_authoritative: false,
+      is_previous_authoritative: true,
+    }],
+  });
+  getV2ScanDetail.mockResolvedValue({
+    scan_id: 41, status: "SUCCEEDED", scan_time: "2026-10-01T12:00:00Z",
+    started_at: "2026-10-01T12:00:00Z", completed_at: "2026-10-01T12:01:00Z",
+    seed: "example.com", asset_count: 9, duration_seconds: 60,
+    diagnostics_available: false, current_stage: null, stage_attempts: null,
+    failure_category: null, scan_outcome: null, diagnostics_last_updated_at: null,
+  });
+
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Expand scan 41" }));
+  expect(await screen.findByText("Diagnostics unavailable")).toBeInTheDocument();
+  expect(screen.queryByText("Stage breakdown")).not.toBeInTheDocument();
+  expect(screen.queryByText("Completed stages")).not.toBeInTheDocument();
+});
+
+test("Scan Centre renders failure categories and final stage outcomes", async () => {
+  window.location.hash = "#/scans";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Scans.mockResolvedValue({
+    current_authoritative_scan_id: null,
+    previous_authoritative_scan_id: null,
+    scans: [{
+      scan_id: 44, status: "FAILED", started_at: "2026-11-02T12:00:00Z",
+      completed_at: "2026-11-02T12:02:00Z", duration_seconds: 120,
+      asset_count: 4, seed: "example.com", is_current_authoritative: false,
+      is_previous_authoritative: false,
+    }],
+  });
+  getV2ScanDetail.mockResolvedValue({
+    scan_id: 44, status: "FAILED", scan_time: "2026-11-02T12:00:00Z",
+    started_at: "2026-11-02T12:00:00Z", completed_at: "2026-11-02T12:02:00Z",
+    seed: "example.com", asset_count: 4, duration_seconds: 120,
+    diagnostics_available: true, current_stage: null,
+    stage_attempts: [
+      { stage: "Recon", order: 0, attempt: 1, status: "FAILED", started_at: "start", completed_at: "failed", duration_seconds: 2, error_category: "RETRYABLE_INCOMPLETE", worker_summary: null },
+      { stage: "Recon", order: 0, attempt: 2, status: "SUCCEEDED", started_at: "retry", completed_at: "done", duration_seconds: 4, error_category: null, worker_summary: null },
+      { stage: "HTTP", order: 7, attempt: 1, status: "TIMED_OUT", started_at: "start", completed_at: "timeout", duration_seconds: 8, error_category: "STAGE_TIMEOUT", worker_summary: null },
+      { stage: "Port Scan", order: 9, attempt: 1, status: "CANCELLED", started_at: "start", completed_at: "cancelled", duration_seconds: 1, error_category: "INTERRUPTED", worker_summary: null },
+    ],
+    failure_category: "SCAN_FAILED",
+    scan_outcome: { status: "FAILED", completed_at: "2026-11-02T12:02:00Z", error_category: "SCAN_FAILED" },
+    diagnostics_last_updated_at: "2026-11-02T12:02:00Z",
+  });
+
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Expand scan 44" }));
+  expect(await screen.findByText("Failure category")).toBeInTheDocument();
+  expect(screen.getAllByText("SCAN_FAILED")).toHaveLength(1);
+  expect(screen.getByText("Completed stages").nextSibling).toHaveTextContent("1");
+  expect(screen.getByText("Failed stages").nextSibling).toHaveTextContent("2");
+  expect(screen.getByText("Retry attempts").nextSibling).toHaveTextContent("1");
+  expect(screen.getByText("Advanced Diagnostics").closest("details")).not.toHaveAttribute("open");
+});
+
+test("Scan Centre does not convert missing or malformed stage attempts into zero counts", async () => {
+  window.location.hash = "#/scans";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Scans.mockResolvedValue({
+    current_authoritative_scan_id: null,
+    previous_authoritative_scan_id: null,
+    scans: [{
+      scan_id: 45, status: "RUNNING", started_at: "2026-11-02T12:00:00Z",
+      completed_at: null, duration_seconds: null, asset_count: 1,
+      seed: "example.com", is_current_authoritative: false, is_previous_authoritative: false,
+    }],
+  });
+  const baseDetail = {
+    scan_id: 45, status: "RUNNING", scan_time: "2026-11-02T12:00:00Z",
+    started_at: "2026-11-02T12:00:00Z", completed_at: null, seed: "example.com",
+    asset_count: 1, duration_seconds: 4, diagnostics_available: true,
+    current_stage: { stage: "DNS", order: 6, attempt: 1, started_at: "start" },
+    failure_category: null, scan_outcome: null, diagnostics_last_updated_at: "updated",
+  };
+  getV2ScanDetail.mockResolvedValueOnce({ ...baseDetail, stage_attempts: null });
+
+  const first = render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Expand scan 45" }));
+  expect(await screen.findByText("Stage outcomes incomplete")).toBeInTheDocument();
+  expect(screen.queryByText("Completed stages")).not.toBeInTheDocument();
+  first.unmount();
+
+  getV2ScanDetail.mockResolvedValueOnce({
+    ...baseDetail,
+    stage_attempts: [{
+      stage: "DNS", order: null, attempt: null, status: "SUCCEEDED",
+      started_at: "start", completed_at: "done", duration_seconds: 1,
+      error_category: null, worker_summary: null,
+    }],
+  });
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Expand scan 45" }));
+  expect(await screen.findByText("Stage outcomes incomplete")).toBeInTheDocument();
+  expect(screen.queryByText("Completed stages")).not.toBeInTheDocument();
+});
+
+test("Scan Centre lazily loads, caches, and isolates rapidly switched rows", async () => {
+  window.location.hash = "#/scans";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Scans.mockResolvedValue({
+    current_authoritative_scan_id: null,
+    previous_authoritative_scan_id: null,
+    scans: [
+      { scan_id: 42, status: "SUCCEEDED", started_at: "start", completed_at: "done", duration_seconds: 1, asset_count: 1, seed: "a.example", is_current_authoritative: false, is_previous_authoritative: false },
+      { scan_id: 43, status: "RUNNING", started_at: "start", completed_at: null, duration_seconds: null, asset_count: 1, seed: "b.example", is_current_authoritative: false, is_previous_authoritative: false },
+    ],
+  });
+  const pending = {};
+  getV2ScanDetail.mockImplementation((scanId) => new Promise((resolve) => { pending[scanId] = resolve; }));
+
+  render(<App />);
+  expect(getV2ScanDetail).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole("button", { name: "Expand scan 42" }));
+  expect(getV2ScanDetail).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Expand scan 43" }));
+  expect(getV2ScanDetail).toHaveBeenCalledTimes(2);
+  pending[42]({ ...overview, scan_id: 42, status: "SUCCEEDED", diagnostics_available: true, stage_attempts: [{ stage: "Recon", order: 0, attempt: 1, status: "SUCCEEDED", started_at: "start", completed_at: "done", duration_seconds: 1, error_category: null, worker_summary: null }], current_stage: null, failure_category: null, scan_outcome: null });
+  pending[43]({ ...overview, scan_id: 43, status: "RUNNING", diagnostics_available: true, stage_attempts: [], current_stage: { stage: "DNS Resolution", order: 6, attempt: 1, started_at: "start" }, failure_category: null, scan_outcome: null });
+  expect(await screen.findByText("DNS Resolution")).toBeInTheDocument();
+  expect(screen.queryByText("Recon")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Collapse scan 43" }));
+  fireEvent.click(screen.getByRole("button", { name: "Expand scan 43" }));
+  expect(getV2ScanDetail).toHaveBeenCalledTimes(2);
+});
+
+test("Scan Centre exposes detail request errors and retries them", async () => {
+  window.location.hash = "#/scans";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Scans.mockResolvedValue({
+    current_authoritative_scan_id: null,
+    previous_authoritative_scan_id: null,
+    scans: [{ scan_id: 46, status: "SUCCEEDED", started_at: "start", completed_at: "done", duration_seconds: 1, asset_count: 1, seed: "example.com", is_current_authoritative: false, is_previous_authoritative: false }],
+  });
+  getV2ScanDetail
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce({
+      scan_id: 46, status: "SUCCEEDED", diagnostics_available: true,
+      stage_attempts: [], current_stage: null, failure_category: null,
+      scan_outcome: null, diagnostics_last_updated_at: null,
+    });
+
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Expand scan 46" }));
+  expect(await screen.findByText("Diagnostics could not be loaded.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("Stage breakdown")).toBeInTheDocument();
+  expect(getV2ScanDetail).toHaveBeenCalledTimes(2);
 });
 
 test("new workflows expose honest error and empty states", async () => {

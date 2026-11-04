@@ -55,6 +55,11 @@ export const getV2Scans = async (limit = 100) => {
   return res.data;
 };
 
+export const getV2ScanDetail = async (scanId) => {
+  const res = await axios.get(`${API_URL}/v2/scans/${encodeURIComponent(scanId)}`);
+  return res.data;
+};
+
 export const getPhpRceCheck = async (params) => {
   const res = await axios.get(`${API_URL}/v2/adhoc/checks/php-rce`, { params });
   return res.data;
