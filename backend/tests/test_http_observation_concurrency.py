@@ -2,6 +2,7 @@ import importlib.util
 import json
 import pathlib
 import os
+import signal
 import sys
 import threading
 import time
@@ -45,12 +46,16 @@ class FakeConnection:
         self._cursor = FakeCursor()
         self.closed = False
         self.commits = 0
+        self.rollbacks = 0
 
     def cursor(self):
         return self._cursor
 
     def commit(self):
         self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
 
     def close(self):
         self.closed = True
@@ -232,7 +237,7 @@ class HttpObservationConcurrencyTests(unittest.TestCase):
         self.assertLessEqual(len(calls), 2)
 
     def test_pre_cancelled_stage_starts_no_targets(self):
-        event = threading.Event()
+        event = self.worker.CancellationGate()
         event.set()
         self.worker.http_probe = mock.Mock()
         with self.assertRaises(self.worker.ObservationInterrupted):
@@ -241,7 +246,7 @@ class HttpObservationConcurrencyTests(unittest.TestCase):
         self.assertEqual(self.connections, [])
 
     def test_cancellation_stops_dispatching_targets_and_fails_stage(self):
-        event = threading.Event()
+        event = self.worker.CancellationGate()
         calls = []
 
         def probe(domain, *, before_request, **_kwargs):
@@ -256,6 +261,121 @@ class HttpObservationConcurrencyTests(unittest.TestCase):
                 self.rows(4), 17, workers=1, cancel_event=event
             )
         self.assertEqual(calls, ["asset-1.example"])
+
+    def test_cancellation_after_target_check_before_write_rejects_persistence(self):
+        class CancelAtWrite(self.worker.CancellationGate):
+            def run_if_active(gate, operation):
+                # The target has passed its initial check, authorization, and
+                # mocked probe. Register cancellation at the write boundary.
+                gate.set()
+                return super(CancelAtWrite, gate).run_if_active(operation)
+
+        gate = CancelAtWrite()
+        probed = []
+        self.worker.http_probe = lambda *_args, **_kwargs: (
+            probed.append(True) or response()
+        )
+        persist = mock.Mock(wraps=self.worker._persist_result)
+        self.worker._persist_result = persist
+
+        with self.assertRaises(self.worker.ObservationInterrupted):
+            self.worker.run_observations(
+                self.rows(1), 17, workers=1, cancel_event=gate
+            )
+
+        self.assertTrue(probed, "the worker must reach the post-probe write boundary")
+        persist.assert_not_called()
+        self.assertEqual(self.connections[0]._cursor.executions, [])
+        self.assertEqual(self.connections[0].rollbacks, 1)
+
+    def test_cancellation_during_commit_boundary_waits_for_commit_then_registers(self):
+        gate_released = threading.Event()
+        allow_worker_return = threading.Event()
+
+        class HoldAfterCommitGate(self.worker.CancellationGate):
+            def run_if_active(gate, operation):
+                result = super(HoldAfterCommitGate, gate).run_if_active(operation)
+                gate_released.set()
+                if not allow_worker_return.wait(timeout=2):
+                    raise AssertionError("test did not release post-commit boundary")
+                return result
+
+        gate = HoldAfterCommitGate()
+        commit_boundary = threading.Event()
+        release_commit = threading.Event()
+        cancel_attempted = threading.Event()
+        cancel_registered = threading.Event()
+        original_persist = self.worker._persist_result
+        outcome = {}
+
+        def blocked_persist(cur, conn, target_scan_id, domain_id, result):
+            commit_boundary.set()
+            if not release_commit.wait(timeout=2):
+                raise AssertionError("test did not release commit boundary")
+            return original_persist(cur, conn, target_scan_id, domain_id, result)
+
+        self.worker._persist_result = blocked_persist
+        self.worker.http_probe = lambda *_args, **_kwargs: response()
+
+        def run_worker():
+            try:
+                outcome["summary"] = self.worker.run_observations(
+                    self.rows(1), 17, workers=1, cancel_event=gate
+                )
+            except Exception as exc:
+                outcome["error"] = exc
+
+        def request_cancel():
+            cancel_attempted.set()
+            gate.set()
+            cancel_registered.set()
+
+        worker_thread = threading.Thread(target=run_worker)
+        worker_thread.start()
+        self.assertTrue(commit_boundary.wait(timeout=2))
+        cancel_thread = threading.Thread(target=request_cancel)
+        cancel_thread.start()
+        self.assertTrue(cancel_attempted.wait(timeout=2))
+        # The write owns the gate until its commit completes, so cancellation
+        # cannot register in the middle of the transaction.
+        self.assertFalse(cancel_registered.is_set())
+        release_commit.set()
+        self.assertTrue(gate_released.wait(timeout=2))
+        self.assertTrue(cancel_registered.wait(timeout=2))
+        allow_worker_return.set()
+        worker_thread.join(timeout=2)
+        cancel_thread.join(timeout=2)
+
+        self.assertFalse(worker_thread.is_alive(), "worker deadlocked at commit boundary")
+        self.assertFalse(cancel_thread.is_alive(), "cancellation deadlocked at commit boundary")
+        self.assertIsInstance(outcome.get("error"), self.worker.ObservationInterrupted)
+        self.assertEqual(len(self.connections[0]._cursor.executions), 1)
+        self.assertEqual(self.connections[0].commits, 3)
+        self.assertTrue(gate.is_set())
+        self.assertIsNone(gate.run_if_active(lambda: self.fail("write after cancel")))
+
+    def test_main_signal_handlers_register_cancellation_safely(self):
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            with self.subTest(signum=signum):
+                handlers = {}
+
+                def replace_handler(number, handler):
+                    previous = handlers.get(number, signal.SIG_DFL)
+                    handlers[number] = handler
+                    return previous
+
+                def interrupt_stage(_rows, _scan_id, *, cancel_event):
+                    handlers[signum](signum, None)
+                    self.assertTrue(cancel_event.is_set())
+                    raise self.worker.ObservationInterrupted("test signal")
+
+                with (
+                    mock.patch.object(self.worker, "_select_targets", return_value=[]),
+                    mock.patch.object(self.worker, "run_observations", side_effect=interrupt_stage),
+                    mock.patch.object(self.worker.signal, "signal", side_effect=replace_handler),
+                ):
+                    with self.assertRaises(self.worker.ObservationInterrupted):
+                        self.worker.main()
 
     def test_stage_and_target_metrics_are_structured_and_accurate(self):
         self.worker.http_probe = lambda *_args, **_kwargs: response(redirects=2)

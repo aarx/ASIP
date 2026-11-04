@@ -33,6 +33,36 @@ class ObservationInterrupted(RuntimeError):
     """The observation stage was interrupted before all targets completed."""
 
 
+class CancellationGate:
+    """Order cancellation registration against scan-scoped result commits.
+
+    The reentrant lock is held only while recording cancellation or while a
+    worker performs the lifecycle-guarded write and commit. It is never held
+    during authorization, DNS, TLS, or HTTP work. Reentrancy lets a Python
+    signal handler safely register cancellation if it interrupts the main
+    thread while that thread is already inside ``set``.
+    """
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._cancelled = False
+
+    def is_set(self):
+        with self._lock:
+            return self._cancelled
+
+    def set(self):
+        with self._lock:
+            self._cancelled = True
+
+    def run_if_active(self, operation):
+        """Run one DB write+commit before cancellation, or reject it after."""
+        with self._lock:
+            if self._cancelled:
+                return None
+            return operation()
+
+
 def configured_http_workers(value=None):
     """Return the bounded worker count; invalid configuration uses default."""
     if value is None:
@@ -213,14 +243,20 @@ def _observe_target(row, target_scan_id, cancel_event, active_state):
         probe_elapsed = time.monotonic() - probe_started
         if state["authorization_error"]:
             raise RuntimeError("HTTP authorization database check failed")
-        if cancel_event.is_set():
-            _target_metric(target_scan_id, domain_id, started, "CANCELLED")
-            return {"kind": "cancelled", "domain_id": domain_id}
-
         # Hold the scan row lock through the scan-scoped write. If lifecycle
         # has ended, this target fails instead of mutating a terminal scan.
-        require_running_scan(cur, target_scan_id)
-        persisted = _persist_result(cur, conn, target_scan_id, domain_id, result)
+        # The gate orders this complete transaction against cancellation
+        # registration, closing the check-then-commit race.
+
+        def persist_if_active():
+            require_running_scan(cur, target_scan_id)
+            return _persist_result(cur, conn, target_scan_id, domain_id, result)
+
+        persisted = cancel_event.run_if_active(persist_if_active)
+        if persisted is None:
+            conn.rollback()
+            _target_metric(target_scan_id, domain_id, started, "CANCELLED")
+            return {"kind": "cancelled", "domain_id": domain_id}
         evidence = result.get("redirect_evidence") or {}
         outcome = result.get("http_observation_status", HTTP_UNKNOWN)
         error_flag = _probe_error_flag(result)
@@ -271,7 +307,10 @@ def run_observations(rows, target_scan_id, *, workers=None, cancel_event=None):
     """Process the selected rows with a fixed-size, bounded worker pool."""
     worker_count = configured_http_workers(workers)
     targets = _unique_targets(rows)
-    cancel_event = cancel_event or threading.Event()
+    if cancel_event is None:
+        cancel_event = CancellationGate()
+    elif not isinstance(cancel_event, CancellationGate):
+        raise TypeError("cancel_event must be a CancellationGate")
     started = time.monotonic()
     active_state = {"active": 0, "maximum": 0, "lock": threading.Lock()}
     counts = {
@@ -431,7 +470,7 @@ def _select_targets(target_scan_id):
 
 
 def main():
-    cancel_event = threading.Event()
+    cancel_event = CancellationGate()
     previous_handlers = {}
 
     def request_cancel(_signum, _frame):
