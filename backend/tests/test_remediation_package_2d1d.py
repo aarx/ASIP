@@ -114,19 +114,24 @@ class StaticMembershipContractTests(unittest.TestCase):
                 text = source(filename)
                 self.assertRegex(text, r"def get_[a-z_]+\(cur, scan_id\):")
                 expected_connections = (
-                    2 if filename in ("port_scan_worker.py", "http_observation_worker.py")
+                    2 if filename in ("port_scan_worker.py", "http_observation_worker.py",
+                                      "san_worker.py")
                     else 1
                 )
                 self.assertEqual(text.count("get_conn()"), expected_connections)
 
     def test_san_parent_membership_precedes_network_observation(self):
         text = source("san_worker.py")
-        loop = text.index("for i, (domain_id, domain)")
-        membership = text.index("scan_results", loop)
-        network = text.index("fetch_san_domains(", loop)
-        san_write = text.index("INSERT INTO domain_san", loop)
+        worker = text[text.index("def _process_parent("):]
+        membership = worker.index("FROM scan_results")
+        network = worker.index("fetch_san_domains(")
+        persistence = text[
+            text.index("def _persist_parent("):text.index("def _process_parent(")
+        ]
+        persist_membership = persistence.index("FROM scan_results")
+        san_write = persistence.index("INSERT INTO domain_san")
         self.assertLess(membership, network)
-        self.assertLess(membership, san_write)
+        self.assertLess(persist_membership, san_write)
 
     def test_scannable_is_not_the_membership_predicate(self):
         for filename in CONSUMERS:
@@ -340,9 +345,10 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                 for connection in connections:
                     connection.close()
         self.assertEqual(fake_db.get_conn.call_count, len(connections))
-        if filename not in ("port_scan_worker.py", "http_observation_worker.py"):
+        if filename not in ("port_scan_worker.py", "http_observation_worker.py",
+                            "san_worker.py"):
             fake_db.get_conn.assert_called_once_with()
-        elif filename == "http_observation_worker.py":
+        elif filename in ("http_observation_worker.py", "san_worker.py"):
             self.assertGreaterEqual(fake_db.get_conn.call_count, 1)
         return executions, mocks
 

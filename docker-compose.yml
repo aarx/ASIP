@@ -71,6 +71,7 @@ services:
       ASIP_DEFAULT_SCAN_OPERATIONS: ${ASIP_DEFAULT_SCAN_OPERATIONS:-}
       ASIP_NMAP_WORKERS: ${ASIP_NMAP_WORKERS:-2}
       ASIP_HTTP_WORKERS: ${ASIP_HTTP_WORKERS:-2}
+      ASIP_SAN_WORKERS: ${ASIP_SAN_WORKERS:-2}
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
