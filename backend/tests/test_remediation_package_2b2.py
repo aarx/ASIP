@@ -752,7 +752,9 @@ class AuthoritativeHistoryTests(unittest.TestCase):
         self.assertIn("if score >= 4:", source)
         self.assertIn('return "Review"', source)
         self.assertIn('return "Low"', source)
-        self.assertIn("return results[:100]", inspect.getsource(self.main.risky_domains))
+        source = inspect.getsource(self.main.risky_domains)
+        self.assertIn('response.headers["X-Total-Count"]', source)
+        self.assertIn("return results[offset:offset + limit]", source)
 
 
 class McpCurrentSnapshotTests(unittest.TestCase):

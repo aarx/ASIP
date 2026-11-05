@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 import logging
@@ -219,25 +219,26 @@ def http_status():
 
     latest = get_latest_authoritative_scan_id(cur)
 
-    cur.execute("""
+    classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
+    cur.execute(f"""
     SELECT
         CASE
             WHEN ds.http_status BETWEEN 200 AND 299 THEN '2xx'
             WHEN ds.http_status BETWEEN 300 AND 399 THEN '3xx'
             WHEN ds.http_status BETWEEN 400 AND 499 THEN '4xx'
             WHEN ds.http_status BETWEEN 500 AND 599 THEN '5xx'
-            ELSE 'no_response'
+            WHEN ds.http_observation_status = 'NO_RESPONSE' THEN 'no_response'
+            ELSE 'unknown'
         END AS status_group,
-        COUNT(DISTINCT ds.domain_id)
-    FROM domain_states ds
-    JOIN scan_results sr
-      ON sr.domain_id = ds.domain_id
-     AND sr.scan_id = ds.scan_id
-    JOIN domains d ON d.id = ds.domain_id
-    WHERE ds.scan_id = %s
-    AND d.ownership_status = 'CONFIRMED'
+        COUNT(DISTINCT sr.domain_id)
+    FROM scan_results sr
+    JOIN domains d ON d.id = sr.domain_id
+    LEFT JOIN domain_states ds
+      ON ds.domain_id = sr.domain_id AND ds.scan_id = sr.scan_id
+    WHERE sr.scan_id = %s
+    AND ({classification}) IN ('KNOWN', 'SHADOW')
     GROUP BY status_group
-    """, (latest,))   # ✅ FIXED
+    """, (latest,))
 
     rows = cur.fetchall()   # ✅ FIXED
 
@@ -246,7 +247,8 @@ def http_status():
         "3xx": 0,
         "4xx": 0,
         "5xx": 0,
-        "no_response": 0
+        "no_response": 0,
+        "unknown": 0,
     }
 
     for status, count in rows:
@@ -350,6 +352,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Total-Count", "X-Page", "X-Page-Size"],
 )
 
 @app.get("/new-domains")
@@ -476,43 +479,19 @@ def exposure_summary():
 
     latest = get_latest_authoritative_scan_id(cur)
 
-    cur.execute("""
-        SELECT COUNT(*)
-        FROM domain_states ds
-        JOIN scan_results sr
-          ON sr.domain_id = ds.domain_id
-         AND sr.scan_id = ds.scan_id
-        JOIN domains d ON d.id = ds.domain_id
-        WHERE ds.scan_id = %s
-        AND d.ownership_status = 'CONFIRMED'
+    classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
+    cur.execute(f"""
+        SELECT COUNT(DISTINCT sr.domain_id),
+               COUNT(DISTINCT sr.domain_id) FILTER (WHERE ds.has_ip IS TRUE),
+               COUNT(DISTINCT sr.domain_id) FILTER (WHERE ds.http_live IS TRUE)
+        FROM scan_results sr
+        JOIN domains d ON d.id = sr.domain_id
+        LEFT JOIN domain_states ds
+          ON ds.domain_id = sr.domain_id AND ds.scan_id = sr.scan_id
+        WHERE sr.scan_id = %s
+          AND ({classification}) IN ('KNOWN', 'SHADOW')
     """, (latest,))
-    total = cur.fetchone()[0]
-
-    cur.execute("""
-        SELECT COUNT(*)
-        FROM domain_states ds
-        JOIN scan_results sr
-          ON sr.domain_id = ds.domain_id
-         AND sr.scan_id = ds.scan_id
-        JOIN domains d ON d.id = ds.domain_id
-        WHERE ds.scan_id = %s
-        AND ds.has_ip = TRUE
-        AND d.ownership_status = 'CONFIRMED'
-    """, (latest,))
-    resolving = cur.fetchone()[0]
-
-    cur.execute("""
-        SELECT COUNT(*)
-        FROM domain_states ds
-        JOIN scan_results sr
-          ON sr.domain_id = ds.domain_id
-         AND sr.scan_id = ds.scan_id
-        JOIN domains d ON d.id = ds.domain_id
-        WHERE ds.scan_id = %s
-        AND ds.http_live = TRUE
-        AND d.ownership_status = 'CONFIRMED'
-    """, (latest,))
-    http_live = cur.fetchone()[0]
+    total, resolving, http_live = cur.fetchone()
 
     conn.close()
 
@@ -700,13 +679,20 @@ def volatile_domains():
     ]
 
 @app.get("/risky-domains")
-def risky_domains():
+def risky_domains(response: Response = None, page: int = 1, limit: int = 100):
+    if page < 1 or limit < 1:
+        raise HTTPException(status_code=400, detail="page and limit must be positive")
+    limit = min(limit, 200)
     conn = get_conn()
     cur = conn.cursor()
     scan_id = get_latest_authoritative_scan_id(cur)
 
     if scan_id is None:
         conn.close()
+        if response is not None:
+            response.headers["X-Total-Count"] = "0"
+            response.headers["X-Page"] = str(page)
+            response.headers["X-Page-Size"] = str(limit)
         return []
 
     canonical_risks = _current_scan_risks(cur, scan_id)
@@ -723,10 +709,15 @@ def risky_domains():
         if risk.result.score > 0
     ]
     results.sort(
-        key=lambda item: (item["risk_score"], item["domain"]),
-        reverse=True,
+        key=lambda item: (-item["risk_score"], item["domain"].casefold(), item["domain"]),
     )
-    return results[:100]
+    total = len(results)
+    if response is not None:
+        response.headers["X-Total-Count"] = str(total)
+        response.headers["X-Page"] = str(page)
+        response.headers["X-Page-Size"] = str(limit)
+    offset = (page - 1) * limit
+    return results[offset:offset + limit]
 
 
 @app.get("/sensitive-exposure")
@@ -2021,6 +2012,14 @@ def _frontend_asset_matches(
     priority=None,
     requested_provider=None,
     requested_http_status=None,
+    has_ip=None,
+    http_live=None,
+    exact_http_status=None,
+    http_status_group=None,
+    risk_positive=None,
+    asset_has_ip=None,
+    asset_http_live=None,
+    asset_http_status=None,
 ):
     search_value = (search or "").strip().lower()
     ownership_value = (ownership or "").strip().upper()
@@ -2043,7 +2042,31 @@ def _frontend_asset_matches(
         return False
     if http_value and (http_observation_status or "UNKNOWN").upper() != http_value:
         return False
+    if has_ip is not None and has_ip != asset_has_ip:
+        return False
+    if http_live is not None and http_live != asset_http_live:
+        return False
+    if exact_http_status is not None and asset_http_status != exact_http_status:
+        return False
+    if http_status_group:
+        lower = int(http_status_group[0]) * 100
+        if asset_http_status is None or not lower <= asset_http_status < lower + 100:
+            return False
+    if any(value is not None for value in (has_ip, http_live, exact_http_status, http_status_group)):
+        if current_asset_class not in ("KNOWN", "SHADOW"):
+            return False
+    if risk_positive is True and (risk is None or risk.result.score <= 0):
+        return False
+    if risk_positive is False and (risk is None or risk.result.score > 0):
+        return False
     return True
+
+
+def _validate_asset_metric_filters(http_status=None, http_status_group=None):
+    if http_status is not None and not 100 <= http_status <= 599:
+        raise HTTPException(status_code=400, detail="http_status must be between 100 and 599")
+    if http_status_group is not None and http_status_group not in {"2xx", "3xx", "4xx", "5xx"}:
+        raise HTTPException(status_code=400, detail="http_status_group must be one of: 2xx, 3xx, 4xx, 5xx")
 
 
 def _frontend_inventory_status(asset_class):
@@ -2539,11 +2562,21 @@ def frontend_v2_assets(
     priority: str = None,
     provider: str = None,
     http_observation_status: str = None,
+    risk_positive: bool = None,
+    has_ip: bool = None,
+    http_live: bool = None,
+    http_status: int = None,
+    http_status_group: str = None,
     sort_by: str = None,
     sort_dir: str = None,
 ):
+    _validate_asset_metric_filters(http_status, http_status_group)
     page = max(page, 1)
     limit = min(max(limit, 1), 200)
+    if sort_by is None and risk_positive is True:
+        sort_by = "risk_score"
+        if sort_dir is None:
+            sort_dir = "desc"
     sort_by, sort_dir = _frontend_sort_options(sort_by, sort_dir)
 
     conn = get_conn()
@@ -2558,7 +2591,7 @@ def frontend_v2_assets(
         SELECT
             d.id, d.domain, d.is_known, d.ownership_status,
             d.first_seen_scan, d.last_seen_scan,
-            ds.ip, ds.has_ip, ds.http_observation_status, ds.http_status,
+            ds.ip, ds.has_ip, ds.http_live, ds.http_observation_status, ds.http_status,
             ds.title, ds.final_url, ds.final_status,
             ds.http_redirect_evidence,
             COALESCE(dp.provider, 'Unknown'),
@@ -2575,6 +2608,10 @@ def frontend_v2_assets(
         ORDER BY d.domain ASC, d.id ASC
     """, (scan_id,))
     rows = cur.fetchall()
+    unique_rows = {}
+    for row in rows:
+        unique_rows.setdefault(row[0], row)
+    rows = list(unique_rows.values())
     risk_by_domain = {
         risk.domain_id: risk
         for risk in _current_scan_risks(cur, scan_id, asset_classes)
@@ -2585,7 +2622,7 @@ def frontend_v2_assets(
     for row in rows:
         (
             domain_id, domain, is_known, ownership_status,
-            first_seen, last_seen, ip, has_ip, http_outcome, http_status,
+            first_seen, last_seen, ip, asset_has_ip, asset_http_live, http_outcome, asset_http_status,
             title, final_url, final_status, redirect_evidence,
             asset_provider, asn,
         ) = row
@@ -2596,6 +2633,9 @@ def frontend_v2_assets(
             domain, ownership_status, classification, asset_provider,
             http_outcome, risk, search, ownership, asset_class, priority,
             provider, http_observation_status,
+            has_ip, http_live, http_status, http_status_group, risk_positive,
+            asset_has_ip=asset_has_ip, asset_http_live=asset_http_live,
+            asset_http_status=asset_http_status,
         ):
             continue
 
@@ -2607,9 +2647,10 @@ def frontend_v2_assets(
             "first_seen_scan": first_seen,
             "last_seen_scan": last_seen,
             "ip": ip,
-            "has_ip": bool(has_ip),
+            "has_ip": asset_has_ip,
+            "http_live": asset_http_live,
             "http_observation_status": http_outcome or "UNKNOWN",
-            "http_status": http_status,
+            "http_status": asset_http_status,
             "title": title,
             "final_url": final_url,
             "final_status": final_status,

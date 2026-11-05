@@ -173,17 +173,17 @@ class FrontendV2ContractTests(unittest.TestCase):
         rows = [
             (
                 1, "known.example", True, "CONFIRMED", 10, 42,
-                "192.0.2.1", True, "RESPONDED", 200, "Known", None,
+                "192.0.2.1", True, True, "RESPONDED", 200, "Known", None,
                 None, None, "Cloud", "AS64500",
             ),
             (
                 2, "shadow.example", False, "CONFIRMED", 40, 42,
-                "192.0.2.2", True, "NO_RESPONSE", 0, None, None,
+                "192.0.2.2", True, False, "NO_RESPONSE", 0, None, None,
                 None, None, "Cloud", "AS64501",
             ),
             (
                 3, "candidate.example", False, "CANDIDATE", 42, 42,
-                None, False, "UNKNOWN", 0, None, None,
+                None, False, None, "UNKNOWN", 0, None, None,
                 None, None, "Unknown", None,
             ),
         ]
@@ -290,12 +290,12 @@ class FrontendV2ContractTests(unittest.TestCase):
 
     def test_asset_explorer_sorting_is_filtered_before_pagination(self):
         rows = [
-            (1, "zulu.example", False, "CONFIRMED", 10, 42, "192.0.2.1", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64501"),
-            (2, "beta.example", True, "CONFIRMED", 10, 42, "192.0.2.2", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64502"),
-            (3, "alpha.example", False, "CONFIRMED", 10, 42, "192.0.2.3", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64503"),
-            (4, "charlie.example", True, "CONFIRMED", 10, 42, "192.0.2.4", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64504"),
-            (5, "delta.example", True, "CONFIRMED", 10, 42, "192.0.2.5", True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64505"),
-            (6, "candidate.example", False, "CANDIDATE", 42, 42, None, False, "UNKNOWN", None, None, None, None, None, "Unknown", None),
+            (1, "zulu.example", False, "CONFIRMED", 10, 42, "192.0.2.1", True, True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64501"),
+            (2, "beta.example", True, "CONFIRMED", 10, 42, "192.0.2.2", True, True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64502"),
+            (3, "alpha.example", False, "CONFIRMED", 10, 42, "192.0.2.3", True, True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64503"),
+            (4, "charlie.example", True, "CONFIRMED", 10, 42, "192.0.2.4", True, True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64504"),
+            (5, "delta.example", True, "CONFIRMED", 10, 42, "192.0.2.5", True, True, "RESPONDED", 200, None, None, None, None, "Cloud", "AS64505"),
+            (6, "candidate.example", False, "CANDIDATE", 42, 42, None, False, None, "UNKNOWN", None, None, None, None, None, "Unknown", None),
         ]
         risks = [
             risk(1, "zulu.example", 4, "Review"),
@@ -353,6 +353,132 @@ class FrontendV2ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(self.main.HTTPException, "sort_dir"):
             query(sort_by="domain", sort_dir="sideways")
 
+    def test_positive_risk_count_pagination_and_deterministic_order(self):
+        rows = [
+            (i, f"host-{i:03}.example", False, "CONFIRMED", 1, 42,
+             "192.0.2.1", True, True, "RESPONDED", 200, None, None,
+             None, None, "Unknown", None)
+            for i in range(1, 142)
+        ]
+        rows.append(rows[0])
+        risks = [
+            risk(i, f"host-{i:03}.example", 0 if i == 141 else (i % 8) + 1,
+                 "High" if i % 8 >= 6 else "Review")
+            for i in range(1, 142)
+        ]
+        cursor = QueueCursor(fetchalls=[rows])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        self.main.calculate_scan_risks = mock.Mock(return_value=risks)
+        with self.reporting_classes({i: "KNOWN" if i % 2 else "SHADOW" for i in range(1, 142)}):
+            result = self.main.frontend_v2_assets(risk_positive=True, page=2, limit=50)
+
+        self.assertEqual(result["count"], 140)
+        self.assertEqual(result["sort_by"], "risk_score")
+        self.assertEqual(result["sort_dir"], "desc")
+        self.assertEqual(len(result["assets"]), 50)
+        self.assertEqual(result["assets"], sorted(
+            result["assets"],
+            key=lambda item: (-item["risk"]["score"], item["domain"].casefold(), item["domain"]),
+        ))
+        self.assertIn("FROM scan_results sr", cursor.executions[0][0])
+
+    def test_dns_and_http_filters_keep_exact_null_and_scope_semantics(self):
+        rows = [
+            (1, "known.example", True, "CONFIRMED", 1, 42, "192.0.2.1", True, True, "RESPONDED", 200, None, None, None, None, "Unknown", None),
+            (2, "shadow-no-response.example", False, "CONFIRMED", 1, 42, None, False, False, "NO_RESPONSE", None, None, None, None, None, "Unknown", None),
+            (3, "shadow-unknown.example", False, "CONFIRMED", 1, 42, None, None, None, "UNKNOWN", None, None, None, None, None, "Unknown", None),
+            (4, "candidate.example", False, "CANDIDATE", 1, 42, "192.0.2.4", True, True, "RESPONDED", 503, None, None, None, None, "Unknown", None),
+            (5, "shadow-error.example", False, "CONFIRMED", 1, 42, "192.0.2.5", True, True, "RESPONDED", 503, None, None, None, None, "Unknown", None),
+        ]
+        classes = {1: "KNOWN", 2: "SHADOW", 3: "SHADOW", 4: "CANDIDATE", 5: "SHADOW"}
+        cases = (
+            ({"has_ip": True}, ["known.example", "shadow-error.example"]),
+            ({"has_ip": False}, ["shadow-no-response.example"]),
+            ({"http_live": False}, ["shadow-no-response.example"]),
+            ({"http_status": 200}, ["known.example"]),
+            ({"http_status_group": "5xx"}, ["shadow-error.example"]),
+            ({"http_status_group": "4xx"}, []),
+        )
+        for filters, expected in cases:
+            with self.subTest(filters=filters):
+                cursor = QueueCursor(fetchalls=[rows])
+                self.main.get_conn = lambda: FakeConnection(cursor)
+                self.main.calculate_scan_risks = mock.Mock(return_value=[])
+                with self.reporting_classes(classes):
+                    result = self.main.frontend_v2_assets(**filters)
+                self.assertEqual([item["domain"] for item in result["assets"]], expected)
+                self.assertEqual(result["count"], len(expected))
+        cursor = QueueCursor(fetchalls=[rows])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        self.main.calculate_scan_risks = mock.Mock(return_value=[])
+        with self.reporting_classes(classes):
+            unknown = self.main.frontend_v2_assets(http_observation_status="UNKNOWN")
+        self.assertEqual([item["domain"] for item in unknown["assets"]], ["shadow-unknown.example"])
+        self.assertIsNone(unknown["assets"][0]["http_live"])
+        self.assertIsNone(unknown["assets"][0]["http_status"])
+
+    def test_risky_domains_legacy_list_has_total_and_pagination_headers(self):
+        cursor = QueueCursor()
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        self.main._current_scan_risks = mock.Mock(return_value=[
+            risk(i, f"asset-{i:03}.example", 5, "Review") for i in range(1, 126)
+        ])
+        response = self.main.Response()
+        result = self.main.risky_domains(response, page=2, limit=40)
+        self.assertEqual(len(result), 40)
+        self.assertEqual(response.headers["X-Total-Count"], "125")
+        self.assertEqual(response.headers["X-Page"], "2")
+        self.assertEqual(response.headers["X-Page-Size"], "40")
+        self.assertEqual(result[0]["domain"], "asset-041.example")
+
+    def test_malformed_status_filters_are_rejected(self):
+        for kwargs in ({"http_status": 99}, {"http_status": 600}, {"http_status_group": "1xx"}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(self.main.HTTPException):
+                self.main.frontend_v2_assets(**kwargs)
+
+    def test_exposure_and_http_totals_share_current_confirmed_scope(self):
+        cursor = QueueCursor(fetchones=[(570, 119, 100)], fetchalls=[[
+            ("2xx", 65), ("3xx", 8), ("4xx", 4), ("5xx", 3),
+            ("no_response", 20), ("unknown", 470),
+        ]])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        exposure = self.main.exposure_summary()
+        http = self.main.http_status()
+        self.assertEqual(exposure["total_domains"], 570)
+        self.assertEqual(exposure["resolving_domains"], 119)
+        self.assertEqual(exposure["http_responding_domains"], 100)
+        self.assertEqual(http, {
+            "2xx": 65, "3xx": 8, "4xx": 4, "5xx": 3,
+            "no_response": 20, "unknown": 470,
+        })
+        exposure_sql = cursor.executions[0][0]
+        http_sql = cursor.executions[1][0]
+        self.assertIn("COUNT(DISTINCT sr.domain_id)", exposure_sql)
+        self.assertIn("IN ('KNOWN', 'SHADOW')", exposure_sql)
+        self.assertIn("LEFT JOIN domain_states", http_sql)
+        self.assertIn("IN ('KNOWN', 'SHADOW')", http_sql)
+
+    def test_priority_filter_populations_match_overview_distribution(self):
+        rows = [
+            (1, "high.example", True, "CONFIRMED", 1, 42, "192.0.2.1", True, True, "RESPONDED", 200, None, None, None, None, "Unknown", None),
+            (2, "elevated.example", False, "CONFIRMED", 1, 42, "192.0.2.2", True, True, "RESPONDED", 200, None, None, None, None, "Unknown", None),
+            (3, "review.example", False, "CONFIRMED", 1, 42, "192.0.2.3", True, True, "RESPONDED", 200, None, None, None, None, "Unknown", None),
+            (4, "low.example", True, "CONFIRMED", 1, 42, "192.0.2.4", True, True, "RESPONDED", 200, None, None, None, None, "Unknown", None),
+        ]
+        risks = [
+            risk(1, "high.example", 8, "High"),
+            risk(2, "elevated.example", 6, "Elevated"),
+            risk(3, "review.example", 4, "Review"),
+            risk(4, "low.example", 1, "Low"),
+        ]
+        classes = {i: "KNOWN" for i in range(1, 5)}
+        for priority in ("High", "Elevated", "Review", "Low"):
+            cursor = QueueCursor(fetchalls=[rows])
+            self.main.get_conn = lambda: FakeConnection(cursor)
+            self.main.calculate_scan_risks = mock.Mock(return_value=risks)
+            with self.reporting_classes(classes):
+                result = self.main.frontend_v2_assets(priority=priority)
+            self.assertEqual(result["count"], sum(item.result.priority == priority for item in risks))
     def test_asset_export_respects_selected_sort_order_without_pagination(self):
         rows = [
             (*row, "", "", "")

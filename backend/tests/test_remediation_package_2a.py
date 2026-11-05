@@ -293,7 +293,7 @@ class ApiContractTests(unittest.TestCase):
         })
 
     def test_zero_authoritative_exposure_summary_shape(self):
-        cursor = RecordingCursor(fetchones=[(0,), (0,), (0,)])
+        cursor = RecordingCursor(fetchones=[(0, 0, 0)])
         self.main.get_conn = lambda: FakeConnection(cursor)
         self.assertEqual(self.main.exposure_summary(), {
             "scan_id": None,
