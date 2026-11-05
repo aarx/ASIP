@@ -15,12 +15,16 @@ import { displayEvidence, isMissingEvidence } from "../utils/presentation";
 const DEFAULT_LIMIT = 25;
 const SORT_DEFAULTS = { domain: "asc", priority: "desc", risk_score: "desc" };
 const SORT_LABELS = { domain: "Asset", priority: "Priority", risk_score: "Risk Score" };
+const EXPORT_SUPPORTED_FILTERS = new Set([
+  "search", "ownership", "asset_class", "priority", "provider", "http_observation_status",
+]);
 
 const FILTERS = [
   ["ownership", "Ownership", ["CONFIRMED", "CANDIDATE", "EXTERNAL"]],
   ["asset_class", "Asset class", ["KNOWN", "SHADOW", "CANDIDATE", "EXTERNAL"]],
   ["priority", "Priority", ["High", "Elevated", "Review", "Low"]],
   ["http_observation_status", "HTTP observation", ["RESPONDED", "NO_RESPONSE", "FAILED", "UNKNOWN"]],
+  ["http_status_group", "HTTP status group", ["2xx", "3xx", "4xx", "5xx"]],
 ];
 
 function readFilters(query) {
@@ -32,6 +36,11 @@ function readFilters(query) {
     priority: params.get("priority") || "",
     provider: params.get("provider") || "",
     http_observation_status: params.get("http_observation_status") || "",
+    risk_positive: params.get("risk_positive") || "",
+    has_ip: params.get("has_ip") || "",
+    http_live: params.get("http_live") || "",
+    http_status: params.get("http_status") || "",
+    http_status_group: params.get("http_status_group") || "",
   };
 }
 
@@ -123,7 +132,8 @@ function AssetTable({ assets, returnQuery, sortBy, sortDir, onSort }) {
                 </td>
                 <td>
                   <StatusBadge value={asset.http_observation_status} />
-                  <span className="asset-secondary">{asset.http_status || "No status"}</span>
+                  <span className="asset-secondary">{asset.http_status == null ? "No status recorded" : asset.http_status}</span>
+                  <span className="asset-secondary">{asset.http_live === true ? "HTTP responding" : asset.http_live === false ? "HTTP not responding" : "HTTP state unknown"}</span>
                 </td>
                 <td>
                   <span>{displayEvidence(asset.provider, "Unknown")}</span>
@@ -211,6 +221,7 @@ export default function AssetExplorerPage({ query }) {
   };
 
   const activeFilters = Object.entries(appliedFilters).filter(([, value]) => value);
+  const exportFiltersSupported = activeFilters.every(([name]) => EXPORT_SUPPORTED_FILTERS.has(name));
   const totalPages = Math.max(Math.ceil((data?.count || 0) / limit), 1);
 
   return (
@@ -241,6 +252,17 @@ export default function AssetExplorerPage({ query }) {
             <FilterSelect key={name} name={name} label={label} values={values} value={draft[name]} onChange={updateDraft} />
           ))}
         </div>
+        <div className="filter-metric-row">
+          <TextField
+            name="http_status"
+            label="Exact HTTP status"
+            type="number"
+            size="small"
+            value={draft.http_status}
+            onChange={updateDraft}
+            inputProps={{ min: 100, max: 599 }}
+          />
+        </div>
         {activeFilters.length > 0 && (
           <div className="active-filters" aria-label="Active filters">
             <span>Active</span>
@@ -262,12 +284,14 @@ export default function AssetExplorerPage({ query }) {
             size="small"
             variant="outlined"
             onClick={exportAssets}
-            disabled={status !== "ready" || data?.scan_id == null || data?.count === 0 || exportStatus === "loading"}
+            disabled={status !== "ready" || data?.scan_id == null || data?.count === 0 || exportStatus === "loading" || !exportFiltersSupported}
+            title={!exportFiltersSupported ? "CSV export is unavailable for this metric filter" : undefined}
           >
             {exportStatus === "loading" ? "Exporting…" : "Export CSV"}
           </Button>
         </div>
       </div>
+      {!exportFiltersSupported && <div className="asset-secondary" role="status">CSV export is unavailable for the selected metric filter.</div>}
       {exportStatus === "error" && <span role="alert">Export unavailable. Try again.</span>}
 
       {status === "loading" && <LoadingState title="Loading current assets" copy="Applying filters to exact authoritative scan membership." />}

@@ -3,7 +3,7 @@ import App from "./App";
 import {
   getExposureSummary,
   getFindings,
-  getRiskyDomains,
+  getHttpStatus,
   getSensitiveExposure,
   getV2Assets,
   getV2Overview,
@@ -21,11 +21,11 @@ jest.mock("./services/api", () => ({
   getV2Scans: jest.fn(),
   getV2BrandAssets: jest.fn(),
   getV2ReviewIndicators: jest.fn(),
+  getHttpStatus: jest.fn(),
   getV2AssetAssistant: jest.fn(),
   getInvestigationAssets: jest.fn(),
   getNewDomainsDelta: jest.fn(),
   getDisappearedDomains: jest.fn(),
-  getRiskyDomains: jest.fn(),
   getFindings: jest.fn(),
   getSensitiveExposure: jest.fn(),
   getExposureSummary: jest.fn(),
@@ -51,7 +51,7 @@ beforeEach(() => {
   [
     getExposureSummary,
     getFindings,
-    getRiskyDomains,
+    getHttpStatus,
     getSensitiveExposure,
     getV2Assets,
     getV2Overview,
@@ -61,17 +61,21 @@ beforeEach(() => {
   ].forEach((mockFunction) => mockFunction.mockReset());
 });
 
-test("risk workspace presents canonical risk and positive exposure evidence", async () => {
+test("risk workspace presents exact metrics and separate review evidence", async () => {
   window.location.hash = "#/risk?section=review-indicators";
   const scrollIntoView = jest.fn();
   Element.prototype.scrollIntoView = scrollIntoView;
   getV2Overview.mockResolvedValue(overview);
-  getRiskyDomains.mockResolvedValue([{
-    domain: "critical.example.com",
-    risk_score: 9,
-    priority: "High",
-    reasons: ["finding", "sensitive_ports"],
-  }]);
+  getV2Assets.mockResolvedValue({
+    scan_id: 42,
+    page: 1,
+    limit: 25,
+    count: 1,
+    assets: [{
+      domain: "critical.example.com",
+      risk: { score: 9, priority: "High", reasons: ["finding", "sensitive_ports"] },
+    }],
+  });
   getFindings.mockResolvedValue([{
     domain: "critical.example.com",
     finding: "takeover_indicator",
@@ -84,6 +88,7 @@ test("risk workspace presents canonical risk and positive exposure evidence", as
   getExposureSummary.mockResolvedValue({
     scan_id: 42, total_domains: 10, resolving_domains: 8, http_responding_domains: 6,
   });
+  getHttpStatus.mockResolvedValue({ "2xx": 4, "3xx": 2, "4xx": 1, "5xx": 0 });
   getV2ReviewIndicators.mockResolvedValue({
     scan_id: 42,
     count: 2,
@@ -96,6 +101,8 @@ test("risk workspace presents canonical risk and positive exposure evidence", as
         http_observation_status: "RESPONDED",
         http_status: 302,
         final_url: "https://external.example/login",
+        observed_redirect_destination: "https://external.example/login",
+        final_url_verification: "UNRESOLVED",
         final_status: 200,
         final_hostname: "external.example",
         destination_confirmed: false,
@@ -109,6 +116,8 @@ test("risk workspace presents canonical risk and positive exposure evidence", as
         http_observation_status: "RESPONDED",
         http_status: 301,
         final_url: "https://portal.example.com/home",
+        observed_redirect_destination: "https://portal.example.com/home",
+        final_url_verification: "COMPLETE",
         final_status: 200,
         final_hostname: "portal.example.com",
         destination_confirmed: true,
@@ -120,38 +129,76 @@ test("risk workspace presents canonical risk and positive exposure evidence", as
   render(<App />);
 
   expect((await screen.findAllByText("critical.example.com"))[0]).toBeInTheDocument();
-  expect(screen.getByText("Canonical risk posture")).toBeInTheDocument();
-  expect(screen.getByText("deterministic fingerprint match")).toBeInTheDocument();
-  expect(screen.getByText("SSH administration")).toBeInTheDocument();
-  expect(screen.getByText("Sensitivity 4")).toBeInTheDocument();
-  expect(screen.getAllByText("Review Indicators")).toHaveLength(2);
+  expect(screen.getByText("Risk distribution")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Assets with IP addresses/ })).toHaveAttribute("href", "#/assets?has_ip=true");
+  expect(screen.getByRole("link", { name: /HTTP responding/ })).toHaveAttribute("href", "#/assets?http_live=true");
+  expect(screen.getByRole("link", { name: "High 1" })).toHaveAttribute("href", "#/assets?priority=High");
+  expect(screen.getByRole("link", { name: "3xx 2" })).toHaveAttribute("href", "#/assets?http_status_group=3xx");
+  expect(screen.getAllByText("Review Indicators")).toHaveLength(3);
   expect(screen.getByText("https://external.example/login")).toBeInTheDocument();
-  expect(screen.getByText("Not currently confirmed")).toBeInTheDocument();
-  expect(screen.getByText("Independently confirmed current asset")).toBeInTheDocument();
+  expect(screen.getByText("No current asset match")).toBeInTheDocument();
+  expect(screen.getByText("Current scan asset match")).toBeInTheDocument();
   expect(screen.getAllByText("Review only · not a vulnerability conclusion")).toHaveLength(2);
-  expect(screen.getByText("No ownership or testing authorization by redirect")).toBeInTheDocument();
+  expect(screen.getByText("Redirect does not establish ownership or authorization")).toBeInTheDocument();
   const actionable = screen.getByRole("region", { name: "Actionable evidence" });
   expect(actionable.querySelector('a[href="#/risk?section=findings"]')).toBeInTheDocument();
   expect(actionable.querySelector('a[href="#/risk?section=sensitive-ports"]')).toBeInTheDocument();
   expect(actionable.querySelector('a[href="#/risk?section=review-indicators"]')).toBeInTheDocument();
-  expect(document.getElementById("findings")).toBeInTheDocument();
-  expect(document.getElementById("sensitive-ports")).toBeInTheDocument();
   expect(document.getElementById("review-indicators")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Findings" }));
+  expect(document.getElementById("findings")).toBeInTheDocument();
+  expect(screen.getByText("deterministic fingerprint match")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Sensitive Ports" }));
+  expect(document.getElementById("sensitive-ports")).toBeInTheDocument();
+  expect(screen.getByText("SSH administration")).toBeInTheDocument();
+  expect(screen.getByText("Sensitivity 4")).toBeInTheDocument();
   expect(scrollIntoView).toHaveBeenCalled();
   screen.getAllByRole("link", { name: "Open critical.example.com" }).forEach((link) => {
     expect(link).toHaveAttribute("href", "#/assets/critical.example.com?return=risk");
   });
 });
 
+test("priority assets use the exact positive-risk count and paginate the ranked queue", async () => {
+  window.location.hash = "#/risk";
+  getV2Overview.mockResolvedValue(overview);
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue([]);
+  getExposureSummary.mockResolvedValue({ resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  getHttpStatus.mockResolvedValue(null);
+  getV2Assets
+    .mockResolvedValueOnce({
+      scan_id: 42, page: 1, limit: 25, count: 51,
+      assets: [{ domain: "first.example.com", risk: { score: 9, priority: "High", reasons: ["finding"] } }],
+    })
+    .mockResolvedValueOnce({
+      scan_id: 42, page: 2, limit: 25, count: 51,
+      assets: [{ domain: "second.example.com", risk: { score: 4, priority: "Review", reasons: ["http_exposed"] } }],
+    });
+
+  render(<App />);
+
+  expect(await screen.findByText("51 ASSETS")).toBeInTheDocument();
+  expect(getV2Assets).toHaveBeenCalledWith({
+    page: 1, limit: 25, risk_positive: true, sort_by: "risk_score", sort_dir: "desc",
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("second.example.com");
+  expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 2, limit: 25, risk_positive: true, sort_by: "risk_score", sort_dir: "desc",
+  });
+});
+
 test("review indicators have truthful empty and isolated failure states", async () => {
   const baseContracts = () => {
     getV2Overview.mockResolvedValue(overview);
-    getRiskyDomains.mockResolvedValue([]);
+    getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
     getFindings.mockResolvedValue([]);
     getSensitiveExposure.mockResolvedValue([]);
     getExposureSummary.mockResolvedValue({
       scan_id: 42, total_domains: 10, resolving_domains: 8, http_responding_domains: 6,
     });
+    getHttpStatus.mockResolvedValue({ "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 });
   };
 
   window.location.hash = "#/risk";
@@ -165,7 +212,40 @@ test("review indicators have truthful empty and isolated failure states", async 
   getV2ReviewIndicators.mockRejectedValue(new Error("offline"));
   render(<App />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Redirect review evidence could not be loaded");
-  expect(screen.getByText("Canonical risk posture")).toBeInTheDocument();
+  expect(screen.getByText("Risk distribution")).toBeInTheDocument();
+});
+
+test("review indicators label historical and incomplete redirect evidence without implying a verified chain", async () => {
+  window.location.hash = "#/risk?view=review-indicators";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue([]);
+  getExposureSummary.mockResolvedValue({ resolving_domains: 8, http_responding_domains: 6 });
+  getHttpStatus.mockResolvedValue(null);
+  getV2ReviewIndicators.mockResolvedValue({
+    scan_id: 42,
+    count: 1,
+    indicators: [{
+      type: "CROSS_HOST_HTTP_REDIRECT",
+      domain: "historical.example.com",
+      asset_class: "KNOWN",
+      http_observation_status: "RESPONDED",
+      http_status: 302,
+      final_url: "https://old.example.com/login",
+      final_status: 302,
+      final_url_verification: "LEGACY_UNKNOWN",
+      final_hostname: null,
+      destination_confirmed: false,
+    }],
+  });
+
+  render(<App />);
+
+  expect(await screen.findByText("Historical redirect URL — verification unavailable")).toBeInTheDocument();
+  expect(screen.getByText("Initial 302 · Terminal response unavailable")).toBeInTheDocument();
+  expect(screen.queryByText("302 → 302")).not.toBeInTheDocument();
+  expect(screen.getByText("Hostname unavailable")).toBeInTheDocument();
 });
 
 test("Shadow Centre uses effective asset class rather than stored ownership status", async () => {
@@ -494,7 +574,7 @@ test("Scan Centre exposes detail request errors and retries them", async () => {
 test("new workflows expose honest error and empty states", async () => {
   window.location.hash = "#/risk";
   getV2Overview.mockRejectedValue(new Error("offline"));
-  getRiskyDomains.mockResolvedValue([]);
+  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
   getFindings.mockResolvedValue([]);
   getSensitiveExposure.mockResolvedValue([]);
   getExposureSummary.mockResolvedValue({});

@@ -443,7 +443,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
               <EvidenceRow label="Verified final status" value={data.http?.final_status} mono />
             )}
             {redirectEvidence.completion_status === "LEGACY_UNKNOWN" && data.http?.final_status != null && (
-              <EvidenceRow label="Legacy status (verification unknown)" value={data.http.final_status} mono />
+              <EvidenceRow label="Historical status (verification unavailable)" value={data.http.final_status} mono />
             )}
             <EvidenceRow label="Title" value={data.http?.title} wide />
             <EvidenceRow label="Observed redirect destination" value={redirectEvidence.first_hop_destination} mono wide />
@@ -456,7 +456,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
               <EvidenceRow label="Final URL unresolved" value={redirectEvidence.stop_reason} wide />
             )}
             {redirectEvidence.completion_status === "LEGACY_UNKNOWN" && data.http?.final_url && (
-              <EvidenceRow label="Legacy URL (verification unknown)" value={data.http.final_url} mono wide />
+              <EvidenceRow label="Historical URL (verification unavailable)" value={data.http.final_url} mono wide />
             )}
           </div>
           {redirect && (

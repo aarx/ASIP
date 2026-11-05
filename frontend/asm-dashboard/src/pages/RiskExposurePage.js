@@ -2,8 +2,9 @@ import React, { useEffect, useState } from "react";
 import {
   getExposureSummary,
   getFindings,
-  getRiskyDomains,
+  getHttpStatus,
   getSensitiveExposure,
+  getV2Assets,
   getV2Overview,
   getV2ReviewIndicators,
 } from "../services/api";
@@ -13,6 +14,13 @@ import Panel from "../components/ui/Panel";
 import RiskDistributionChart, { RISK_COLORS } from "../components/ui/RiskDistributionChart";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
+
+const PRIORITY_LIMIT = 25;
+const SECONDARY_VIEWS = [
+  ["review-indicators", "Review Indicators"],
+  ["findings", "Findings"],
+  ["sensitive-ports", "Sensitive Ports"],
+];
 
 function reasons(reasonsList) {
   return (
@@ -24,29 +32,93 @@ function reasons(reasonsList) {
   );
 }
 
+function readSecondaryView(query) {
+  const params = new URLSearchParams(query);
+  const requested = params.get("view") || params.get("section");
+  return SECONDARY_VIEWS.some(([view]) => view === requested) ? requested : "review-indicators";
+}
+
+function redirectLabel(indicator) {
+  return indicator.final_url_verification === "LEGACY_UNKNOWN"
+    ? "Historical redirect URL — verification unavailable"
+    : "Cross-host redirect observed";
+}
+
+function responseSummary(indicator) {
+  const initial = indicator.http_status == null ? "Initial response unavailable" : `Initial ${indicator.http_status}`;
+  if (indicator.final_url_verification === "COMPLETE" && indicator.final_status != null) {
+    return `${initial} · Verified terminal ${indicator.final_status}`;
+  }
+  return `${initial} · Terminal response unavailable`;
+}
+
+function redirectDestination(indicator) {
+  if (indicator.observed_redirect_destination) return indicator.observed_redirect_destination;
+  if (indicator.final_url_verification === "LEGACY_UNKNOWN") return indicator.final_url || null;
+  return null;
+}
+
+function httpStatusGroups(statuses) {
+  if (!statuses) return [];
+  return ["2xx", "3xx", "4xx", "5xx"]
+    .filter((group) => statuses[group] != null)
+    .map((group) => ({ group, count: statuses[group] }));
+}
+
 export default function RiskExposurePage({ query }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
   const [requestVersion, setRequestVersion] = useState(0);
+  const [priorityPage, setPriorityPage] = useState(1);
+  const [priorityData, setPriorityData] = useState(null);
+  const [priorityStatus, setPriorityStatus] = useState("loading");
+  const [priorityRequestVersion, setPriorityRequestVersion] = useState(0);
+  const [secondaryView, setSecondaryView] = useState(() => readSecondaryView(query));
+
+  useEffect(() => {
+    setSecondaryView(readSecondaryView(query));
+  }, [query]);
 
   useEffect(() => {
     let active = true;
     setStatus("loading");
+    const httpStatusRequest = typeof getHttpStatus === "function"
+      ? Promise.resolve(getHttpStatus()).catch(() => null)
+      : Promise.resolve(null);
     Promise.all([
       getV2Overview(),
-      getRiskyDomains(),
       getFindings(),
       getSensitiveExposure(),
       getExposureSummary(),
-      getV2ReviewIndicators().catch(() => ({ error: true, count: 0, indicators: [] })),
-    ]).then(([overview, riskyAssets, findings, sensitivePorts, exposure, reviewIndicators]) => {
+      Promise.resolve(getV2ReviewIndicators()).catch(() => ({ error: true, count: 0, indicators: [] })),
+      httpStatusRequest,
+    ]).then(([overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses]) => {
       if (active) {
-        setData({ overview, riskyAssets, findings, sensitivePorts, exposure, reviewIndicators });
+        setData({ overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses });
         setStatus("ready");
       }
     }).catch(() => { if (active) setStatus("error"); });
     return () => { active = false; };
   }, [requestVersion]);
+
+  useEffect(() => {
+    if (status !== "ready" || data?.overview?.current_scan_id == null) return undefined;
+    let active = true;
+    setPriorityStatus("loading");
+    getV2Assets({
+      page: priorityPage,
+      limit: PRIORITY_LIMIT,
+      risk_positive: true,
+      sort_by: "risk_score",
+      sort_dir: "desc",
+    }).then((result) => {
+      if (active) {
+        setPriorityData(result);
+        setPriorityStatus("ready");
+      }
+    }).catch(() => { if (active) setPriorityStatus("error"); });
+    return () => { active = false; };
+  }, [data, priorityPage, priorityRequestVersion, status]);
 
   useEffect(() => {
     if (status !== "ready") return;
@@ -55,101 +127,161 @@ export default function RiskExposurePage({ query }) {
     document.getElementById(section)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }, [query, status]);
 
-  if (status === "loading") return <LoadingState title="Loading risk and exposure" copy="Retrieving canonical risk and current positive exposure evidence." />;
+  if (status === "loading") return <LoadingState title="Loading risk and exposure" copy="Retrieving current risk and exposure evidence." />;
   if (status === "error") return <ErrorState title="Risk workspace unavailable" copy="One or more current risk or exposure contracts could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
   if (data.overview.current_scan_id == null) return <EmptyState />;
 
-  const { overview, riskyAssets, findings, sensitivePorts, exposure, reviewIndicators } = data;
+  const { overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses } = data;
+  const totalPriorityPages = Math.max(Math.ceil((priorityData?.count || 0) / PRIORITY_LIMIT), 1);
+  const groups = httpStatusGroups(httpStatuses);
+
   return (
     <div className="operations-grid">
       <section className="operations-kpis" aria-label="Risk and exposure metrics">
-        <MetricCard label="High priority" value={overview.risk_distribution?.High ?? 0} support="Canonical current risk" accent={RISK_COLORS.High} />
-        <MetricCard label="Scored assets" value={riskyAssets.length} support="Positive canonical score" accent="#a96f1f" />
-        <MetricCard label="Resolving assets" value={exposure.resolving_domains ?? 0} support="Positive DNS evidence" accent="#327d80" />
-        <MetricCard label="HTTP responses" value={exposure.http_responding_domains ?? 0} support="Observed responding assets" accent="#2f7d5b" />
+        <MetricCard label="High risk" value={overview.risk_distribution?.High ?? 0} support="Current scan" accent={RISK_COLORS.High} href="#/assets?priority=High" />
+        <MetricCard label="Assets with risk scores" value={priorityData?.count ?? "—"} support="Current scan" accent="#a96f1f" />
+        <MetricCard label="Assets with IP addresses" value={exposure.resolving_domains ?? "—"} support="Current scan" accent="#327d80" href="#/assets?has_ip=true" />
+        <MetricCard label="HTTP responding" value={exposure.http_responding_domains ?? "—"} support="Current scan" accent="#2f7d5b" href="#/assets?http_live=true" />
       </section>
 
       <section className="actionable-kpis" aria-label="Actionable evidence">
-        <MetricCard label="Findings" value={findings.length} support="Current deterministic observations" accent="#b43d4a" href="#/risk?section=findings" />
-        <MetricCard label="Sensitive port exposure" value={sensitivePorts.length} support="Positive configured-port evidence" accent="#a96f1f" href="#/risk?section=sensitive-ports" />
-        <MetricCard label="Review Indicators" value={reviewIndicators.count ?? 0} support="Context required · not findings" accent="#9a79d6" href="#/risk?section=review-indicators" />
+        <MetricCard label="Findings" value={findings.length} support="Deterministic observations" accent="#b43d4a" href="#/risk?section=findings" />
+        <MetricCard label="Sensitive port exposure" value={sensitivePorts.length} support="Configured sensitive ports" accent="#a96f1f" href="#/risk?section=sensitive-ports" />
+        <MetricCard label="Review Indicators" value={reviewIndicators.count ?? "—"} support="Review only · not findings" accent="#9a79d6" href="#/risk?section=review-indicators" />
       </section>
 
-      <Panel id="findings" title="Findings" subtitle="Current deterministic findings; indicators are not confirmed vulnerabilities" meta={`${findings.length} ROWS`} className="operation-panel-half">
-        {findings.length ? (
-          <div className="compact-list">
-            {findings.map((finding, index) => (
-              <div className="compact-evidence-row" key={`${finding.domain}-${finding.finding}-${index}`}>
-                <StatusBadge value={finding.severity} />
+      <Panel title="Risk distribution" meta={`SCAN #${overview.current_scan_id}`} className="operation-panel-full">
+        <RiskDistributionChart distribution={overview.risk_distribution} priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}`} />
+      </Panel>
+
+      {groups.length > 0 && (
+        <nav className="risk-http-drilldown" aria-label="Filter assets by HTTP status group">
+          <span>HTTP status groups</span>
+          {groups.map(({ group, count }) => (
+            <a href={`#/assets?http_status_group=${group}`} key={group}>
+              <span>{group}</span><strong>{count}</strong><span aria-hidden="true">→</span>
+            </a>
+          ))}
+        </nav>
+      )}
+
+      <Panel title="Priority assets" subtitle="Current assets with risk scores above zero" meta={`${priorityData?.count ?? "—"} ASSETS`} className="operation-panel-full priority-assets-panel" id="priority-assets">
+        {priorityStatus === "loading" && <LoadingState title="Loading priority assets" copy="Retrieving the current risk-ranked asset queue." />}
+        {priorityStatus === "error" && <ErrorState title="Priority assets unavailable" copy="The current risk-ranked asset queue could not be loaded." onRetry={() => setPriorityRequestVersion((value) => value + 1)} />}
+        {priorityStatus === "ready" && priorityData.assets.length === 0 && <div className="detail-empty">No assets have a risk score above zero in this scan.</div>}
+        {priorityStatus === "ready" && priorityData.assets.length > 0 && (
+          <>
+            <div className="dense-table-wrap">
+              <table className="dense-table risk-assets-table">
+                <thead><tr><th>Asset</th><th>Priority</th><th>Score</th><th>Evidence</th><th /></tr></thead>
+                <tbody>{priorityData.assets.map((asset) => (
+                  <tr key={asset.domain}>
+                    <td><AssetLink domain={asset.domain} returnTo="risk" /></td>
+                    <td><StatusBadge value={asset.risk?.priority} /></td>
+                    <td><span className="risk-score">{asset.risk?.score ?? "—"}</span></td>
+                    <td>{reasons(asset.risk?.reasons)}</td>
+                    <td><AssetLink domain={asset.domain} returnTo="risk" className="row-action">→</AssetLink></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            {priorityData.count > 0 && (
+              <div className="pagination-bar">
+                <span>Page {priorityPage} of {totalPriorityPages}</span>
                 <div>
-                  <AssetLink domain={finding.domain} returnTo="risk" />
-                  <strong>{finding.finding}</strong>
-                  <p>{finding.evidence || "No additional evidence recorded"}</p>
+                  <button type="button" className="secondary-button" disabled={priorityPage <= 1} onClick={() => setPriorityPage((page) => page - 1)}>Previous</button>
+                  <button type="button" className="secondary-button" disabled={priorityPage >= totalPriorityPages} onClick={() => setPriorityPage((page) => page + 1)}>Next</button>
                 </div>
               </div>
-            ))}
-          </div>
-        ) : <div className="detail-empty">No findings were recorded for the current scan.</div>}
+            )}
+          </>
+        )}
       </Panel>
 
-      <Panel id="sensitive-ports" title="Sensitive port exposure" subtitle="Positive observations matching configured sensitive ports" meta={`${sensitivePorts.length} ROWS`} className="operation-panel-half">
-        {sensitivePorts.length ? (
-          <div className="compact-list">
-            {sensitivePorts.map((item, index) => (
-              <div className="port-exposure-row" key={`${item.domain}-${item.port}-${index}`}>
-                <span className="port-number">{item.port}</span>
-                <div><AssetLink domain={item.domain} returnTo="risk" /><p>{item.service || "Service unspecified"}</p></div>
-                <span className="configured-risk">Sensitivity {item.risk}</span>
+      <section className="risk-secondary-workspace" aria-label="Secondary risk evidence">
+        <div className="risk-secondary-header">
+          <div><h2>Secondary evidence</h2><p>Review observations separately from ranked risk.</p></div>
+          <div className="risk-view-tabs" role="tablist" aria-label="Secondary risk evidence views">
+            {SECONDARY_VIEWS.map(([view, label]) => (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={secondaryView === view}
+                aria-controls={`${view}-panel`}
+                className={secondaryView === view ? "active" : ""}
+                onClick={() => setSecondaryView(view)}
+                key={view}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {secondaryView === "review-indicators" && (
+          <div id="review-indicators" role="tabpanel" aria-label="Review Indicators">
+          <Panel title="Review Indicators" subtitle="Observed conditions for analyst review; not findings" meta={reviewIndicators.error ? "UNAVAILABLE" : `${reviewIndicators.count} CURRENT`} className="operation-panel-full">
+            {reviewIndicators.error ? (
+              <div className="review-indicator-error" role="alert">Redirect review evidence could not be loaded. Other risk evidence remains available.</div>
+            ) : reviewIndicators.indicators.length ? (
+              <div className="dense-table-wrap">
+                <table className="dense-table review-indicator-table">
+                  <thead><tr><th>Source asset</th><th>Indicator</th><th>HTTP</th><th>Observed destination</th><th>Destination context</th><th /></tr></thead>
+                  <tbody>{reviewIndicators.indicators.map((indicator) => {
+                    const destination = redirectDestination(indicator);
+                    return (
+                      <tr key={`${indicator.type}-${indicator.domain}-${indicator.final_url}`}>
+                        <td><AssetLink domain={indicator.domain} returnTo="risk" /><StatusBadge value={indicator.asset_class} /></td>
+                        <td><strong>{redirectLabel(indicator)}</strong><span className="asset-secondary">Review only · not a vulnerability conclusion</span></td>
+                        <td><StatusBadge value={indicator.http_observation_status} /><span className="asset-secondary">{responseSummary(indicator)}</span></td>
+                        <td><span className="review-destination technical-value" title={destination || undefined}>{destination || "Destination unavailable"}</span><span className="asset-secondary">{indicator.final_hostname || "Hostname unavailable"}</span></td>
+                        <td>{indicator.destination_confirmed ? <><StatusBadge value={indicator.destination_asset_class} /><span className="asset-secondary">Current scan asset match</span></> : <><span className="not-applicable">No current asset match</span><span className="asset-secondary">Redirect does not establish ownership or authorization</span></>}</td>
+                        <td><AssetLink domain={indicator.domain} returnTo="risk" className="row-action">→</AssetLink></td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table>
               </div>
-            ))}
+            ) : <div className="detail-empty">No cross-host HTTP redirects were observed in the current authoritative scan.</div>}
+          </Panel>
           </div>
-        ) : <div className="detail-empty">No configured sensitive ports were observed in the current scan.</div>}
-      </Panel>
+        )}
 
-      <Panel id="review-indicators" title="Review Indicators" subtitle="Observed conditions requiring analyst context; indicators are not findings" meta={reviewIndicators.error ? "UNAVAILABLE" : `${reviewIndicators.count} CURRENT`} className="operation-panel-full">
-        {reviewIndicators.error ? (
-          <div className="review-indicator-error" role="alert">Redirect review evidence could not be loaded. Canonical risk and other exposure evidence remain available.</div>
-        ) : reviewIndicators.indicators.length ? (
-          <div className="dense-table-wrap">
-            <table className="dense-table review-indicator-table">
-              <thead><tr><th>Source asset</th><th>Indicator</th><th>HTTP</th><th>Observed destination</th><th>Destination context</th><th /></tr></thead>
-              <tbody>{reviewIndicators.indicators.map((indicator) => (
-                <tr key={`${indicator.type}-${indicator.domain}-${indicator.final_url}`}>
-                  <td><AssetLink domain={indicator.domain} returnTo="risk" /><StatusBadge value={indicator.asset_class} /></td>
-                  <td><strong>{indicator.final_url_verification === "LEGACY_UNKNOWN" ? "Legacy redirect URL (verification unknown)" : "Cross-host redirect observed"}</strong><span className="asset-secondary">Review only · not a vulnerability conclusion</span></td>
-                  <td><StatusBadge value={indicator.http_observation_status} /><span className="asset-secondary">{indicator.http_status} → {indicator.final_status ?? "—"}</span></td>
-                  <td><span className="review-destination technical-value" title={indicator.observed_redirect_destination || indicator.final_url}>{indicator.observed_redirect_destination || indicator.final_url}</span><span className="asset-secondary">{indicator.final_hostname}</span></td>
-                  <td>{indicator.destination_confirmed ? <><StatusBadge value={indicator.destination_asset_class} /><span className="asset-secondary">Independently confirmed current asset</span></> : <><span className="not-applicable">Not currently confirmed</span><span className="asset-secondary">No ownership or testing authorization by redirect</span></>}</td>
-                  <td><AssetLink domain={indicator.domain} returnTo="risk" className="row-action">→</AssetLink></td>
-                </tr>
-              ))}</tbody>
-            </table>
+        {secondaryView === "findings" && (
+          <div id="findings" role="tabpanel" aria-label="Findings">
+          <Panel title="Findings" subtitle="Deterministic observations" meta={`${findings.length} ROWS`} className="operation-panel-full">
+            {findings.length ? (
+              <div className="compact-list">
+                {findings.map((finding, index) => (
+                  <div className="compact-evidence-row" key={`${finding.domain}-${finding.finding}-${index}`}>
+                    <StatusBadge value={finding.severity} />
+                    <div><AssetLink domain={finding.domain} returnTo="risk" /><strong>{finding.finding}</strong><p>{finding.evidence || "No additional evidence recorded"}</p></div>
+                  </div>
+                ))}
+              </div>
+            ) : <div className="detail-empty">No findings were recorded for the current scan.</div>}
+          </Panel>
           </div>
-        ) : <div className="detail-empty">No cross-host HTTP redirects were observed in the current authoritative scan.</div>}
-      </Panel>
+        )}
 
-      <Panel title="Canonical risk posture" subtitle="Backend-owned priorities across confirmed organizational assets" meta={`SCAN #${overview.current_scan_id}`} className="operation-panel-third">
-        <RiskDistributionChart distribution={overview.risk_distribution} priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}&limit=25`} />
-      </Panel>
-
-      <Panel title="Prioritized assets" subtitle="Positive canonical scores ordered by the backend" meta={`${riskyAssets.length} ASSETS`} className="operation-panel-wide">
-        {riskyAssets.length ? (
-          <div className="dense-table-wrap">
-            <table className="dense-table risk-assets-table">
-              <thead><tr><th>Asset</th><th>Priority</th><th>Score</th><th>Deterministic reasons</th><th /></tr></thead>
-              <tbody>{riskyAssets.map((asset) => (
-                <tr key={asset.domain}>
-                  <td><AssetLink domain={asset.domain} returnTo="risk" /></td>
-                  <td><StatusBadge value={asset.priority} /></td>
-                  <td><span className="risk-score">{asset.risk_score}</span></td>
-                  <td>{reasons(asset.reasons)}</td>
-                  <td><AssetLink domain={asset.domain} returnTo="risk" className="row-action">→</AssetLink></td>
-                </tr>
-              ))}</tbody>
-            </table>
+        {secondaryView === "sensitive-ports" && (
+          <div id="sensitive-ports" role="tabpanel" aria-label="Sensitive port exposure">
+          <Panel title="Sensitive port exposure" subtitle="Configured sensitive ports observed" meta={`${sensitivePorts.length} ROWS`} className="operation-panel-full">
+            {sensitivePorts.length ? (
+              <div className="compact-list">
+                {sensitivePorts.map((item, index) => (
+                  <div className="port-exposure-row" key={`${item.domain}-${item.port}-${index}`}>
+                    <span className="port-number">{item.port}</span>
+                    <div><AssetLink domain={item.domain} returnTo="risk" /><p>{item.service || "Service unspecified"}</p></div>
+                    <span className="configured-risk">Sensitivity {item.risk}</span>
+                  </div>
+                ))}
+              </div>
+            ) : <div className="detail-empty">No configured sensitive ports were observed in the current scan.</div>}
+          </Panel>
           </div>
-        ) : <div className="detail-empty">No assets have a positive canonical score in this scan.</div>}
-      </Panel>
+        )}
+      </section>
     </div>
   );
 }

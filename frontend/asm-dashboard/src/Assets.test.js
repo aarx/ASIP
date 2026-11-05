@@ -35,6 +35,7 @@ const currentAsset = {
   last_seen_scan: 42,
   ip: "192.0.2.20",
   has_ip: true,
+  http_live: true,
   http_observation_status: "RESPONDED",
   http_status: 302,
   title: "Application",
@@ -253,6 +254,30 @@ test("Asset Explorer preserves its explicit HTTP observation filter", async () =
   });
   expect(screen.getByText("ownership: CONFIRMED")).toBeInTheDocument();
   expect(screen.getByText("http observation status: NO_RESPONSE")).toBeInTheDocument();
+});
+
+test("Asset Explorer forwards metric drill-down filters and preserves their active state", async () => {
+  window.location.hash = "#/assets?risk_positive=true&has_ip=true&http_live=true&http_status_group=3xx&http_status=302&limit=25";
+  getV2Assets.mockResolvedValue(assetPage);
+  render(<App />);
+
+  await screen.findByText("app.example.com");
+  expect(getV2Assets).toHaveBeenCalledWith({
+    page: 1,
+    limit: 25,
+    risk_positive: "true",
+    has_ip: "true",
+    http_live: "true",
+    http_status: "302",
+    http_status_group: "3xx",
+    sort_by: "domain",
+    sort_dir: "asc",
+  });
+  expect(screen.getByText("risk positive: true")).toBeInTheDocument();
+  expect(screen.getByText("has ip: true")).toBeInTheDocument();
+  expect(screen.getByText("http live: true")).toBeInTheDocument();
+  expect(screen.getByText("http status: 302")).toBeInTheDocument();
+  expect(screen.getByText("http status group: 3xx")).toBeInTheDocument();
 });
 
 test("asset drill-down routes respond to hash navigation in both directions", async () => {
