@@ -28,12 +28,34 @@ function brandHash({ page = 1, search = "", ownership = "", fixture = "" }) {
   return `#/brand${params.toString() ? `?${params}` : ""}`;
 }
 
-function EvidenceTokens({ values, empty }) {
-  return values?.length ? (
-    <div className="brand-token-list">
-      {values.map((value) => <span className="reason-token" key={value}>{value}</span>)}
-    </div>
-  ) : <span className="not-applicable">{empty}</span>;
+function httpStatusValue(value) {
+  return value === null || value === undefined || value === "" || value === 0 || value === "0" || Number.isNaN(value)
+    ? "Unknown"
+    : value;
+}
+
+function destinationEvidence(asset) {
+  const evidence = asset.redirect_evidence || {};
+  if (evidence.first_hop_destination) {
+    return { label: "Observed destination", value: evidence.first_hop_destination };
+  }
+  if (asset.final_url_verification === "COMPLETE" && evidence.verified_terminal_url) {
+    return { label: "Verified final URL", value: evidence.verified_terminal_url };
+  }
+  if (asset.final_url_verification === "LEGACY_UNKNOWN" && asset.final_url) {
+    return { label: "Historical URL (unverified)", value: asset.final_url };
+  }
+  return null;
+}
+
+function queryForReturn(query) {
+  const params = new URLSearchParams(query);
+  const returnParams = new URLSearchParams();
+  ["search", "ownership", "page", "fixture"].forEach((key) => {
+    const value = params.get(key);
+    if (value) returnParams.set(key, value);
+  });
+  return returnParams.toString();
 }
 
 export default function BrandPerimeterPage({ query }) {
@@ -50,15 +72,15 @@ export default function BrandPerimeterPage({ query }) {
     setStatus("loading");
     const inventoryParams = { page: applied.page, limit: LIMIT };
     if (applied.search) inventoryParams.search = applied.search;
-    if (applied.ownership) inventoryParams.ownership = applied.ownership;
+    if (applied.ownership) inventoryParams.asset_class = applied.ownership;
     const load = fixtureMode
       ? (params) => Promise.resolve(brandAcceptanceInventory(params))
       : getV2BrandAssets;
     Promise.all([
       load(inventoryParams),
       load({ page: 1, limit: 1 }),
-      load({ page: 1, limit: 1, ownership: "CANDIDATE" }),
-      load({ page: 1, limit: 1, ownership: "EXTERNAL" }),
+      load({ page: 1, limit: 1, asset_class: "CANDIDATE" }),
+      load({ page: 1, limit: 1, asset_class: "EXTERNAL" }),
     ]).then(([inventory, all, candidate, external]) => {
       if (active) {
         setData({ inventory, total: all.count, candidate: candidate.count, external: external.count });
@@ -90,8 +112,8 @@ export default function BrandPerimeterPage({ query }) {
       </section>
 
       <div className="brand-boundary-notice">
-        <strong>{fixtureMode ? "Development acceptance fixture" : "Ownership unconfirmed or external"}</strong>
-        <p>{fixtureMode ? "Synthetic .invalid assets are held entirely in the frontend. No database, scan history, worker, risk, or authorization state is used or changed." : "These assets are excluded from the organizational attack surface and canonical risk unless ownership is confirmed."}</p>
+        <strong>{fixtureMode ? "Development acceptance fixture" : "Outside confirmed surface"}</strong>
+        <p>{fixtureMode ? "Synthetic .invalid assets remain browser-only and are never persisted." : "Candidate and External assets are shown for review and do not receive organizational risk."}</p>
       </div>
 
       <form className="brand-filters" onSubmit={apply}>
@@ -108,18 +130,19 @@ export default function BrandPerimeterPage({ query }) {
       {data.inventory.assets.length ? (
         <div className="dense-table-wrap brand-table-wrap">
           <table className="dense-table brand-table">
-            <thead><tr><th>Domain / classification</th><th>Why discovered</th><th>DNS / IP</th><th>HTTP evidence</th><th>Destination / title</th><th>Risk boundary</th><th /></tr></thead>
-            <tbody>{data.inventory.assets.map((asset) => (
+            <thead><tr><th>Domain / current class</th><th>DNS / IP</th><th>HTTP evidence</th><th>Observed destination / title</th><th /></tr></thead>
+            <tbody>{data.inventory.assets.map((asset) => {
+              const destination = destinationEvidence(asset);
+              return (
               <tr key={asset.domain}>
-                <td><AssetLink domain={asset.domain} returnTo="brand" returnQuery={fixtureMode ? "fixture=ownership-review" : ""} /><StatusBadge value={asset.ownership_status} /></td>
-                <td><span className="evidence-label">Sources</span><EvidenceTokens values={asset.discovery_sources} empty="No source recorded" /><span className="evidence-label brand-seed-label">Associated seeds</span><EvidenceTokens values={asset.seeds} empty="No seed recorded" /></td>
+                <td><AssetLink domain={asset.domain} returnTo="brand" returnQuery={queryForReturn(query)} /><StatusBadge value={asset.asset_class} /></td>
                 <td><span className="technical-value">{displayEvidence(asset.ip)}</span><span className="asset-secondary">{asset.has_ip ? "Resolution observed" : "No current IP evidence"}</span></td>
-                <td><StatusBadge value={asset.http_observation_status} /><span className="asset-secondary">{asset.http_status ?? "No status"}</span></td>
-                <td><span className="evidence-label">{asset.final_url_verification === "LEGACY_UNKNOWN" ? "Legacy URL (verification unknown)" : asset.redirect_evidence?.first_hop_destination ? "Observed redirect destination" : asset.final_url_verification === "COMPLETE" ? "Verified final URL" : "Final URL unresolved"}</span><span className="brand-destination technical-value" title={displayEvidence(asset.redirect_evidence?.first_hop_destination || (asset.final_url_verification === "LEGACY_UNKNOWN" ? asset.final_url : asset.redirect_evidence?.verified_terminal_url), "")}>{displayEvidence(asset.redirect_evidence?.first_hop_destination || (asset.final_url_verification === "LEGACY_UNKNOWN" ? asset.final_url : asset.redirect_evidence?.verified_terminal_url), "No URL observed")}</span><span className="asset-secondary">{asset.final_url_verification === "UNRESOLVED" || asset.final_url_verification === "UNKNOWN" ? `Final URL unresolved · ${asset.redirect_evidence?.stop_reason || "unknown reason"}` : asset.final_url_verification === "LEGACY_UNKNOWN" ? `Legacy status (verification unknown): ${displayEvidence(asset.final_status, "not recorded")}` : displayEvidence(asset.final_status, "No verified final status")} · {displayEvidence(asset.title, "No title")}</span></td>
-                <td><span className="not-applicable">No org. risk</span><span className="asset-secondary">Outside confirmed surface</span></td>
-                <td><AssetLink domain={asset.domain} returnTo="brand" returnQuery={fixtureMode ? "fixture=ownership-review" : ""} className="row-action">→</AssetLink></td>
+                <td><StatusBadge value={asset.http_observation_status} /><span className="asset-secondary">{httpStatusValue(asset.http_status)}</span></td>
+                <td>{destination ? <><span className="evidence-label">{destination.label}</span><span className="brand-destination technical-value" title={destination.value}>{destination.value}</span></> : <span className="not-applicable">—</span>}{asset.title && <span className="asset-secondary">Title: {asset.title}</span>}</td>
+                <td><AssetLink domain={asset.domain} returnTo="brand" returnQuery={queryForReturn(query)} className="row-action">→</AssetLink></td>
               </tr>
-            ))}</tbody>
+              );
+            })}</tbody>
           </table>
         </div>
       ) : <EmptyState title="No Brand Perimeter assets match" copy="No current Candidate or External assets match the selected search and ownership classification." />}

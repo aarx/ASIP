@@ -66,11 +66,11 @@ test("renders the permanent shell and authoritative overview", async () => {
       { scan_id: 42, status: "SUCCEEDED", completed_at: "2026-09-26T10:00:00Z", is_current_authoritative: true },
     ],
   });
-  getV2BrandAssets.mockImplementation(({ ownership }) => Promise.resolve({
+  getV2BrandAssets.mockImplementation(({ asset_class: assetClass }) => Promise.resolve({
     scan_id: 42,
     page: 1,
     limit: 1,
-    count: ownership === "CANDIDATE" ? 3 : 2,
+    count: assetClass === "CANDIDATE" ? 3 : 2,
     assets: [],
   }));
   getNamingAssetExposure.mockResolvedValue([
@@ -94,6 +94,9 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByText("scan 41 → 42")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
   expect(screen.getByRole("link", { name: "Assets" })).toBeInTheDocument();
+  expect(screen.getByText("Asset Discovery")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Shadow assets" })).toHaveAttribute("href", "#/shadow");
+  expect(screen.getByRole("link", { name: "Brand exposure" })).toHaveAttribute("href", "#/brand");
   expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Authoritative scan #42 completed 2h ago/i })).toHaveAttribute("href", "#/scans");
   expect(screen.queryByText(/Authoritative scan #43/)).not.toBeInTheDocument();

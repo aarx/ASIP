@@ -210,7 +210,7 @@ test("presentation treats null and NaN-like strings as missing without hiding se
 
   expect(await screen.findByText("Authoritative ShadowRecon evidence")).toBeInTheDocument();
   expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
-  expect(screen.getByText("0")).toBeInTheDocument();
+  expect(screen.getByText("Unknown")).toBeInTheDocument();
   expect(screen.getAllByText("Not observed")).toHaveLength(2);
   expect(screen.getByText("Unresolved or unavailable")).toBeInTheDocument();
   expect(screen.queryByText(/^nan$/i)).not.toBeInTheDocument();

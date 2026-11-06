@@ -403,6 +403,54 @@ test("asset detail renders exact evidence and no risk for a Candidate", async ()
   );
 });
 
+test("asset detail separates effective class from stored ownership and groups provenance", async () => {
+  window.location.hash = "#/assets/legacy.example?return=brand&search=legacy&ownership=CANDIDATE&page=2";
+  getV2AssetDetail.mockResolvedValue({
+    ...candidateDetail,
+    domain: "legacy.example",
+    ownership_status: "CONFIRMED",
+    asset_class: "CANDIDATE",
+    http: {
+      ...candidateDetail.http,
+      status: 0,
+      final_status: 0,
+      final_url: "https://historical.example/landing",
+      redirect_evidence: {
+        ...candidateDetail.http.redirect_evidence,
+        completion_status: "LEGACY_UNKNOWN",
+      },
+    },
+    discovery: {
+      sources: [
+        { source: "brand_tld", seed: "acme.com" },
+        { source: "crt.sh", seed: "acme.com" },
+        { source: "san", seed: "acme.com" },
+        { source: "subfinder", seed: "acme.com" },
+        { source: "internal-source-7", seed: "other.example" },
+      ],
+    },
+  });
+
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { name: "legacy.example" })).toBeInTheDocument();
+  expect(screen.getAllByText("Current class").length).toBeGreaterThan(0);
+  expect(screen.getByText("Stored ownership")).toBeInTheDocument();
+  expect(screen.getByText("Historical URL (unverified)")).toBeInTheDocument();
+  expect(screen.queryByText("Historical status (unverified)")).not.toBeInTheDocument();
+  const httpPanel = screen.getByText("HTTP").closest("section");
+  expect(within(httpPanel).getByText("Unknown")).toBeInTheDocument();
+  const provenancePanel = screen.getByText("Discovery & provenance").closest("section");
+  expect(within(provenancePanel).getByText("Brand exposure")).toBeInTheDocument();
+  expect(within(provenancePanel).getByText("Certificate exposure")).toBeInTheDocument();
+  expect(within(provenancePanel).getByText("Certificate exposure · SAN expansion")).toBeInTheDocument();
+  expect(within(provenancePanel).getByText("Pentest tools")).toBeInTheDocument();
+  expect(within(provenancePanel).getByText("internal-source-7")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "← Back to Brand Perimeter" })).toHaveAttribute(
+    "href", "#/brand?search=legacy&ownership=CANDIDATE&page=2"
+  );
+});
+
 test("asset detail renders technology intelligence and expands structured evidence", async () => {
   window.location.hash = "#/assets/technology.example";
   getV2AssetDetail.mockResolvedValue(technologyDetail);
@@ -472,10 +520,10 @@ test("asset detail uses effective outside-scope class over historical confirmati
   render(<App />);
 
   expect((await screen.findAllByText("CANDIDATE")).length).toBeGreaterThan(0);
-  expect(screen.getByText("Current ownership").parentElement).toHaveTextContent("CONFIRMED");
+  expect(screen.getByText("Stored ownership status").parentElement).toHaveTextContent("CONFIRMED");
   expect(screen.getByText("No organizational canonical risk applies to CANDIDATE assets.")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open asset inventory" })).toHaveAttribute(
-    "href", "#/assets?asset_class=CANDIDATE"
+  expect(screen.getByRole("link", { name: "Open Brand Perimeter" })).toHaveAttribute(
+    "href", "#/brand?ownership=CANDIDATE"
   );
 });
 
@@ -504,7 +552,7 @@ test("ownership review confirms only after confirmation and refreshes classifica
 
   await waitFor(() => expect(updateV2AssetOwnership).toHaveBeenCalledWith("candidate.example", "CONFIRMED"));
   expect(await screen.findByText("Ownership updated to CONFIRMED.")).toBeInTheDocument();
-  await waitFor(() => expect(screen.getByText("SHADOW")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getAllByText("SHADOW").length).toBeGreaterThan(0));
   expect(screen.getByText("3")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open Shadow workflow" })).toHaveAttribute("href", "#/shadow");
   expect(screen.getByText(/does not grant active-scanning authorization/i)).toBeInTheDocument();

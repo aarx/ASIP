@@ -4,6 +4,7 @@ const assets = [
   {
     domain: "abc-login-test.invalid",
     ownership_status: "CANDIDATE",
+    asset_class: "CANDIDATE",
     ip: "192.0.2.41",
     has_ip: true,
     http_observation_status: "RESPONDED",
@@ -30,6 +31,7 @@ const assets = [
   {
     domain: "outside-reference.invalid",
     ownership_status: "EXTERNAL",
+    asset_class: "EXTERNAL",
     ip: null,
     has_ip: false,
     http_observation_status: "UNKNOWN",
@@ -50,10 +52,11 @@ export function isBrandAcceptanceFixture(query = "") {
     && (params.get("fixture") === FIXTURE_KEY || returnParams.get("fixture") === FIXTURE_KEY);
 }
 
-export function brandAcceptanceInventory({ page = 1, limit = 25, search = "", ownership = "" } = {}) {
+export function brandAcceptanceInventory({ page = 1, limit = 25, search = "", ownership = "", asset_class: assetClass = "" } = {}) {
+  const requestedClass = assetClass || ownership;
   const filtered = assets.filter((asset) => (
     (!search || asset.domain.includes(search.toLowerCase()))
-    && (!ownership || asset.ownership_status === ownership)
+    && (!requestedClass || asset.asset_class === requestedClass)
   ));
   const start = (page - 1) * limit;
   return { scan_id: 9000, page, limit, count: filtered.length, assets: filtered.slice(start, start + limit) };
@@ -67,7 +70,7 @@ export function brandAcceptanceDetail(domain) {
     domain: asset.domain,
     ownership_status: asset.ownership_status,
     is_known: false,
-    asset_class: asset.ownership_status,
+    asset_class: asset.asset_class,
     first_seen_scan: 9000,
     last_seen_scan: 9000,
     first_seen_at: "2026-01-01T00:00:00Z",

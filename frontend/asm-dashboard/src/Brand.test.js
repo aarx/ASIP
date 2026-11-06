@@ -23,6 +23,7 @@ jest.mock("./services/api", () => ({
 const candidate = {
   domain: "acme-example.net",
   ownership_status: "CANDIDATE",
+  asset_class: "CANDIDATE",
   ip: "192.0.2.81",
   has_ip: true,
   http_observation_status: "RESPONDED",
@@ -49,6 +50,7 @@ const candidate = {
 const external = {
   domain: "acme-reference.org",
   ownership_status: "EXTERNAL",
+  asset_class: "EXTERNAL",
   ip: null,
   has_ip: false,
   http_observation_status: "UNKNOWN",
@@ -68,8 +70,8 @@ function brandResponse({ count = 2, assets = [candidate, external], page = 1, li
 function mockBrandCounts(inventory = brandResponse()) {
   getV2BrandAssets.mockImplementation((params) => {
     if (params.limit === 25) return Promise.resolve(inventory);
-    if (params.ownership === "CANDIDATE") return Promise.resolve(brandResponse({ count: 1, assets: [], limit: 1 }));
-    if (params.ownership === "EXTERNAL") return Promise.resolve(brandResponse({ count: 1, assets: [], limit: 1 }));
+    if (params.asset_class === "CANDIDATE") return Promise.resolve(brandResponse({ count: 1, assets: [], limit: 1 }));
+    if (params.asset_class === "EXTERNAL") return Promise.resolve(brandResponse({ count: 1, assets: [], limit: 1 }));
     return Promise.resolve(brandResponse({ count: 2, assets: [], limit: 1 }));
   });
 }
@@ -90,11 +92,10 @@ test("Brand Perimeter separates Candidate and External evidence from organizatio
   expect(screen.getByText("acme-reference.org")).toBeInTheDocument();
   expect(screen.getByText("CANDIDATE")).toBeInTheDocument();
   expect(screen.getByText("EXTERNAL")).toBeInTheDocument();
-  expect(screen.getByText("brand_tld")).toBeInTheDocument();
-  expect(screen.getByText("crtsh")).toBeInTheDocument();
   expect(screen.getByText("https://vendor.example/acme")).toBeInTheDocument();
-  expect(screen.getByText("Ownership unconfirmed or external")).toBeInTheDocument();
-  expect(screen.getAllByText("No org. risk")).toHaveLength(2);
+  expect(screen.getByText("Outside confirmed surface")).toBeInTheDocument();
+  expect(screen.queryByText("Why discovered")).not.toBeInTheDocument();
+  expect(screen.queryByText("No org. risk")).not.toBeInTheDocument();
   expect(document.querySelector(".status-shadow")).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open acme-example.net" })).toHaveAttribute(
     "href", "#/assets/acme-example.net?return=brand"
@@ -109,12 +110,29 @@ test("Brand Perimeter sends supported search, ownership, and page filters", asyn
 
   expect(await screen.findByText("acme-reference.org")).toBeInTheDocument();
   expect(getV2BrandAssets).toHaveBeenCalledWith({
-    page: 2, limit: 25, search: "reference", ownership: "EXTERNAL",
+    page: 2, limit: 25, search: "reference", asset_class: "EXTERNAL",
   });
   expect(screen.getByText("Page 2 of 2 · 26 matching")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Previous" }));
   await waitFor(() => expect(window.location.hash).toBe("#/brand?search=reference&ownership=EXTERNAL"));
+});
+
+test("Brand Perimeter uses effective class for counts and badges when stored ownership differs", async () => {
+  window.location.hash = "#/brand?ownership=CANDIDATE";
+  const effectiveCandidate = {
+    ...candidate,
+    ownership_status: "CONFIRMED",
+    asset_class: "CANDIDATE",
+  };
+  mockBrandCounts(brandResponse({ count: 1, assets: [effectiveCandidate] }));
+
+  render(<App />);
+
+  expect(await screen.findByText("acme-example.net")).toBeInTheDocument();
+  expect(screen.getByText("CANDIDATE")).toBeInTheDocument();
+  expect(getV2BrandAssets).toHaveBeenCalledWith({ page: 1, limit: 25, asset_class: "CANDIDATE" });
+  expect(getV2BrandAssets).toHaveBeenCalledWith({ page: 1, limit: 1, asset_class: "CANDIDATE" });
 });
 
 test("Brand Perimeter has a truthful empty state", async () => {

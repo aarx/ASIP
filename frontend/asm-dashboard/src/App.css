@@ -247,6 +247,8 @@
 .identity-kicker { color: var(--asip-accent-bright); font-size: 9px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
 .identity-heading h2 { max-width: 100%; margin: 5px 0 0; color: var(--asip-text-primary); font-family: var(--asip-font-mono); font-size: clamp(17px, 2vw, 23px); font-weight: 650; overflow-wrap: anywhere; }
 .identity-badges { display: flex; flex-wrap: wrap; gap: 7px; justify-content: flex-end; }
+.identity-badge-field { display: grid; gap: 4px; justify-items: end; }
+.identity-badge-field > span:first-child { color: var(--asip-text-muted); font-size: 8px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
 .identity-meta { display: flex; flex-wrap: wrap; gap: 18px; padding: 0 24px 18px; color: var(--asip-text-muted); font-size: 10px; }
 .identity-meta strong { margin-left: 4px; color: var(--asip-text-secondary); font-family: var(--asip-font-mono); font-weight: 500; }
 .risk-posture { min-height: 55px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 12px 24px; border-top: 1px solid var(--asip-border); background: rgba(7, 15, 27, .28); }
@@ -302,10 +304,10 @@
 .detail-empty.compact { padding: 4px 0; }
 
 .ownership-review-panel { border-color: rgba(61, 196, 255, .2); }
-.ownership-review-summary { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 18px; align-items: center; }
-.ownership-review-summary > div { display: flex; gap: 10px; align-items: center; }
+.ownership-review-summary { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 14px 18px; align-items: center; }
+.ownership-review-summary > div { display: grid; gap: 5px; align-items: start; }
 .ownership-review-summary > div > span:first-child { color: var(--asip-text-muted); font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
-.ownership-review-summary p, .ownership-confirmation p { margin: 0; color: var(--asip-text-muted); font-size: 10px; line-height: 1.55; }
+.ownership-review-summary p, .ownership-confirmation p { grid-column: 1 / -1; margin: 0; color: var(--asip-text-muted); font-size: 10px; line-height: 1.55; }
 .ownership-review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .ownership-review-note, .ownership-review-message { margin-top: 12px; color: var(--asip-text-muted); font-size: 10px; }
 .ownership-review-message.success { color: #78ddb4; }
@@ -323,6 +325,7 @@
 .provenance-head, .provenance-row { display: grid; grid-template-columns: minmax(160px, .6fr) minmax(220px, 1fr); gap: 20px; padding: 9px 10px; }
 .provenance-head { color: var(--asip-text-muted); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .provenance-row { border-top: 1px solid rgba(115, 142, 170, .09); color: var(--asip-text-secondary); font-size: 10px; }
+.provenance-row > span:first-child { display: grid; gap: 4px; }
 .finding-list { display: grid; }
 .finding-row { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 12px; padding: 13px 8px; border-top: 1px solid rgba(115, 142, 170, .09); }
 .finding-row:first-child { border-top: 0; }
@@ -456,17 +459,13 @@
 .brand-boundary-notice strong { color: #acd6e8; font-size: 10px; letter-spacing: .03em; }
 .brand-boundary-notice p { margin: 0; color: var(--asip-text-muted); font-size: 10px; line-height: 1.5; }
 .brand-filters { display: grid; grid-template-columns: minmax(260px, 1fr) 230px auto auto; gap: 10px; align-items: center; padding: 14px; border: 1px solid var(--asip-border); border-radius: var(--asip-radius); background: rgba(16, 29, 47, .82); }
-.brand-table { min-width: 1280px; }
-.brand-table th:first-child { width: 19%; }
-.brand-table th:nth-child(2) { width: 20%; }
-.brand-table th:nth-child(3) { width: 12%; }
-.brand-table th:nth-child(4) { width: 11%; }
-.brand-table th:nth-child(5) { width: 24%; }
-.brand-table th:nth-child(6) { width: 11%; }
-.brand-table th:last-child { width: 3%; }
+.brand-table { min-width: 980px; }
+.brand-table th:first-child { width: 28%; }
+.brand-table th:nth-child(2) { width: 15%; }
+.brand-table th:nth-child(3) { width: 16%; }
+.brand-table th:nth-child(4) { width: 35%; }
+.brand-table th:last-child { width: 6%; }
 .brand-table td:first-child { display: grid; justify-items: start; gap: 7px; }
-.brand-token-list { display: flex; flex-wrap: wrap; gap: 5px; }
-.brand-seed-label { margin-top: 9px; }
 .brand-destination { display: block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .investigation-workspace { display: grid; grid-template-columns: minmax(250px, 320px) minmax(0, 1fr); gap: 14px; align-items: start; }

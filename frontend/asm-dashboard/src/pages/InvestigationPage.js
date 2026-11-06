@@ -58,10 +58,10 @@ function AssetEvidence({ asset, detailHref }) {
             <EvidenceItem label="Provider">{displayEvidence(asset.provider, "Unknown")}</EvidenceItem>
             <EvidenceItem label="ASN" mono>{displayEvidence(asset.asn?.asn, "Unknown")}</EvidenceItem>
             <EvidenceItem label="HTTP observation"><StatusBadge value={asset.http?.observation_status} /></EvidenceItem>
-            <EvidenceItem label="HTTP status" mono>{displayEvidence(asset.http?.status, "No status")}</EvidenceItem>
+            <EvidenceItem label="HTTP status" mono>{asset.http?.status === 0 ? "Unknown" : displayEvidence(asset.http?.status, "Unknown")}</EvidenceItem>
             <EvidenceItem label="Observed redirect destination" mono>{displayEvidence(asset.http?.redirect_evidence?.first_hop_destination, "Not observed")}</EvidenceItem>
             <EvidenceItem label={asset.http?.redirect_evidence?.completion_status === "COMPLETE" ? "Verified final URL" : "Final URL unresolved"} mono>{displayEvidence(asset.http?.redirect_evidence?.completion_status === "COMPLETE" ? asset.http.redirect_evidence.verified_terminal_url : null, "Unresolved or unavailable")}</EvidenceItem>
-            {asset.http?.redirect_evidence?.completion_status === "LEGACY_UNKNOWN" && asset.http?.final_url && <EvidenceItem label="Legacy URL (verification unknown)" mono>{asset.http.final_url}</EvidenceItem>}
+            {asset.http?.redirect_evidence?.completion_status === "LEGACY_UNKNOWN" && asset.http?.final_url && <EvidenceItem label="Historical URL (unverified)" mono>{asset.http.final_url}</EvidenceItem>}
             <EvidenceItem label="Title">{displayEvidence(asset.http?.title, "Not observed")}</EvidenceItem>
           </div>
         </Panel>

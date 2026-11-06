@@ -4,11 +4,14 @@ const NAV_ITEMS = [
   ["overview", "OV", "Overview"],
   ["assets", "AS", "Assets"],
   ["risk", "RX", "Risk & Exposure"],
-  ["shadow", "SH", "Shadow"],
-  ["brand", "BP", "Brand Perimeter"],
   ["scans", "SC", "Scans"],
   ["investigate", "IN", "Investigate"],
   ["adhoc", "AC", "Adhoc Checks", "/php-rce"],
+];
+
+const DISCOVERY_NAV_ITEMS = [
+  ["shadow", "SH", "Shadow assets"],
+  ["brand", "BP", "Brand exposure"],
 ];
 
 function NavLink({ route, symbol, label, activeRoute, suffix = "" }) {
@@ -41,6 +44,17 @@ export default function AppShell({ activeRoute, routeMeta, children }) {
         <nav className="sidebar-nav">
           <div className="nav-section-label">Workspace</div>
           {NAV_ITEMS.map(([route, symbol, label, suffix]) => (
+            <NavLink
+              key={route}
+              route={route}
+              symbol={symbol}
+              label={label}
+              activeRoute={activeRoute}
+              suffix={suffix}
+            />
+          ))}
+          <div className="nav-section-label nav-section-label-discovery">Asset Discovery</div>
+          {DISCOVERY_NAV_ITEMS.map(([route, symbol, label, suffix]) => (
             <NavLink
               key={route}
               route={route}

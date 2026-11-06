@@ -20,6 +20,23 @@ function DetailEmpty({ children, compact = false }) {
   return <div className={compact ? "detail-empty compact" : "detail-empty"}>{children}</div>;
 }
 
+function isObservedHttpStatus(value) {
+  return value !== null && value !== undefined && value !== "" && value !== 0 && value !== "0";
+}
+
+function httpStatusValue(value) {
+  return isObservedHttpStatus(value) ? value : "Unknown";
+}
+
+function discoverySourceGroup(source) {
+  const normalized = String(source || "").trim().toLowerCase();
+  if (["brand_tld", "brand_pattern"].includes(normalized)) return "Brand exposure";
+  if (["certspotter", "crt.sh", "crtsh"].includes(normalized)) return "Certificate exposure";
+  if (normalized === "san") return "Certificate exposure · SAN expansion";
+  if (["subfinder", "assetfinder", "findomain", "amass"].includes(normalized)) return "Pentest tools";
+  return "Other discovery source";
+}
+
 function humanizeStatus(value, fallback = "Unknown") {
   if (value === null || value === undefined || value === "") return fallback;
   return String(value)
@@ -270,7 +287,8 @@ function OwnershipReview({ asset, onChanged, fixtureMode = false }) {
   return (
     <Panel title="Ownership Review" subtitle="Analyst decision for this domain only" meta={fixtureMode ? "DEVELOPMENT FIXTURE · NO PERSISTENCE" : "OWNERSHIP · NOT AUTHORIZATION"} className="ownership-review-panel">
       <div className="ownership-review-summary">
-        <div><span>Current ownership</span><StatusBadge value={asset.ownership_status} /></div>
+        <div><span>Current class</span><StatusBadge value={asset.asset_class} /></div>
+        <div><span>Stored ownership status</span><StatusBadge value={asset.ownership_status} /></div>
         <p>Confirming ownership does not grant active-scanning authorization. Redirect destinations are never confirmed or authorized by association.</p>
       </div>
       {fixtureMode && <div className="ownership-review-note">Acceptance fixture decisions remain in this browser view only and never reach ShadowRecon APIs or data.</div>}
@@ -362,9 +380,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   const classificationContext = data.asset_class === "SHADOW"
     ? { href: "#/shadow", label: "Open Shadow workflow" }
     : ["CANDIDATE", "EXTERNAL"].includes(data.asset_class)
-      ? data.ownership_status === data.asset_class
-        ? { href: `#/brand?ownership=${data.ownership_status}`, label: "Open Brand Perimeter" }
-        : { href: `#/assets?asset_class=${data.asset_class}`, label: "Open asset inventory" }
+      ? { href: `#/brand?ownership=${data.asset_class}`, label: "Open Brand Perimeter" }
       : null;
   return (
     <div className="asset-detail">
@@ -380,8 +396,8 @@ export default function AssetDetailPage({ domain, returnQuery }) {
             <h2>{data.domain}</h2>
           </div>
           <div className="identity-badges">
-            <StatusBadge value={data.asset_class} />
-            <StatusBadge value={data.ownership_status} />
+            <div className="identity-badge-field"><span>Current class</span><StatusBadge value={data.asset_class} /></div>
+            <div className="identity-badge-field"><span>Stored ownership</span><StatusBadge value={data.ownership_status} /></div>
             {classificationContext && <a className="context-link" href={classificationContext.href}>{classificationContext.label}</a>}
           </div>
         </div>
@@ -437,26 +453,24 @@ export default function AssetDetailPage({ domain, returnQuery }) {
         <Panel title="HTTP" subtitle="Observed response state and destination" className="detail-panel">
           <div className="evidence-grid">
             <div className="evidence-row"><span className="evidence-label">Observation</span><span className="evidence-value"><StatusBadge value={data.http?.observation_status} /></span></div>
-            <EvidenceRow label="Initial status" value={data.http?.status} mono />
+            <EvidenceRow label="HTTP status" value={httpStatusValue(data.http?.status)} mono />
             <EvidenceRow label="Reason" value={data.http?.reason} />
-            {redirectEvidence.completion_status === "COMPLETE" && (
+            {redirectEvidence.completion_status === "COMPLETE" && isObservedHttpStatus(data.http?.final_status) && (
               <EvidenceRow label="Verified final status" value={data.http?.final_status} mono />
             )}
-            {redirectEvidence.completion_status === "LEGACY_UNKNOWN" && data.http?.final_status != null && (
-              <EvidenceRow label="Historical status (verification unavailable)" value={data.http.final_status} mono />
+            {redirectEvidence.completion_status === "LEGACY_UNKNOWN" && isObservedHttpStatus(data.http?.final_status) && (
+              <EvidenceRow label="Historical status (unverified)" value={data.http.final_status} mono />
             )}
             <EvidenceRow label="Title" value={data.http?.title} wide />
-            <EvidenceRow label="Observed redirect destination" value={redirectEvidence.first_hop_destination} mono wide />
-            <EvidenceRow
-              label={redirectEvidence.completion_status === "COMPLETE" ? "Verified final URL" : "Final URL unresolved"}
-              value={redirectEvidence.completion_status === "COMPLETE" ? redirectEvidence.verified_terminal_url : null}
-              mono wide
-            />
-            {["UNRESOLVED", "UNKNOWN"].includes(redirectEvidence.completion_status) && (
+            {redirectEvidence.first_hop_destination && <EvidenceRow label="Observed redirect destination" value={redirectEvidence.first_hop_destination} mono wide />}
+            {redirectEvidence.completion_status === "COMPLETE" && redirectEvidence.verified_terminal_url && (
+              <EvidenceRow label="Verified final URL" value={redirectEvidence.verified_terminal_url} mono wide />
+            )}
+            {["UNRESOLVED", "UNKNOWN"].includes(redirectEvidence.completion_status) && redirectEvidence.stop_reason && (
               <EvidenceRow label="Final URL unresolved" value={redirectEvidence.stop_reason} wide />
             )}
             {redirectEvidence.completion_status === "LEGACY_UNKNOWN" && data.http?.final_url && (
-              <EvidenceRow label="Historical URL (verification unavailable)" value={data.http.final_url} mono wide />
+              <EvidenceRow label="Historical URL (unverified)" value={data.http.final_url} mono wide />
             )}
           </div>
           {redirect && (
@@ -489,7 +503,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
               <div className="provenance-head"><span>Source</span><span>Associated seed</span></div>
               {data.discovery.sources.map((item, index) => (
                 <div className="provenance-row" key={`${item.source}-${item.seed}-${index}`}>
-                  <span className="technical-value">{displayEvidence(item.source)}</span>
+                  <span><span className="technical-value">{displayEvidence(item.source)}</span><span className="asset-secondary">{discoverySourceGroup(item.source)}</span></span>
                   <span className="technical-value">{displayEvidence(item.seed)}</span>
                 </div>
               ))}

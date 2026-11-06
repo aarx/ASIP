@@ -153,8 +153,8 @@ function relativeCompletion(value) {
 
 async function loadDiscoverySummary() {
   const [candidate, external] = await Promise.all([
-    getV2BrandAssets({ page: 1, limit: 1, ownership: "CANDIDATE" }),
-    getV2BrandAssets({ page: 1, limit: 1, ownership: "EXTERNAL" }),
+    getV2BrandAssets({ page: 1, limit: 1, asset_class: "CANDIDATE" }),
+    getV2BrandAssets({ page: 1, limit: 1, asset_class: "EXTERNAL" }),
   ]);
   if (!candidate || candidate.scan_id == null || candidate.scan_id !== external?.scan_id) {
     throw new Error("Discovery counts did not share one authoritative scan");
