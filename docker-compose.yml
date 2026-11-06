@@ -80,7 +80,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   frontend:
-    image: asip-frontend:f85643ca0f6949849302cb7575341d2d0d40d2e8
+    image: asip-frontend:03b9b3ec435f9d99534fc901b4945e8501094f97
     pull_policy: never
     build: ./frontend
     container_name: asm_frontend
