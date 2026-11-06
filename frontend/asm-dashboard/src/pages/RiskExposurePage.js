@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   getExposureSummary,
   getFindings,
@@ -17,9 +17,9 @@ import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncStat
 
 const PRIORITY_LIMIT = 25;
 const SECONDARY_VIEWS = [
-  ["review-indicators", "Review Indicators"],
+  ["review-indicators", "Needs review"],
   ["findings", "Findings"],
-  ["sensitive-ports", "Sensitive Ports"],
+  ["sensitive-ports", "Sensitive ports"],
 ];
 
 function reasons(reasonsList) {
@@ -74,6 +74,7 @@ export default function RiskExposurePage({ query }) {
   const [priorityStatus, setPriorityStatus] = useState("loading");
   const [priorityRequestVersion, setPriorityRequestVersion] = useState(0);
   const [secondaryView, setSecondaryView] = useState(() => readSecondaryView(query));
+  const secondaryTabRefs = useRef({});
 
   useEffect(() => {
     setSecondaryView(readSecondaryView(query));
@@ -127,6 +128,33 @@ export default function RiskExposurePage({ query }) {
     document.getElementById(section)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }, [query, status]);
 
+  const moveSecondaryTab = (currentView, direction) => {
+    const currentIndex = SECONDARY_VIEWS.findIndex(([view]) => view === currentView);
+    const nextIndex = (currentIndex + direction + SECONDARY_VIEWS.length) % SECONDARY_VIEWS.length;
+    const nextView = SECONDARY_VIEWS[nextIndex][0];
+    setSecondaryView(nextView);
+    secondaryTabRefs.current[nextView]?.focus();
+  };
+
+  const handleSecondaryTabKeyDown = (event, view) => {
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      event.preventDefault();
+      moveSecondaryTab(view, 1);
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveSecondaryTab(view, -1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setSecondaryView(SECONDARY_VIEWS[0][0]);
+      secondaryTabRefs.current[SECONDARY_VIEWS[0][0]]?.focus();
+    } else if (event.key === "End") {
+      event.preventDefault();
+      const lastView = SECONDARY_VIEWS[SECONDARY_VIEWS.length - 1][0];
+      setSecondaryView(lastView);
+      secondaryTabRefs.current[lastView]?.focus();
+    }
+  };
+
   if (status === "loading") return <LoadingState title="Loading risk and exposure" copy="Retrieving current risk and exposure evidence." />;
   if (status === "error") return <ErrorState title="Risk workspace unavailable" copy="One or more current risk or exposure contracts could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
   if (data.overview.current_scan_id == null) return <EmptyState />;
@@ -158,7 +186,7 @@ export default function RiskExposurePage({ query }) {
         <nav className="risk-http-drilldown" aria-label="Filter assets by HTTP status group">
           <span>HTTP status groups</span>
           {groups.map(({ group, count }) => (
-            <a href={`#/assets?http_status_group=${group}`} key={group}>
+            <a className={`http-group-link http-group-${group[0]}`} href={`#/assets?http_status_group=${group}`} key={group}>
               <span>{group}</span><strong>{count}</strong><span aria-hidden="true">→</span>
             </a>
           ))}
@@ -200,16 +228,20 @@ export default function RiskExposurePage({ query }) {
 
       <section className="risk-secondary-workspace" aria-label="Secondary risk evidence">
         <div className="risk-secondary-header">
-          <div><h2>Secondary evidence</h2><p>Review observations separately from ranked risk.</p></div>
-          <div className="risk-view-tabs" role="tablist" aria-label="Secondary risk evidence views">
+          <h2>Supporting evidence</h2>
+          <div className="risk-view-tabs" role="tablist" aria-label="Supporting evidence views">
             {SECONDARY_VIEWS.map(([view, label]) => (
               <button
                 type="button"
                 role="tab"
+                id={`${view}-tab`}
                 aria-selected={secondaryView === view}
-                aria-controls={`${view}-panel`}
+                aria-controls={view}
+                tabIndex={secondaryView === view ? 0 : -1}
                 className={secondaryView === view ? "active" : ""}
                 onClick={() => setSecondaryView(view)}
+                onKeyDown={(event) => handleSecondaryTabKeyDown(event, view)}
+                ref={(element) => { secondaryTabRefs.current[view] = element; }}
                 key={view}
               >
                 {label}
@@ -219,7 +251,7 @@ export default function RiskExposurePage({ query }) {
         </div>
 
         {secondaryView === "review-indicators" && (
-          <div id="review-indicators" role="tabpanel" aria-label="Review Indicators">
+          <div id="review-indicators" role="tabpanel" aria-labelledby="review-indicators-tab" tabIndex={0}>
           <Panel title="Review Indicators" subtitle="Observed conditions for analyst review; not findings" meta={reviewIndicators.error ? "UNAVAILABLE" : `${reviewIndicators.count} CURRENT`} className="operation-panel-full">
             {reviewIndicators.error ? (
               <div className="review-indicator-error" role="alert">Redirect review evidence could not be loaded. Other risk evidence remains available.</div>
@@ -248,7 +280,7 @@ export default function RiskExposurePage({ query }) {
         )}
 
         {secondaryView === "findings" && (
-          <div id="findings" role="tabpanel" aria-label="Findings">
+          <div id="findings" role="tabpanel" aria-labelledby="findings-tab" tabIndex={0}>
           <Panel title="Findings" subtitle="Deterministic observations" meta={`${findings.length} ROWS`} className="operation-panel-full">
             {findings.length ? (
               <div className="compact-list">
@@ -265,7 +297,7 @@ export default function RiskExposurePage({ query }) {
         )}
 
         {secondaryView === "sensitive-ports" && (
-          <div id="sensitive-ports" role="tabpanel" aria-label="Sensitive port exposure">
+          <div id="sensitive-ports" role="tabpanel" aria-labelledby="sensitive-ports-tab" tabIndex={0}>
           <Panel title="Sensitive port exposure" subtitle="Configured sensitive ports observed" meta={`${sensitivePorts.length} ROWS`} className="operation-panel-full">
             {sensitivePorts.length ? (
               <div className="compact-list">
