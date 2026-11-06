@@ -658,12 +658,12 @@ class FrontendV2ContractTests(unittest.TestCase):
     def test_brand_perimeter_retains_current_candidate_external_evidence(self):
         rows = [
             (
-                "candidate.example", "CANDIDATE", "192.0.2.8", True,
+                1, "candidate.example", "CANDIDATE", "192.0.2.8", True,
                 "RESPONDED", 404, "https://vendor.example", 404, "Candidate",
                 "brand_tld,crtsh", "example.com", None,
             ),
             (
-                "external.example", "EXTERNAL", None, False,
+                2, "external.example", "EXTERNAL", None, False,
                 "UNKNOWN", 0, None, None, None,
                 "brand_pattern", "example.com", None,
             ),
@@ -671,17 +671,94 @@ class FrontendV2ContractTests(unittest.TestCase):
         cursor = QueueCursor(fetchalls=[rows])
         self.main.get_conn = lambda: FakeConnection(cursor)
 
-        result = self.main.frontend_v2_brand_assets(ownership="candidate")
+        with self.reporting_classes({1: "CANDIDATE", 2: "EXTERNAL"}):
+            result = self.main.frontend_v2_brand_assets(ownership="candidate")
 
         self.assertEqual(result["count"], 1)
         asset = result["assets"][0]
         self.assertEqual(asset["ownership_status"], "CANDIDATE")
+        self.assertEqual(asset["asset_class"], "CANDIDATE")
         self.assertEqual(asset["discovery_sources"], ["brand_tld", "crtsh"])
         self.assertIsNone(asset["risk"])
         sql, params = cursor.executions[0]
         self.assertIn("FROM scan_results sr", sql)
+        self.assertIn("WHERE sr.scan_id = %s", sql)
+        self.assertIn("GROUP BY d.id", sql)
         self.assertIn("IN ('CANDIDATE', 'EXTERNAL')", sql)
         self.assertEqual(params, (42,))
+
+    def test_brand_asset_class_is_separate_from_stored_ownership_and_filters_effectively(self):
+        # Mirrors scan 17's legacy rows: stored CONFIRMED, current effective CANDIDATE.
+        candidate_row = (
+            17, "abc.ai", "CONFIRMED", None, False, "UNKNOWN", None,
+            None, None, None, "brand_tld", "abc.com", None,
+        )
+        external_row = (
+            18, "external.example", "EXTERNAL", None, False, "UNKNOWN", None,
+            None, None, None, "brand_pattern", "example.com", None,
+        )
+        effective_classes = {17: "CANDIDATE", 18: "EXTERNAL"}
+
+        cursor = QueueCursor(fetchalls=[[candidate_row, external_row]])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        with self.reporting_classes(effective_classes):
+            candidates = self.main.frontend_v2_brand_assets(asset_class="candidate")
+        self.assertEqual(candidates["count"], 1)
+        self.assertEqual(candidates["assets"][0]["domain"], "abc.ai")
+        self.assertEqual(candidates["assets"][0]["ownership_status"], "CONFIRMED")
+        self.assertEqual(candidates["assets"][0]["asset_class"], "CANDIDATE")
+
+        asset_cursor = QueueCursor(fetchalls=[[
+            (17, "abc.ai", False, "CONFIRMED", 1, 17, None, False,
+             False, "UNKNOWN", None, None, None, None, None, "Unknown", None),
+        ]])
+        self.main.get_conn = lambda: FakeConnection(asset_cursor)
+        with self.reporting_classes(effective_classes), mock.patch.object(
+            self.main, "_current_scan_risks", return_value=[]
+        ):
+            v2_assets = self.main.frontend_v2_assets(asset_class="CANDIDATE")
+        self.assertEqual(v2_assets["count"], 1)
+        self.assertEqual(v2_assets["assets"][0]["asset_class"], "CANDIDATE")
+
+        cursor = QueueCursor(fetchalls=[[candidate_row, external_row]])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        with self.reporting_classes(effective_classes):
+            externals = self.main.frontend_v2_brand_assets(asset_class="EXTERNAL")
+        self.assertEqual(externals["count"], 1)
+        self.assertEqual(externals["assets"][0]["domain"], "external.example")
+        self.assertEqual(externals["assets"][0]["asset_class"], "EXTERNAL")
+
+        # The legacy ownership filter still examines the stored column.
+        cursor = QueueCursor(fetchalls=[[candidate_row, external_row]])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        with self.reporting_classes(effective_classes):
+            legacy = self.main.frontend_v2_brand_assets(ownership="CONFIRMED")
+        self.assertEqual(legacy["count"], 1)
+        self.assertEqual(legacy["assets"][0]["ownership_status"], "CONFIRMED")
+        self.assertEqual(legacy["assets"][0]["asset_class"], "CANDIDATE")
+
+    def test_brand_asset_class_count_pagination_and_zero_results(self):
+        rows = [
+            (domain_id, f"host{domain_id}.example", "CONFIRMED", None, False,
+             "UNKNOWN", None, None, None, None, None, None, None)
+            for domain_id in range(1, 4)
+        ]
+        cursor = QueueCursor(fetchalls=[rows])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        with self.reporting_classes({1: "CANDIDATE", 2: "CANDIDATE", 3: "EXTERNAL"}):
+            page = self.main.frontend_v2_brand_assets(
+                asset_class="CANDIDATE", page=2, limit=1
+            )
+        self.assertEqual(page["count"], 2)
+        self.assertEqual(len(page["assets"]), 1)
+        self.assertEqual(page["assets"][0]["domain"], "host2.example")
+
+        cursor = QueueCursor(fetchalls=[rows])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        with self.reporting_classes({1: "CANDIDATE", 2: "CANDIDATE", 3: "EXTERNAL"}):
+            empty = self.main.frontend_v2_brand_assets(asset_class="KNOWN")
+        self.assertEqual(empty["count"], 0)
+        self.assertEqual(empty["assets"], [])
 
     def test_v2_routes_reuse_existing_current_contracts_without_schema_changes(self):
         paths = {route.path for route in self.main.app.routes}

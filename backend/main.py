@@ -3377,6 +3377,7 @@ def frontend_v2_brand_assets(
     page: int = 1,
     limit: int = 50,
     ownership: str = None,
+    asset_class: str = None,
     search: str = None,
 ):
     page = max(page, 1)
@@ -3391,7 +3392,7 @@ def frontend_v2_brand_assets(
     outside_trusted_boundary = trusted_boundary_sql("d.domain")
     cur.execute(f"""
         SELECT
-            d.domain, d.ownership_status,
+            d.id, d.domain, d.ownership_status,
             ds.ip, ds.has_ip, ds.http_observation_status,
             ds.http_status, ds.final_url, ds.final_status, ds.title,
             STRING_AGG(DISTINCT src.source, ',' ORDER BY src.source),
@@ -3415,35 +3416,41 @@ def frontend_v2_brand_assets(
         ORDER BY d.domain ASC, d.id ASC
     """, (scan_id,))
     rows = cur.fetchall()
+    asset_classes = _current_scan_asset_classes(cur, scan_id)
     conn.close()
 
     ownership_value = (ownership or "").strip().upper()
+    asset_class_value = (asset_class or "").strip().upper()
     search_value = (search or "").strip().lower()
     assets = []
     for row in rows:
-        if ownership_value and row[1] != ownership_value:
+        classification = asset_classes.get(row[0], "CANDIDATE")
+        if ownership_value and row[2] != ownership_value:
             continue
-        if search_value and search_value not in row[0].lower():
+        if asset_class_value and classification != asset_class_value:
+            continue
+        if search_value and search_value not in row[1].lower():
             continue
         assets.append({
-            "domain": row[0],
-            "ownership_status": row[1],
-            "ip": row[2],
-            "has_ip": bool(row[3]),
-            "http_observation_status": row[4] or "UNKNOWN",
-            "http_status": row[5],
-            "final_url": row[6],
-            "final_status": row[7],
-            "title": row[8],
+            "domain": row[1],
+            "ownership_status": row[2],
+            "asset_class": classification,
+            "ip": row[3],
+            "has_ip": bool(row[4]),
+            "http_observation_status": row[5] or "UNKNOWN",
+            "http_status": row[6],
+            "final_url": row[7],
+            "final_status": row[8],
+            "title": row[9],
             "redirect_evidence": _redirect_evidence_payload(
-                row[11], row[6], row[7]
+                row[12], row[7], row[8]
             ),
             "final_url_verification": (
-                row[11].get("completion_status", "UNKNOWN")
-                if isinstance(row[11], dict) else "LEGACY_UNKNOWN"
+                row[12].get("completion_status", "UNKNOWN")
+                if isinstance(row[12], dict) else "LEGACY_UNKNOWN"
             ),
-            "discovery_sources": row[9].split(",") if row[9] else [],
-            "seeds": row[10].split(",") if row[10] else [],
+            "discovery_sources": row[10].split(",") if row[10] else [],
+            "seeds": row[11].split(",") if row[11] else [],
             "risk": None,
         })
 
