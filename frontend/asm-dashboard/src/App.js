@@ -10,7 +10,6 @@ import BrandPerimeterPage from "./pages/BrandPerimeterPage";
 import InvestigationPage from "./pages/InvestigationPage";
 import ChangeIntelligencePage from "./pages/ChangeIntelligencePage";
 import AdhocChecksPage from "./pages/AdhocChecksPage";
-import PlaceholderPage from "./pages/PlaceholderPage";
 import "./App.css";
 
 const ROUTES = {
@@ -23,13 +22,16 @@ const ROUTES = {
   investigate: ["Investigate", "Analyst workspace", "Move from deterministic evidence to focused investigation."],
   changes: ["Change Intelligence", "Successful-scan comparison", "Inspect exact membership changes between authoritative scans."],
   adhoc: ["Adhoc Checks", "Targeted review", "Review vulnerability-specific intelligence without active scanning."],
-  settings: ["Settings", "Administration", "Application and operational configuration."],
 };
 
 function locationFromHash() {
   const raw = window.location.hash.replace(/^#\/?/, "");
   const [path, query = ""] = raw.split("?");
   const segments = path.split("/").filter(Boolean);
+  if (segments[0] === "settings") {
+    window.history.replaceState(null, "", "#/overview");
+    return { route: "overview", domain: null, query: "" };
+  }
   const route = ROUTES[segments[0]] ? segments[0] : "overview";
   const domain = route === "assets" && segments.length > 1
     ? decodeURIComponent(segments.slice(1).join("/"))
@@ -52,7 +54,7 @@ function App() {
     ? { title: "Asset detail", eyebrow: "Current evidence", description: domain }
     : { title, eyebrow, description };
 
-  let page = <PlaceholderPage title={title} />;
+  let page = null;
   if (route === "overview") page = <OverviewPage />;
   if (route === "assets") {
     page = domain

@@ -94,7 +94,7 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByText("scan 41 → 42")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
   expect(screen.getByRole("link", { name: "Assets" })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Authoritative scan #42 completed 2h ago/i })).toHaveAttribute("href", "#/scans");
   expect(screen.queryByText(/Authoritative scan #43/)).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Authoritative scan #42/i })).toHaveAttribute("title", expect.stringContaining("2026"));
@@ -177,6 +177,19 @@ test("shows no-authoritative-scan state without fabricating values", async () =>
 
   expect(await screen.findByText("No authoritative scan yet")).toBeInTheDocument();
   expect(screen.queryByText("alpha.example")).not.toBeInTheDocument();
+});
+
+test("redirects the legacy Settings route to Overview without placeholder content", async () => {
+  window.location.hash = "#/settings";
+  getV2Overview.mockResolvedValue(overview);
+  render(<App />);
+
+  expect(window.location.hash).toBe("#/overview");
+  expect(await screen.findByText("alpha.example")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
+  expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
+  expect(screen.queryByText("FUTURE")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Scheduled for a later Frontend V2 phase|This navigation destination is reserved/)).not.toBeInTheDocument();
 });
 
 test("shows an API error and retries the overview request", async () => {

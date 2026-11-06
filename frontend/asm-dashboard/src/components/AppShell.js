@@ -57,12 +57,6 @@ export default function AppShell({ activeRoute, routeMeta, children }) {
             <i className="status-dot" aria-hidden="true" />
             <span>Deterministic engine</span>
           </div>
-          <NavLink
-            route="settings"
-            symbol="ST"
-            label="Settings"
-            activeRoute={activeRoute}
-          />
         </div>
       </aside>
 
