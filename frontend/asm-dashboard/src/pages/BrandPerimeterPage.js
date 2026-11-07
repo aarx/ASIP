@@ -113,7 +113,7 @@ export default function BrandPerimeterPage({ query }) {
 
       <div className="brand-boundary-notice">
         <strong>{fixtureMode ? "Development acceptance fixture" : "Outside confirmed surface"}</strong>
-        <p>{fixtureMode ? "Synthetic .invalid assets remain browser-only and are never persisted." : "Candidate and External assets are shown for review and do not receive organizational risk."}</p>
+        <p>Potential brand misuse or lookalike domains</p>
       </div>
 
       <form className="brand-filters" onSubmit={apply}>

@@ -94,6 +94,8 @@ test("Brand Perimeter separates Candidate and External evidence from organizatio
   expect(screen.getByText("EXTERNAL")).toBeInTheDocument();
   expect(screen.getByText("https://vendor.example/acme")).toBeInTheDocument();
   expect(screen.getByText("Outside confirmed surface")).toBeInTheDocument();
+  expect(screen.getByText("Potential brand misuse or lookalike domains")).toBeInTheDocument();
+  expect(screen.queryByText("Candidate and External assets are shown for review and do not receive organizational risk.")).not.toBeInTheDocument();
   expect(screen.queryByText("Why discovered")).not.toBeInTheDocument();
   expect(screen.queryByText("No org. risk")).not.toBeInTheDocument();
   expect(document.querySelector(".status-shadow")).not.toBeInTheDocument();
