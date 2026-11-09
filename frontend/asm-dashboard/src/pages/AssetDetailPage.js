@@ -5,7 +5,7 @@ import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { brandAcceptanceDetail, isBrandAcceptanceFixture } from "../fixtures/brandAcceptance";
-import { displayEvidence } from "../utils/presentation";
+import { displayAssetClass, displayEvidence } from "../utils/presentation";
 
 function EvidenceRow({ label, value, mono = false, wide = false }) {
   return (
@@ -287,7 +287,7 @@ function OwnershipReview({ asset, onChanged, fixtureMode = false }) {
   return (
     <Panel title="Ownership Review" subtitle="Analyst decision for this domain only" meta={fixtureMode ? "DEVELOPMENT FIXTURE · NO PERSISTENCE" : "OWNERSHIP · NOT AUTHORIZATION"} className="ownership-review-panel">
       <div className="ownership-review-summary">
-        <div><span>Current class</span><StatusBadge value={asset.asset_class} /></div>
+        <div><span>Current class</span><StatusBadge value={displayAssetClass(asset.asset_class)} /></div>
         <div><span>Stored ownership status</span><StatusBadge value={asset.ownership_status} /></div>
         <p>Confirming ownership does not grant active-scanning authorization. Redirect destinations are never confirmed or authorized by association.</p>
       </div>
@@ -396,7 +396,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
             <h2>{data.domain}</h2>
           </div>
           <div className="identity-badges">
-            <div className="identity-badge-field"><span>Current class</span><StatusBadge value={data.asset_class} /></div>
+            <div className="identity-badge-field"><span>Current class</span><StatusBadge value={displayAssetClass(data.asset_class)} /></div>
             <div className="identity-badge-field"><span>Stored ownership</span><StatusBadge value={data.ownership_status} /></div>
             {classificationContext && <a className="context-link" href={classificationContext.href}>{classificationContext.label}</a>}
           </div>
@@ -416,7 +416,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
               </div>
             </>
           ) : (
-            <div className="non-org-risk-note">No organizational canonical risk applies to {data.asset_class} assets.</div>
+            <div className="non-org-risk-note">No organizational canonical risk applies to {displayAssetClass(data.asset_class)} assets.</div>
           )}
         </div>
       </section>

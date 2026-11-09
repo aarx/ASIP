@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
-import { getV2AssetDetail, getV2BrandAssets, updateV2AssetOwnership } from "./services/api";
+import { getV2AssetDetail, getV2BrandAssets, getV2Overview, updateV2AssetOwnership } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -9,6 +9,7 @@ jest.mock("./services/api", () => ({
   updateV2AssetOwnership: jest.fn(),
   getV2Scans: jest.fn(),
   getV2BrandAssets: jest.fn(),
+  getV2Overview: jest.fn(),
   getV2ReviewIndicators: jest.fn(),
   getV2AssetAssistant: jest.fn(),
   getInvestigationAssets: jest.fn(),
@@ -67,7 +68,20 @@ function brandResponse({ count = 2, assets = [candidate, external], page = 1, li
   return { scan_id: 42, page, limit, count, assets };
 }
 
+const brandDiscovery = {
+  current_scan_id: 42,
+  brand_discovery: {
+    scan_id: 42,
+    source_counts: {
+      brand_tld: { domains: 20, by_asset_class: { candidate: 7, external: 2, known: 6, shadow: 5 } },
+      brand_pattern: { domains: 15, by_asset_class: { candidate: 6, external: 1, known: 5, shadow: 3 } },
+      brand_union: { domains: 32, by_asset_class: { candidate: 10, external: 2, known: 12, shadow: 8 } },
+    },
+  },
+};
+
 function mockBrandCounts(inventory = brandResponse()) {
+  getV2Overview.mockResolvedValue(brandDiscovery);
   getV2BrandAssets.mockImplementation((params) => {
     if (params.limit === 25) return Promise.resolve(inventory);
     if (params.asset_class === "CANDIDATE") return Promise.resolve(brandResponse({ count: 1, assets: [], limit: 1 }));
@@ -78,6 +92,7 @@ function mockBrandCounts(inventory = brandResponse()) {
 
 beforeEach(() => {
   getV2BrandAssets.mockReset();
+  getV2Overview.mockReset();
   getV2AssetDetail.mockReset();
   updateV2AssetOwnership.mockReset();
 });
@@ -90,11 +105,18 @@ test("Brand Perimeter separates Candidate and External evidence from organizatio
 
   expect(await screen.findByText("acme-example.net")).toBeInTheDocument();
   expect(screen.getByText("acme-reference.org")).toBeInTheDocument();
-  expect(screen.getByText("CANDIDATE")).toBeInTheDocument();
+  expect(screen.getAllByText("Needs Verification").length).toBeGreaterThan(0);
   expect(screen.getByText("EXTERNAL")).toBeInTheDocument();
   expect(screen.getByText("https://vendor.example/acme")).toBeInTheDocument();
   expect(screen.getByText("Outside confirmed surface")).toBeInTheDocument();
   expect(screen.getByText("Potential brand misuse or lookalike domains")).toBeInTheDocument();
+  expect(screen.getByText("Brand-related domains")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open Brand-related domains (32)" })).toHaveAttribute(
+    "href", "#/assets?discovery_source=brand_union&limit=25"
+  );
+  expect(screen.getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(
+    "href", "#/brand?discovery_source=brand_union&asset_class=CANDIDATE"
+  );
   expect(screen.queryByText("Candidate and External assets are shown for review and do not receive organizational risk.")).not.toBeInTheDocument();
   expect(screen.queryByText("Why discovered")).not.toBeInTheDocument();
   expect(screen.queryByText("No org. risk")).not.toBeInTheDocument();
@@ -120,6 +142,24 @@ test("Brand Perimeter sends supported search, ownership, and page filters", asyn
   await waitFor(() => expect(window.location.hash).toBe("#/brand?search=reference&ownership=EXTERNAL"));
 });
 
+test("Brand Perimeter preserves exact brand-source review filters separately from the broader inventory", async () => {
+  window.location.hash = "#/brand?discovery_source=brand_union&asset_class=CANDIDATE&page=2";
+  mockBrandCounts(brandResponse({ count: 1, assets: [candidate], page: 2 }));
+
+  render(<App />);
+
+  expect(await screen.findByText("acme-example.net")).toBeInTheDocument();
+  expect(getV2BrandAssets).toHaveBeenCalledWith({
+    page: 2,
+    limit: 25,
+    asset_class: "CANDIDATE",
+    discovery_source: "brand_union",
+  });
+  expect(screen.getByRole("link", { name: "Open acme-example.net" })).toHaveAttribute(
+    "href", "#/assets/acme-example.net?return=brand&return_query=asset_class%3DCANDIDATE%26discovery_source%3Dbrand_union%26page%3D2"
+  );
+});
+
 test("Brand Perimeter uses effective class for counts and badges when stored ownership differs", async () => {
   window.location.hash = "#/brand?ownership=CANDIDATE";
   const effectiveCandidate = {
@@ -132,7 +172,7 @@ test("Brand Perimeter uses effective class for counts and badges when stored own
   render(<App />);
 
   expect(await screen.findByText("acme-example.net")).toBeInTheDocument();
-  expect(screen.getByText("CANDIDATE")).toBeInTheDocument();
+  expect(screen.getAllByText("Needs Verification").length).toBeGreaterThan(0);
   expect(getV2BrandAssets).toHaveBeenCalledWith({ page: 1, limit: 25, asset_class: "CANDIDATE" });
   expect(getV2BrandAssets).toHaveBeenCalledWith({ page: 1, limit: 1, asset_class: "CANDIDATE" });
 });
@@ -174,7 +214,7 @@ test("Candidate detail keeps the Brand Perimeter return context and no canonical
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: candidate.domain })).toBeInTheDocument();
-  expect(screen.getByText("No organizational canonical risk applies to CANDIDATE assets.")).toBeInTheDocument();
+  expect(screen.getByText("No organizational canonical risk applies to Needs Verification assets.")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "← Back to Brand Perimeter" })).toHaveAttribute("href", "#/brand");
 });
 
@@ -196,5 +236,5 @@ test("development acceptance fixture exercises Brand review without backend data
   fireEvent.click(screen.getByRole("button", { name: "Confirm decision" }));
   expect(await screen.findByText("Fixture preview only: CONFIRMED was not persisted.")).toBeInTheDocument();
   expect(updateV2AssetOwnership).not.toHaveBeenCalled();
-  expect(screen.getByText("No organizational canonical risk applies to CANDIDATE assets.")).toBeInTheDocument();
+  expect(screen.getByText("No organizational canonical risk applies to Needs Verification assets.")).toBeInTheDocument();
 });

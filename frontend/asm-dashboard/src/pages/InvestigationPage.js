@@ -4,7 +4,7 @@ import { getInvestigationAssets, getV2AssetAssistant, getV2AssetDetail } from ".
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
-import { displayEvidence } from "../utils/presentation";
+import { displayAssetClass, displayEvidence } from "../utils/presentation";
 
 const LIMIT = 20;
 const ACTIONS = [
@@ -44,9 +44,9 @@ function AssetEvidence({ asset, detailHref }) {
     <div className="investigation-evidence">
       <section className="investigation-identity">
         <div><span className="identity-kicker">Authoritative ShadowRecon evidence</span><h2>{asset.domain}</h2></div>
-        <div className="identity-badges"><StatusBadge value={asset.asset_class} /><StatusBadge value={asset.ownership_status} /><a className="context-link" href={detailHref}>Full Asset Detail</a></div>
+        <div className="identity-badges"><StatusBadge value={displayAssetClass(asset.asset_class)} /><StatusBadge value={asset.ownership_status} /><a className="context-link" href={detailHref}>Full Asset Detail</a></div>
         <div className="investigation-risk">
-          {risk ? <><StatusBadge value={risk.priority} /><strong>{risk.score}</strong><div className="reason-list">{risk.reasons.map((reason) => <span className="reason-token" key={reason}>{reason.replaceAll("_", " ")}</span>)}</div></> : <span>No organizational canonical risk applies to {asset.ownership_status} assets.</span>}
+          {risk ? <><StatusBadge value={risk.priority} /><strong>{risk.score}</strong><div className="reason-list">{risk.reasons.map((reason) => <span className="reason-token" key={reason}>{reason.replaceAll("_", " ")}</span>)}</div></> : <span>No organizational canonical risk applies to {displayAssetClass(asset.asset_class)} assets.</span>}
         </div>
       </section>
 

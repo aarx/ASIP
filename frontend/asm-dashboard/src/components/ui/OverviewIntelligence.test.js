@@ -1,7 +1,9 @@
 import React from "react";
 import { render, screen, within } from "@testing-library/react";
 import OverviewIntelligence, {
+  BrandDiscoveryPanel,
   classifyCertificateExpiry,
+  normalizeBrandDiscovery,
   normalizeNamingExposure,
   normalizeCertificateRecords,
   parseCertificateExpiry,
@@ -50,7 +52,7 @@ test("renders current unique-domain discovery totals with exact Brand Perimeter 
 
   const panel = document.getElementById("overview-discovery-validation");
   expect(within(panel).getByText("SCAN #42")).toBeInTheDocument();
-  expect(within(panel).getByRole("link", { name: "Open Brand Perimeter Candidate assets (3)" })).toHaveAttribute(
+  expect(within(panel).getByRole("link", { name: "Open Brand Perimeter Needs Verification assets (3)" })).toHaveAttribute(
     "href",
     "#/brand?ownership=CANDIDATE"
   );
@@ -115,6 +117,38 @@ test("preserves zero discovery totals and handles loading or failed discovery re
 
   rerender(<OverviewIntelligence discoverySummaryStatus="error" />);
   expect(screen.getByText("Discovery validation unavailable")).toBeInTheDocument();
+});
+
+test("renders authoritative brand discovery totals with exact full and review drilldowns", () => {
+  const value = {
+    scan_id: 42,
+    source_counts: {
+      brand_tld: { domains: 20, by_asset_class: { candidate: 7, external: 2, known: 6, shadow: 5 } },
+      brand_pattern: { domains: 15, by_asset_class: { candidate: 6, external: 1, known: 5, shadow: 3 } },
+      brand_union: { domains: 32, by_asset_class: { candidate: 10, external: 2, known: 12, shadow: 8 } },
+    },
+  };
+
+  expect(normalizeBrandDiscovery(value, 42)).toEqual(value);
+  expect(normalizeBrandDiscovery(value, 41)).toBeNull();
+
+  const { rerender } = render(<BrandDiscoveryPanel value={value} scanId={42} />);
+  expect(screen.getByRole("link", { name: "Open Brand-related domains (32)" })).toHaveAttribute(
+    "href", "#/assets?discovery_source=brand_union&limit=25"
+  );
+  expect(screen.getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(
+    "href", "#/assets?discovery_source=brand_union&asset_class=CANDIDATE&limit=25"
+  );
+  rerender(<BrandDiscoveryPanel value={value} scanId={42} mode="brand" />);
+  expect(screen.getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(
+    "href", "#/brand?discovery_source=brand_union&asset_class=CANDIDATE"
+  );
+});
+
+test("does not fabricate brand discovery totals when the response is absent or incomplete", () => {
+  render(<BrandDiscoveryPanel value={{ scan_id: 42, source_counts: {} }} scanId={42} />);
+  expect(screen.getByText("Brand discovery unavailable")).toBeInTheDocument();
+  expect(screen.queryByText("0")).not.toBeInTheDocument();
 });
 
 test("renders loading, API failure, and insufficient-history states", () => {

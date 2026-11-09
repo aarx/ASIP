@@ -8,6 +8,7 @@ import RiskDistributionChart, { RISK_COLORS } from "../components/ui/RiskDistrib
 import AssetLink from "../components/ui/AssetLink";
 import {
   AssetGrowthPanel,
+  BrandDiscoveryPanel,
   CertificateHealthPanel,
   DiscoveryValidationPanel,
   HttpStatusPanel,
@@ -17,7 +18,7 @@ import {
 const OWNERSHIP_COLORS = {
   Known: "#4655a6",
   Shadow: "#7e91a8",
-  Candidate: "#9a79d6",
+  "Needs Verification": "#9a79d6",
   External: "#546579",
 };
 
@@ -63,7 +64,7 @@ function OwnershipComposition({ counts }) {
   const values = [
     ["Known", counts.known, "#/assets?asset_class=KNOWN&limit=25"],
     ["Shadow", counts.shadow, "#/shadow"],
-    ["Candidate", counts.candidate, "#/assets?asset_class=CANDIDATE&limit=25"],
+    ["Needs Verification", counts.candidate, "#/assets?asset_class=CANDIDATE&limit=25"],
     ["External", counts.external, "#/brand?ownership=EXTERNAL"],
   ];
   const max = Math.max(...values.map(([, value]) => value), 1);
@@ -91,7 +92,7 @@ function OwnershipComposition({ counts }) {
       <hr className="ownership-divider" />
       <div className="ownership-note">
         <i className="ownership-note-marker" aria-hidden="true" />
-        <span>Known and Shadow are confirmed organizational assets. Candidate and External remain in the Brand Perimeter and do not receive organizational risk.</span>
+        <span>Known and Shadow are confirmed organizational assets. Needs Verification and External remain in the Brand Perimeter and do not receive organizational risk.</span>
       </div>
     </>
   );
@@ -204,6 +205,8 @@ export default function OverviewPage() {
             certificateExpiryStatus: certificateExpiry.status,
             discoverySummary: scopedDiscoverySummary.value,
             discoverySummaryStatus: scopedDiscoverySummary.status,
+            brandDiscovery: result.brand_discovery,
+            brandDiscoveryStatus: result.brand_discovery ? "ready" : "error",
             namingExposure: namingExposure.value,
             namingExposureStatus: namingExposure.status,
           });
@@ -285,6 +288,12 @@ export default function OverviewPage() {
         <Panel title="Ownership & asset composition" subtitle="Organizational surface and adjacent Brand Perimeter" className="ownership-panel">
           <OwnershipComposition counts={counts} />
         </Panel>
+
+        <BrandDiscoveryPanel
+          value={data.brandDiscovery}
+          status={data.brandDiscoveryStatus}
+          scanId={data.current_scan_id}
+        />
 
         <AssetGrowthPanel value={data.assetGrowth} status={data.assetGrowthStatus} />
         <HttpStatusPanel value={data.httpStatus} status={data.httpStatusStatus} />

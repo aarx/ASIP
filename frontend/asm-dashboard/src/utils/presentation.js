@@ -9,3 +9,7 @@ export function isMissingEvidence(value) {
 export function displayEvidence(value, fallback = "—") {
   return isMissingEvidence(value) ? fallback : String(value);
 }
+
+export function displayAssetClass(value) {
+  return value === "CANDIDATE" ? "Needs Verification" : value;
+}

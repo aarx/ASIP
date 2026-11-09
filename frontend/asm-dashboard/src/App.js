@@ -17,7 +17,7 @@ const ROUTES = {
   assets: ["Assets", "Inventory", "Explore current organizational and perimeter assets."],
   risk: ["Risk & Exposure", "Prioritization", "Review deterministic risk and exposure evidence."],
   shadow: ["Shadow", "Unmanaged inventory", "Investigate confirmed organizational assets outside documented inventory."],
-  brand: ["Brand Perimeter", "Ownership intelligence", "Review Candidate and External assets without assuming ownership."],
+  brand: ["Brand Perimeter", "Ownership intelligence", "Review Needs Verification and External assets without assuming ownership."],
   scans: ["Scans", "Operations", "Monitor scan lifecycle and authoritative history."],
   investigate: ["Investigate", "Analyst workspace", "Move from deterministic evidence to focused investigation."],
   changes: ["Change Intelligence", "Successful-scan comparison", "Inspect exact membership changes between authoritative scans."],

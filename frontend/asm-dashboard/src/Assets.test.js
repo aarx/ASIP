@@ -238,6 +238,27 @@ test("overview drill-down filters are consumed by the asset explorer", async () 
   expect(screen.getByText("priority: High")).toBeInTheDocument();
 });
 
+test("asset explorer preserves exact brand-source drilldown filters and terminology", async () => {
+  window.location.hash = "#/assets?discovery_source=brand_union&asset_class=CANDIDATE&limit=25";
+  getV2Assets.mockResolvedValue(assetPage);
+  render(<App />);
+
+  await screen.findByText("app.example.com");
+  expect(getV2Assets).toHaveBeenCalledWith({
+    page: 1,
+    limit: 25,
+    asset_class: "CANDIDATE",
+    discovery_source: "brand_union",
+    sort_by: "domain",
+    sort_dir: "asc",
+  });
+  expect(screen.getByText("asset class: Needs Verification")).toBeInTheDocument();
+  expect(screen.getByText("discovery source: brand_union")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open app.example.com" })).toHaveAttribute(
+    "href", "#/assets/app.example.com?discovery_source=brand_union&asset_class=CANDIDATE&limit=25"
+  );
+});
+
 test("Asset Explorer preserves its explicit HTTP observation filter", async () => {
   window.location.hash = "#/assets?ownership=CONFIRMED&http_observation_status=NO_RESPONSE&limit=25";
   getV2Assets.mockResolvedValue(assetPage);
@@ -386,7 +407,7 @@ test("asset detail renders exact evidence and no risk for a Candidate", async ()
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "candidate.example" })).toBeInTheDocument();
-  expect(screen.getByText("No organizational canonical risk applies to CANDIDATE assets.")).toBeInTheDocument();
+  expect(screen.getByText("No organizational canonical risk applies to Needs Verification assets.")).toBeInTheDocument();
   expect(screen.getByText("edge.vendor.example")).toBeInTheDocument();
   expect(screen.getAllByText("https://vendor.example/login")).toHaveLength(2);
   expect(screen.getByText("nginx")).toBeInTheDocument();
@@ -519,9 +540,9 @@ test("asset detail uses effective outside-scope class over historical confirmati
 
   render(<App />);
 
-  expect((await screen.findAllByText("CANDIDATE")).length).toBeGreaterThan(0);
+  expect((await screen.findAllByText("Needs Verification")).length).toBeGreaterThan(0);
   expect(screen.getByText("Stored ownership status").parentElement).toHaveTextContent("CONFIRMED");
-  expect(screen.getByText("No organizational canonical risk applies to CANDIDATE assets.")).toBeInTheDocument();
+  expect(screen.getByText("No organizational canonical risk applies to Needs Verification assets.")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open Brand Perimeter" })).toHaveAttribute(
     "href", "#/brand?ownership=CANDIDATE"
   );
@@ -593,7 +614,7 @@ test("ownership review reports mutation failures without changing displayed evid
   fireEvent.click(screen.getByRole("button", { name: "Confirm decision" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("decision rejected");
   expect(screen.getAllByText("CANDIDATE").length).toBeGreaterThan(0);
-  expect(screen.getByText("No organizational canonical risk applies to CANDIDATE assets.")).toBeInTheDocument();
+  expect(screen.getByText("No organizational canonical risk applies to Needs Verification assets.")).toBeInTheDocument();
 });
 
 test("asset detail presents API membership errors without inventing evidence", async () => {

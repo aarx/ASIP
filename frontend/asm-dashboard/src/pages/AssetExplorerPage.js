@@ -10,7 +10,7 @@ import {
 import { exportV2AssetsCsv, getV2Assets } from "../services/api";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
-import { displayEvidence, isMissingEvidence } from "../utils/presentation";
+import { displayAssetClass, displayEvidence, isMissingEvidence } from "../utils/presentation";
 
 const DEFAULT_LIMIT = 25;
 const SORT_DEFAULTS = { domain: "asc", priority: "desc", risk_score: "desc" };
@@ -41,7 +41,16 @@ function readFilters(query) {
     http_live: params.get("http_live") || "",
     http_status: params.get("http_status") || "",
     http_status_group: params.get("http_status_group") || "",
+    discovery_source: params.get("discovery_source") || "",
   };
+}
+
+function filterOptionLabel(name, option) {
+  return name === "asset_class" ? displayAssetClass(option) : option.replace("_", " ");
+}
+
+function activeFilterValue(name, option) {
+  return name === "asset_class" ? displayAssetClass(option) : option;
 }
 
 function readSort(query) {
@@ -75,7 +84,7 @@ function FilterSelect({ name, label, values, value, onChange }) {
       <InputLabel>{label}</InputLabel>
       <Select name={name} label={label} value={value} onChange={onChange}>
         <MenuItem value="">All</MenuItem>
-        {values.map((option) => <MenuItem value={option} key={option}>{option.replace("_", " ")}</MenuItem>)}
+        {values.map((option) => <MenuItem value={option} key={option}>{filterOptionLabel(name, option)}</MenuItem>)}
       </Select>
     </FormControl>
   );
@@ -123,7 +132,7 @@ function AssetTable({ assets, returnQuery, sortBy, sortDir, onSort }) {
                   {!isMissingEvidence(asset.title) && <span className="asset-secondary asset-title-text">{asset.title}</span>}
                 </td>
                 <td>
-                  <StatusBadge value={asset.asset_class} />
+                  <StatusBadge value={displayAssetClass(asset.asset_class)} />
                   <span className="asset-secondary">{asset.ownership_status}</span>
                 </td>
                 <td>
@@ -267,7 +276,7 @@ export default function AssetExplorerPage({ query }) {
           <div className="active-filters" aria-label="Active filters">
             <span>Active</span>
             {activeFilters.map(([name, value]) => (
-              <span className="filter-chip" key={name}>{name.replaceAll("_", " ")}: {value}</span>
+              <span className="filter-chip" key={name}>{name.replaceAll("_", " ")}: {activeFilterValue(name, value)}</span>
             ))}
           </div>
         )}

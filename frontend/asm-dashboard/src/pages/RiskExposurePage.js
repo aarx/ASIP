@@ -14,6 +14,7 @@ import Panel from "../components/ui/Panel";
 import RiskDistributionChart, { RISK_COLORS } from "../components/ui/RiskDistributionChart";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
+import { displayAssetClass } from "../utils/presentation";
 
 const PRIORITY_LIMIT = 25;
 const SECONDARY_VIEWS = [
@@ -263,11 +264,11 @@ export default function RiskExposurePage({ query }) {
                     const destination = redirectDestination(indicator);
                     return (
                       <tr key={`${indicator.type}-${indicator.domain}-${indicator.final_url}`}>
-                        <td><AssetLink domain={indicator.domain} returnTo="risk" /><StatusBadge value={indicator.asset_class} /></td>
+                        <td><AssetLink domain={indicator.domain} returnTo="risk" /><StatusBadge value={displayAssetClass(indicator.asset_class)} /></td>
                         <td><strong>{redirectLabel(indicator)}</strong><span className="asset-secondary">Review only · not a vulnerability conclusion</span></td>
                         <td><StatusBadge value={indicator.http_observation_status} /><span className="asset-secondary">{responseSummary(indicator)}</span></td>
                         <td><span className="review-destination technical-value" title={destination || undefined}>{destination || "Destination unavailable"}</span><span className="asset-secondary">{indicator.final_hostname || "Hostname unavailable"}</span></td>
-                        <td>{indicator.destination_confirmed ? <><StatusBadge value={indicator.destination_asset_class} /><span className="asset-secondary">Current scan asset match</span></> : <><span className="not-applicable">No current asset match</span><span className="asset-secondary">Redirect does not establish ownership or authorization</span></>}</td>
+                        <td>{indicator.destination_confirmed ? <><StatusBadge value={displayAssetClass(indicator.destination_asset_class)} /><span className="asset-secondary">Current scan asset match</span></> : <><span className="not-applicable">No current asset match</span><span className="asset-secondary">Redirect does not establish ownership or authorization</span></>}</td>
                         <td><AssetLink domain={indicator.domain} returnTo="risk" className="row-action">→</AssetLink></td>
                       </tr>
                     );

@@ -248,15 +248,15 @@ export function DiscoveryValidationPanel({ value, status, scanId }) {
   const summary = normalizeDiscoverySummary(value);
   let content;
   if (status === "loading") {
-    content = <ChartState title="Loading discovery validation" copy="Reading current Candidate and External totals." />;
+    content = <ChartState title="Loading discovery validation" copy="Reading current Needs Verification and External totals." />;
   } else if (status === "error" || !summary) {
     content = <ChartState title="Discovery validation unavailable" copy="The overview is available, but current Brand Perimeter totals could not be loaded." error />;
   } else {
     content = (
       <>
         <div className="discovery-validation-signals" aria-label="Current discovery validation totals">
-          <a className="discovery-validation-signal" href="#/brand?ownership=CANDIDATE" aria-label={`Open Brand Perimeter Candidate assets (${summary.candidate})`}>
-            <span>Candidate assets</span>
+          <a className="discovery-validation-signal" href="#/brand?ownership=CANDIDATE" aria-label={`Open Brand Perimeter Needs Verification assets (${summary.candidate})`}>
+            <span>Needs Verification assets</span>
             <strong>{summary.candidate}</strong>
             <small>Review ownership</small>
           </a>
@@ -273,6 +273,80 @@ export function DiscoveryValidationPanel({ value, status, scanId }) {
 
   return (
     <Panel id="overview-discovery-validation" title="Discovery & validation" subtitle="Current unvalidated discovery outside the confirmed organizational surface" meta={scanId != null ? `SCAN #${scanId}` : "CURRENT"} className="intelligence-panel discovery-validation-panel">
+      {content}
+    </Panel>
+  );
+}
+
+function normalizeBrandCount(value) {
+  const count = Number(value);
+  return Number.isInteger(count) && count >= 0 ? count : null;
+}
+
+export function normalizeBrandDiscovery(value, scanId) {
+  if (!value || (scanId != null && value.scan_id !== scanId)) return null;
+  const sourceCounts = value.source_counts;
+  if (!sourceCounts || typeof sourceCounts !== "object") return null;
+  const normalized = {};
+  for (const source of ["brand_tld", "brand_pattern", "brand_union"]) {
+    const sourceValue = sourceCounts[source];
+    const domains = normalizeBrandCount(sourceValue?.domains);
+    const byAssetClass = sourceValue?.by_asset_class;
+    if (domains == null || !byAssetClass || typeof byAssetClass !== "object") return null;
+    const classes = {};
+    for (const assetClass of ["candidate", "external", "known", "shadow"]) {
+      const count = normalizeBrandCount(byAssetClass[assetClass]);
+      if (count == null) return null;
+      classes[assetClass] = count;
+    }
+    normalized[source] = { domains, by_asset_class: classes };
+  }
+  return { scan_id: value.scan_id, source_counts: normalized };
+}
+
+function brandDiscoveryHref(source, assetClass, review = false) {
+  const params = new URLSearchParams({ discovery_source: source });
+  if (assetClass) params.set("asset_class", assetClass);
+  return `${review ? "#/brand" : "#/assets"}?${params.toString()}${review ? "" : "&limit=25"}`;
+}
+
+export function BrandDiscoveryPanel({ value, status = "ready", scanId, mode = "overview" }) {
+  const summary = normalizeBrandDiscovery(value, scanId);
+  let content;
+  if (status === "loading") {
+    content = <ChartState title="Loading brand discovery" copy="Reading current brand-source totals." />;
+  } else if (status === "error" || !summary) {
+    content = <ChartState title="Brand discovery unavailable" copy="No authoritative brand-source totals were returned." error />;
+  } else {
+    const union = summary.source_counts.brand_union;
+    const metrics = mode === "brand"
+      ? [
+        ["Brand-related domains", union.domains, brandDiscoveryHref("brand_union")],
+        ["brand_tld", summary.source_counts.brand_tld.domains, brandDiscoveryHref("brand_tld")],
+        ["brand_pattern", summary.source_counts.brand_pattern.domains, brandDiscoveryHref("brand_pattern")],
+        ["Needs Verification", union.by_asset_class.candidate, brandDiscoveryHref("brand_union", "CANDIDATE", true)],
+      ]
+      : [
+        ["Brand-related domains", union.domains, brandDiscoveryHref("brand_union")],
+        ["Needs Verification", union.by_asset_class.candidate, brandDiscoveryHref("brand_union", "CANDIDATE")],
+        ["Known", union.by_asset_class.known, brandDiscoveryHref("brand_union", "KNOWN")],
+        ["Shadow", union.by_asset_class.shadow, brandDiscoveryHref("brand_union", "SHADOW")],
+      ];
+    content = (
+      <div className="brand-discovery-signals" aria-label="Current brand discovery totals">
+        {metrics.map(([label, count, href]) => (
+          <a className="brand-discovery-signal" href={href} key={label} aria-label={`Open ${label} (${count})`}>
+            <span>{label}</span>
+            <strong>{count}</strong>
+            <span className="brand-discovery-arrow" aria-hidden="true">→</span>
+          </a>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <Panel id={mode === "brand" ? "brand-discovery-summary" : "overview-brand-discovery"} title="Brand discovery" meta={scanId != null ? `SCAN #${scanId}` : "CURRENT"} className={`${mode === "brand" ? "brand-discovery-panel-page" : "intelligence-panel brand-discovery-panel"}`}>
       {content}
     </Panel>
   );

@@ -52,11 +52,14 @@ export function isBrandAcceptanceFixture(query = "") {
     && (params.get("fixture") === FIXTURE_KEY || returnParams.get("fixture") === FIXTURE_KEY);
 }
 
-export function brandAcceptanceInventory({ page = 1, limit = 25, search = "", ownership = "", asset_class: assetClass = "" } = {}) {
+export function brandAcceptanceInventory({ page = 1, limit = 25, search = "", ownership = "", asset_class: assetClass = "", discovery_source: discoverySource = "" } = {}) {
   const requestedClass = assetClass || ownership;
   const filtered = assets.filter((asset) => (
     (!search || asset.domain.includes(search.toLowerCase()))
     && (!requestedClass || asset.asset_class === requestedClass)
+    && (!discoverySource
+      || (discoverySource === "brand_union" && asset.discovery_sources.some((source) => ["brand_tld", "brand_pattern"].includes(source)))
+      || asset.discovery_sources.includes(discoverySource))
   ));
   const start = (page - 1) * limit;
   return { scan_id: 9000, page, limit, count: filtered.length, assets: filtered.slice(start, start + limit) };

@@ -162,7 +162,7 @@ test("Candidate assets retain the no-organizational-risk boundary", async () => 
 
   render(<App />);
 
-  expect(await screen.findByText("No organizational canonical risk applies to CANDIDATE assets.")).toBeInTheDocument();
+  expect(await screen.findByText("No organizational canonical risk applies to Needs Verification assets.")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Explain Risk" }));
   expect(await screen.findByText("No organizational canonical risk applies.")).toBeInTheDocument();
   expect(screen.queryByText("score 8")).not.toBeInTheDocument();

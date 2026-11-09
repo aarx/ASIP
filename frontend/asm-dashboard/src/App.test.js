@@ -35,6 +35,14 @@ const overview = {
   current_scan_id: 42,
   previous_scan_id: 41,
   counts: { organizational: 18, known: 11, shadow: 7, candidate: 3, external: 2 },
+  brand_discovery: {
+    scan_id: 42,
+    source_counts: {
+      brand_tld: { domains: 20, by_asset_class: { candidate: 7, external: 2, known: 6, shadow: 5 } },
+      brand_pattern: { domains: 15, by_asset_class: { candidate: 6, external: 1, known: 5, shadow: 3 } },
+      brand_union: { domains: 32, by_asset_class: { candidate: 10, external: 2, known: 12, shadow: 8 } },
+    },
+  },
   risk_distribution: { High: 1, Elevated: 2, Review: 4, Low: 11 },
   changes: { new_assets: 3, disappeared_assets: 1 },
   needs_attention: [{
@@ -107,7 +115,7 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByRole("link", { name: "Low 11" })).toHaveAttribute("href", "#/assets?priority=Low&limit=25");
   expect(screen.getByRole("link", { name: "Open Known assets" })).toHaveAttribute("href", "#/assets?asset_class=KNOWN&limit=25");
   expect(screen.getByRole("link", { name: "Open Shadow assets" })).toHaveAttribute("href", "#/shadow");
-  expect(screen.getByRole("link", { name: "Open Candidate assets" })).toHaveAttribute("href", "#/assets?asset_class=CANDIDATE&limit=25");
+  expect(screen.getByRole("link", { name: "Open Needs Verification assets" })).toHaveAttribute("href", "#/assets?asset_class=CANDIDATE&limit=25");
   expect(screen.getByRole("link", { name: "Open External assets" })).toHaveAttribute("href", "#/brand?ownership=EXTERNAL");
   const attentionPanel = screen.getByText("Needs attention").closest("section");
   const certificatePanel = screen.getByText("Certificate health").closest("section");
@@ -122,7 +130,7 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(changedPanel.compareDocumentPosition(discoveryPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(getCertExpiry).toHaveBeenCalledTimes(1);
   expect(screen.getByText("Discovery & validation")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open Brand Perimeter Candidate assets (3)" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "Open Brand Perimeter Needs Verification assets (3)" })).toHaveAttribute(
     "href",
     "#/brand?ownership=CANDIDATE"
   );
@@ -149,6 +157,13 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(supportingSummary).toHaveAttribute("aria-label", "Supporting intelligence, collapse");
   expect(within(supporting).getByText("Risk distribution")).toBeInTheDocument();
   expect(within(supporting).getByText("Ownership & asset composition")).toBeInTheDocument();
+  expect(within(supporting).getByText("Brand discovery")).toBeInTheDocument();
+  expect(within(supporting).getByRole("link", { name: "Open Brand-related domains (32)" })).toHaveAttribute(
+    "href", "#/assets?discovery_source=brand_union&limit=25"
+  );
+  expect(within(supporting).getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(
+    "href", "#/assets?discovery_source=brand_union&asset_class=CANDIDATE&limit=25"
+  );
   expect(within(supporting).getByText("Asset growth trend")).toBeInTheDocument();
   expect(within(supporting).getByText("HTTP status distribution")).toBeInTheDocument();
   expect(within(supporting).getByText("Naming exposure")).toBeInTheDocument();
