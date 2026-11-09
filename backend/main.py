@@ -25,7 +25,6 @@ from ownership import (
     OWNERSHIP_EXTERNAL,
     normalize_ownership_status,
     reporting_asset_class_sql,
-    trusted_boundary_sql,
 )
 from ownership_ingest import apply_ownership
 from authorization_policy import active_scan_authorization_sql
@@ -1989,6 +1988,77 @@ def _current_scan_risks(cursor, scan_id, asset_classes=None):
     )
 
 
+_BRAND_DISCOVERY_SOURCES = frozenset(("brand_tld", "brand_pattern"))
+_BRAND_DISCOVERY_FILTERS = frozenset((*_BRAND_DISCOVERY_SOURCES, "brand_union"))
+
+
+def _normalize_brand_discovery_filter(value):
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return None
+    if normalized not in _BRAND_DISCOVERY_FILTERS:
+        raise HTTPException(
+            status_code=400,
+            detail="discovery_source must be one of: brand_tld, brand_pattern, brand_union",
+        )
+    return normalized
+
+
+def _current_scan_brand_source_domains(cursor, scan_id):
+    """Return distinct current-scan brand source memberships by domain ID."""
+    cursor.execute("""
+        SELECT DISTINCT domain_id, source
+        FROM domain_sources
+        WHERE scan_id = %s AND source IN ('brand_tld', 'brand_pattern')
+    """, (scan_id,))
+    memberships = {}
+    for domain_id, source in cursor.fetchall():
+        memberships.setdefault(domain_id, set()).add(source)
+    return memberships
+
+
+def _brand_discovery_overview(cursor, scan_id, asset_classes):
+    memberships = {
+        domain_id: sources
+        for domain_id, sources in _current_scan_brand_source_domains(cursor, scan_id).items()
+        if domain_id in asset_classes
+    }
+    class_names = ("CANDIDATE", "EXTERNAL", "KNOWN", "SHADOW")
+    source_domains = {
+        "brand_tld": {domain_id for domain_id, sources in memberships.items()
+                       if "brand_tld" in sources},
+        "brand_pattern": {domain_id for domain_id, sources in memberships.items()
+                           if "brand_pattern" in sources},
+    }
+    source_domains["brand_union"] = source_domains["brand_tld"] | source_domains["brand_pattern"]
+
+    source_counts = {}
+    for source_name, domain_ids in source_domains.items():
+        source_counts[source_name] = {
+            "domains": len(domain_ids),
+            "by_asset_class": {
+                name.lower(): sum(
+                    1 for domain_id in domain_ids
+                    if asset_classes.get(domain_id, "CANDIDATE") == name
+                )
+                for name in class_names
+            },
+        }
+
+    candidate_count = sum(value == "CANDIDATE" for value in asset_classes.values())
+    external_count = sum(value == "EXTERNAL" for value in asset_classes.values())
+    return {
+        "scan_id": scan_id,
+        "source_counts": source_counts,
+        "brand_review_inventory": {
+            "domains": candidate_count + external_count,
+            "candidate": candidate_count,
+            "external": external_count,
+            "scope": "Candidate and External members of /v2/brand-assets, regardless of discovery source",
+        },
+    }
+
+
 def _frontend_risk_payload(risk):
     if risk is None:
         return None
@@ -2463,6 +2533,23 @@ def frontend_v2_overview():
                 "organizational": 0, "known": 0, "shadow": 0,
                 "candidate": 0, "external": 0,
             },
+            "brand_discovery": {
+                "scan_id": None,
+                "source_counts": {
+                    source: {
+                        "domains": 0,
+                        "by_asset_class": {
+                            "candidate": 0, "external": 0,
+                            "known": 0, "shadow": 0,
+                        },
+                    }
+                    for source in ("brand_tld", "brand_pattern", "brand_union")
+                },
+                "brand_review_inventory": {
+                    "domains": 0, "candidate": 0, "external": 0,
+                    "scope": "Candidate and External members of /v2/brand-assets, regardless of discovery source",
+                },
+            },
             "risk_distribution": {
                 "High": 0, "Elevated": 0, "Review": 0, "Low": 0,
             },
@@ -2471,6 +2558,7 @@ def frontend_v2_overview():
         }
 
     asset_classes = _current_scan_asset_classes(cur, current)
+    brand_discovery = _brand_discovery_overview(cur, current, asset_classes)
     known = sum(value == "KNOWN" for value in asset_classes.values())
     shadow = sum(value == "SHADOW" for value in asset_classes.values())
     candidate = sum(value == "CANDIDATE" for value in asset_classes.values())
@@ -2535,6 +2623,7 @@ def frontend_v2_overview():
             "candidate": candidate,
             "external": external,
         },
+        "brand_discovery": brand_discovery,
         "risk_distribution": risk_distribution,
         "changes": {
             "new_assets": new_assets,
@@ -2567,10 +2656,12 @@ def frontend_v2_assets(
     http_live: bool = None,
     http_status: int = None,
     http_status_group: str = None,
+    discovery_source: str = None,
     sort_by: str = None,
     sort_dir: str = None,
 ):
     _validate_asset_metric_filters(http_status, http_status_group)
+    discovery_source = _normalize_brand_discovery_filter(discovery_source)
     page = max(page, 1)
     limit = min(max(limit, 1), 200)
     if sort_by is None and risk_positive is True:
@@ -2587,6 +2678,10 @@ def frontend_v2_assets(
         return {"scan_id": None, "page": page, "limit": limit, "count": 0, "assets": []}
 
     asset_classes = _current_scan_asset_classes(cur, scan_id)
+    source_memberships = (
+        _current_scan_brand_source_domains(cur, scan_id)
+        if discovery_source else None
+    )
     cur.execute("""
         SELECT
             d.id, d.domain, d.is_known, d.ownership_status,
@@ -2612,6 +2707,14 @@ def frontend_v2_assets(
     for row in rows:
         unique_rows.setdefault(row[0], row)
     rows = list(unique_rows.values())
+    if source_memberships is not None:
+        rows = [
+            row for row in rows
+            if (
+                discovery_source == "brand_union"
+                and bool(source_memberships.get(row[0], set()) & _BRAND_DISCOVERY_SOURCES)
+            ) or discovery_source in source_memberships.get(row[0], set())
+        ]
     risk_by_domain = {
         risk.domain_id: risk
         for risk in _current_scan_risks(cur, scan_id, asset_classes)
@@ -3379,7 +3482,9 @@ def frontend_v2_brand_assets(
     ownership: str = None,
     asset_class: str = None,
     search: str = None,
+    discovery_source: str = None,
 ):
+    discovery_source = _normalize_brand_discovery_filter(discovery_source)
     page = max(page, 1)
     limit = min(max(limit, 1), 200)
     conn = get_conn()
@@ -3389,7 +3494,7 @@ def frontend_v2_brand_assets(
         conn.close()
         return {"scan_id": None, "page": page, "limit": limit, "count": 0, "assets": []}
 
-    outside_trusted_boundary = trusted_boundary_sql("d.domain")
+    reporting_class = reporting_asset_class_sql("d.domain", "d.ownership_status")
     cur.execute(f"""
         SELECT
             d.id, d.domain, d.ownership_status,
@@ -3405,10 +3510,7 @@ def frontend_v2_brand_assets(
         LEFT JOIN domain_sources src
           ON src.domain_id = sr.domain_id AND src.scan_id = sr.scan_id
         WHERE sr.scan_id = %s
-          AND (
-              d.ownership_status IN ('CANDIDATE', 'EXTERNAL')
-              OR NOT {outside_trusted_boundary}
-          )
+          AND ({reporting_class}) IN ('CANDIDATE', 'EXTERNAL')
         GROUP BY d.id, d.domain, d.ownership_status,
                  ds.ip, ds.has_ip, ds.http_observation_status,
                  ds.http_status, ds.final_url, ds.final_status, ds.title,
@@ -3425,6 +3527,13 @@ def frontend_v2_brand_assets(
     assets = []
     for row in rows:
         classification = asset_classes.get(row[0], "CANDIDATE")
+        if classification not in ("CANDIDATE", "EXTERNAL"):
+            continue
+        row_sources = set(row[10].split(",")) if row[10] else set()
+        if discovery_source == "brand_union" and not row_sources & _BRAND_DISCOVERY_SOURCES:
+            continue
+        if discovery_source in _BRAND_DISCOVERY_SOURCES and discovery_source not in row_sources:
+            continue
         if ownership_value and row[2] != ownership_value:
             continue
         if asset_class_value and classification != asset_class_value:

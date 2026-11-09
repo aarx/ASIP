@@ -97,6 +97,7 @@ class FrontendV2ContractTests(unittest.TestCase):
     def test_overview_combines_current_counts_changes_and_canonical_risk(self):
         cursor = QueueCursor(
             fetchones=[(2,), (1,)],
+            fetchalls=[[]],
         )
         self.main.get_conn = lambda: FakeConnection(cursor)
         self.main.calculate_scan_risks = mock.Mock(return_value=[
@@ -127,7 +128,10 @@ class FrontendV2ContractTests(unittest.TestCase):
             "High": 1, "Elevated": 0, "Review": 1, "Low": 1,
         })
         self.assertEqual(result["needs_attention"][0]["domain"], "high.example")
-        count_sql, count_params = cursor.executions[0]
+        count_sql, count_params = next(
+            (sql, params) for sql, params in cursor.executions
+            if "FROM scan_results current_sr" in sql
+        )
         self.assertIn("FROM scan_results current_sr", count_sql)
         self.assertEqual(count_params, (42, 41))
 
@@ -137,7 +141,7 @@ class FrontendV2ContractTests(unittest.TestCase):
             **{domain_id: "SHADOW" for domain_id in range(58, 571)},
             **{domain_id: "CANDIDATE" for domain_id in range(571, 653)},
         }
-        cursor = QueueCursor()
+        cursor = QueueCursor(fetchalls=[[]])
         self.main.get_conn = lambda: FakeConnection(cursor)
         self.main.calculate_scan_risks = mock.Mock(return_value=[
             risk(1, "known.example", 8, "High"),
@@ -165,9 +169,99 @@ class FrontendV2ContractTests(unittest.TestCase):
             {"domain": "shadow.example", "score": 6, "priority": "Elevated", "reasons": []},
         ])
         self.assertEqual(set(result), {
-            "current_scan_id", "previous_scan_id", "counts", "risk_distribution",
+            "current_scan_id", "previous_scan_id", "counts", "brand_discovery", "risk_distribution",
             "changes", "needs_attention",
         })
+
+    def test_brand_discovery_overview_deduplicates_sources_and_classifies_union(self):
+        cursor = QueueCursor(fetchalls=[[
+            (1, "brand_tld"), (1, "brand_tld"), (1, "brand_pattern"),
+            (2, "brand_tld"), (3, "brand_pattern"), (99, "brand_tld"),
+        ]])
+        classes = {1: "CANDIDATE", 2: "EXTERNAL", 3: "KNOWN", 4: "SHADOW"}
+        result = self.main._brand_discovery_overview(cursor, 42, classes)
+
+        self.assertEqual(result["scan_id"], 42)
+        self.assertEqual(result["source_counts"]["brand_tld"], {
+            "domains": 2,
+            "by_asset_class": {"candidate": 1, "external": 1, "known": 0, "shadow": 0},
+        })
+        self.assertEqual(result["source_counts"]["brand_pattern"], {
+            "domains": 2,
+            "by_asset_class": {"candidate": 1, "external": 0, "known": 1, "shadow": 0},
+        })
+        self.assertEqual(result["source_counts"]["brand_union"], {
+            "domains": 3,
+            "by_asset_class": {"candidate": 1, "external": 1, "known": 1, "shadow": 0},
+        })
+        self.assertEqual(result["brand_review_inventory"]["domains"], 2)
+        self.assertEqual(result["brand_review_inventory"]["candidate"], 1)
+        self.assertEqual(result["brand_review_inventory"]["external"], 1)
+        self.assertEqual(cursor.executions[0][1], (42,))
+        self.assertIn("SELECT DISTINCT domain_id, source", cursor.executions[0][0])
+
+    def test_assets_discovery_source_filter_is_current_scan_exact_and_paginates(self):
+        source_rows = [
+            (1, "brand_tld"), (1, "brand_tld"), (2, "brand_pattern"),
+            (3, "brand_tld"), (4, "brand_pattern"),
+        ]
+        asset_rows = [
+            (1, "a-candidate.example", False, "CONFIRMED", 1, 42, None, False,
+             False, "UNKNOWN", None, None, None, None, None, "Unknown", None),
+            (4, "b-candidate.example", False, "CONFIRMED", 1, 42, None, False,
+             False, "UNKNOWN", None, None, None, None, None, "Unknown", None),
+            (2, "external.example", False, "EXTERNAL", 1, 42, None, False,
+             False, "UNKNOWN", None, None, None, None, None, "Unknown", None),
+            (3, "shadow.example", False, "CONFIRMED", 1, 42, None, False,
+             False, "UNKNOWN", None, None, None, None, None, "Unknown", None),
+        ]
+        cursor = QueueCursor(fetchalls=[source_rows, asset_rows])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        with self.reporting_classes({1: "CANDIDATE", 2: "EXTERNAL", 3: "SHADOW"}), mock.patch.object(
+            self.main, "_current_scan_risks", return_value=[]
+        ):
+            result = self.main.frontend_v2_assets(
+                discovery_source="brand_union", asset_class="CANDIDATE",
+                search="candidate", page=2, limit=1,
+            )
+
+        self.assertEqual(result["count"], 2)
+        self.assertEqual([asset["domain"] for asset in result["assets"]], ["b-candidate.example"])
+        self.assertEqual(cursor.executions[0][1], (42,))
+        self.assertIn("scan_id = %s", cursor.executions[0][0])
+
+    def test_brand_assets_source_filter_keeps_review_inventory_scope_and_count(self):
+        rows = [
+            (1, "candidate.example", "CONFIRMED", None, False, "UNKNOWN", None,
+             None, None, None, "brand_tld,subfinder", "example.com", None),
+            (2, "external.example", "EXTERNAL", None, False, "UNKNOWN", None,
+             None, None, None, "brand_pattern", "example.com", None),
+            (3, "known.example", "CONFIRMED", None, False, "UNKNOWN", None,
+             None, None, None, "brand_tld", "example.com", None),
+        ]
+        with self.reporting_classes({1: "CANDIDATE", 2: "EXTERNAL", 3: "KNOWN"}):
+            results = {}
+            for source in ("brand_tld", "brand_pattern", "brand_union"):
+                cursor = QueueCursor(fetchalls=[rows])
+                self.main.get_conn = lambda cursor=cursor: FakeConnection(cursor)
+                results[source] = self.main.frontend_v2_brand_assets(discovery_source=source)
+        tld = results["brand_tld"]
+        pattern = results["brand_pattern"]
+        union = results["brand_union"]
+        # Effective KNOWN is outside the Candidate/External review inventory.
+        self.assertEqual(tld["count"], 1)
+        self.assertEqual([asset["domain"] for asset in tld["assets"]], ["candidate.example"])
+        self.assertEqual(pattern["count"], 1)
+        self.assertEqual([asset["domain"] for asset in pattern["assets"]], ["external.example"])
+        self.assertEqual(union["count"], 2)
+        self.assertEqual({asset["domain"] for asset in union["assets"]}, {
+            "candidate.example", "external.example",
+        })
+
+    def test_discovery_source_filter_rejects_unsupported_source(self):
+        with self.assertRaises(self.main.HTTPException) as raised:
+            self.main._normalize_brand_discovery_filter("subfinder")
+        self.assertEqual(raised.exception.status_code, 400)
 
     def test_asset_explorer_filters_current_assets_and_has_no_candidate_risk(self):
         rows = [
