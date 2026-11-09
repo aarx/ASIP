@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   getExposureSummary,
+  getDiscoverySources,
   getFindings,
   getHttpStatus,
   getSensitiveExposure,
@@ -21,6 +22,12 @@ const SECONDARY_VIEWS = [
   ["review-indicators", "Needs review"],
   ["findings", "Findings"],
   ["sensitive-ports", "Sensitive ports"],
+];
+
+const DISCOVERY_SOURCE_GROUPS = [
+  { label: "Pentest Tools", keys: ["Pentest Tool", "Pentest Tools"], sources: ["subfinder", "assetfinder", "findassets", "amass"] },
+  { label: "SAN Exposure", keys: ["SAN Expansion", "SAN Exposure"], sources: ["san discovery"] },
+  { label: "Brand Exposure", keys: ["Brand Expansion", "Brand Exposure"], sources: ["crt.sh", "certspotter"] },
 ];
 
 function reasons(reasonsList) {
@@ -66,6 +73,44 @@ function httpStatusGroups(statuses) {
     .map((group) => ({ group, count: statuses[group] }));
 }
 
+function discoverySourceCount(value, keys) {
+  if (!value || typeof value !== "object") return null;
+  const key = keys.find((candidate) => Object.prototype.hasOwnProperty.call(value, candidate));
+  if (!key) return null;
+  const count = Number(value[key]);
+  return Number.isFinite(count) && count >= 0 ? count : null;
+}
+
+function DiscoverySourcesPanel({ value, status }) {
+  let content;
+  if (status === "loading") {
+    content = <div className="detail-empty">Loading discovery sources…</div>;
+  } else if (status === "error" || !value) {
+    content = <div className="detail-empty">Discovery source totals unavailable.</div>;
+  } else {
+    content = (
+      <div className="discovery-sources-grid" aria-label="Grouped discovery source totals">
+        {DISCOVERY_SOURCE_GROUPS.map((group) => {
+          const count = discoverySourceCount(value, group.keys);
+          return (
+            <div className="discovery-sources-group" key={group.label}>
+              <div className="discovery-sources-heading">
+                <span>{group.label}</span>
+                <strong>{count == null ? "—" : count}</strong>
+              </div>
+              <div className="discovery-sources-list">
+                {group.sources.map((source) => <span key={source}>{source}</span>)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return <Panel title="Discovery Sources" meta="ALL-TIME DOMAIN COUNTS" className="operation-panel-full discovery-sources-panel">{content}</Panel>;
+}
+
 export default function RiskExposurePage({ query }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
@@ -87,6 +132,9 @@ export default function RiskExposurePage({ query }) {
     const httpStatusRequest = typeof getHttpStatus === "function"
       ? Promise.resolve(getHttpStatus()).catch(() => null)
       : Promise.resolve(null);
+    const discoverySourcesRequest = typeof getDiscoverySources === "function"
+      ? Promise.resolve(getDiscoverySources()).then((value) => ({ value, status: "ready" })).catch(() => ({ value: null, status: "error" }))
+      : Promise.resolve({ value: null, status: "error" });
     Promise.all([
       getV2Overview(),
       getFindings(),
@@ -94,9 +142,10 @@ export default function RiskExposurePage({ query }) {
       getExposureSummary(),
       Promise.resolve(getV2ReviewIndicators()).catch(() => ({ error: true, count: 0, indicators: [] })),
       httpStatusRequest,
-    ]).then(([overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses]) => {
+      discoverySourcesRequest,
+    ]).then(([overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, discoverySources]) => {
       if (active) {
-        setData({ overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses });
+        setData({ overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, discoverySources: discoverySources.value, discoverySourcesStatus: discoverySources.status });
         setStatus("ready");
       }
     }).catch(() => { if (active) setStatus("error"); });
@@ -160,12 +209,14 @@ export default function RiskExposurePage({ query }) {
   if (status === "error") return <ErrorState title="Risk workspace unavailable" copy="One or more current risk or exposure contracts could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
   if (data.overview.current_scan_id == null) return <EmptyState />;
 
-  const { overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses } = data;
+  const { overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, discoverySources, discoverySourcesStatus } = data;
   const totalPriorityPages = Math.max(Math.ceil((priorityData?.count || 0) / PRIORITY_LIMIT), 1);
   const groups = httpStatusGroups(httpStatuses);
 
   return (
     <div className="operations-grid">
+      <DiscoverySourcesPanel value={discoverySources} status={discoverySourcesStatus} />
+
       <section className="operations-kpis" aria-label="Risk and exposure metrics">
         <MetricCard label="High risk" value={overview.risk_distribution?.High ?? 0} support="Current scan" accent={RISK_COLORS.High} href="#/assets?priority=High" />
         <MetricCard label="Assets with risk scores" value={priorityData?.count ?? "—"} support="Current scan" accent="#a96f1f" />

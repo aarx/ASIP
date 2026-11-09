@@ -100,6 +100,11 @@ export const getExposureSummary = async () => {
   return res.data;
 };
 
+export const getDiscoverySources = async () => {
+  const res = await axios.get(`${API_URL}/metrics/discovery-sources`);
+  return res.data;
+};
+
 export const getSummary = async () => {
   const res = await axios.get(`${API_URL}/summary`);
   return res.data;

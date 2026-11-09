@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
 import {
   getExposureSummary,
+  getDiscoverySources,
   getFindings,
   getHttpStatus,
   getSensitiveExposure,
@@ -29,6 +30,7 @@ jest.mock("./services/api", () => ({
   getFindings: jest.fn(),
   getSensitiveExposure: jest.fn(),
   getExposureSummary: jest.fn(),
+  getDiscoverySources: jest.fn(),
 }));
 jest.mock("recharts", () => {
   const actual = jest.requireActual("recharts");
@@ -50,6 +52,7 @@ const overview = {
 beforeEach(() => {
   [
     getExposureSummary,
+    getDiscoverySources,
     getFindings,
     getHttpStatus,
     getSensitiveExposure,
@@ -89,6 +92,7 @@ test("risk workspace presents exact metrics and separate review evidence", async
     scan_id: 42, total_domains: 10, resolving_domains: 8, http_responding_domains: 6,
   });
   getHttpStatus.mockResolvedValue({ "2xx": 4, "3xx": 2, "4xx": 1, "5xx": 0 });
+  getDiscoverySources.mockResolvedValue({ "Pentest Tool": 12, "SAN Expansion": 3, "Brand Expansion": 7 });
   getV2ReviewIndicators.mockResolvedValue({
     scan_id: 42,
     count: 2,
@@ -129,6 +133,15 @@ test("risk workspace presents exact metrics and separate review evidence", async
   render(<App />);
 
   expect((await screen.findAllByText("critical.example.com"))[0]).toBeInTheDocument();
+  const discoveryPanel = screen.getByRole("heading", { name: "Discovery Sources" }).closest("section");
+  expect(within(discoveryPanel).getByText("ALL-TIME DOMAIN COUNTS")).toBeInTheDocument();
+  expect(discoveryPanel.nextElementSibling).toHaveAttribute("aria-label", "Risk and exposure metrics");
+  expect(within(discoveryPanel).getByText("Pentest Tools").parentElement).toHaveTextContent("12");
+  expect(within(discoveryPanel).getByText("SAN Exposure").parentElement).toHaveTextContent("3");
+  expect(within(discoveryPanel).getByText("Brand Exposure").parentElement).toHaveTextContent("7");
+  expect(within(discoveryPanel).getByText("findassets")).toBeInTheDocument();
+  expect(within(discoveryPanel).getByText("san discovery")).toBeInTheDocument();
+  expect(within(discoveryPanel).getByText("crt.sh")).toBeInTheDocument();
   expect(screen.queryByText("Risk distribution")).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Assets with IP addresses/ })).toHaveAttribute("href", "#/assets?has_ip=true");
   expect(screen.getByRole("link", { name: /HTTP responding/ })).toHaveAttribute("href", "#/assets?http_live=true");
