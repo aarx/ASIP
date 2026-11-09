@@ -121,14 +121,14 @@ export default function BrandPerimeterPage({ query }) {
   const clear = () => { window.location.hash = fixtureMode ? "#/brand?fixture=ownership-review" : "#/brand"; };
   const movePage = (page) => { window.location.hash = brandHash({ ...applied, page }); };
 
-  if (status === "loading") return <LoadingState title="Loading Brand Perimeter" copy="Retrieving current Needs Verification and External evidence without assuming ownership." />;
-  if (status === "error") return <ErrorState title="Brand Perimeter unavailable" copy="The current ownership-investigation inventory could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
+  if (status === "loading") return <LoadingState title="Loading Brand Exposure" copy="Retrieving current Needs Verification and External evidence without assuming ownership." />;
+  if (status === "error") return <ErrorState title="Brand Exposure unavailable" copy="The current ownership-investigation inventory could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
   if (data.inventory.scan_id == null) return <EmptyState />;
 
   const totalPages = Math.max(Math.ceil(data.inventory.count / LIMIT), 1);
   return (
     <div className="brand-workspace">
-      <section className="brand-command-bar" aria-label="Brand Perimeter context">
+      <section className="brand-command-bar" aria-label="Brand Exposure context">
         <div><span>Current perimeter</span><strong>{data.total}</strong></div>
         <div><span>Needs Verification</span><strong>{data.candidate}</strong></div>
         <div><span>External</span><strong>{data.external}</strong></div>
@@ -176,7 +176,7 @@ export default function BrandPerimeterPage({ query }) {
             })}</tbody>
           </table>
         </div>
-      ) : <EmptyState title="No Brand Perimeter assets match" copy="No current Needs Verification or External assets match the selected search and classification." />}
+      ) : <EmptyState title="No Brand Exposure assets match" copy="No current Needs Verification or External assets match the selected search and classification." />}
 
       {data.inventory.count > 0 && (
         <div className="pagination-bar"><span>Page {applied.page} of {totalPages} · {data.inventory.count} matching</span><div><Button size="small" variant="outlined" disabled={applied.page <= 1} onClick={() => movePage(applied.page - 1)}>Previous</Button><Button size="small" variant="outlined" disabled={applied.page >= totalPages} onClick={() => movePage(applied.page + 1)}>Next</Button></div></div>

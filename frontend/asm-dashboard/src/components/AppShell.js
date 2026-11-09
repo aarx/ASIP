@@ -1,7 +1,6 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 
 const NAV_ITEMS = [
-  ["overview", "OV", "Overview"],
   ["assets", "AS", "Assets"],
   ["risk", "RX", "Risk & Exposure"],
   ["scans", "SC", "Scans"],
@@ -9,17 +8,23 @@ const NAV_ITEMS = [
   ["adhoc", "AC", "Adhoc Checks", "/php-rce"],
 ];
 
+const OVERVIEW_NAV_ITEMS = [
+  ["overview", "OV", "Dashboard", "overview"],
+  ["overview-needs-attention", "NA", "Needs Attention", "overview/needs-attention"],
+  ["overview-risk-distribution", "RD", "Risk Distribution", "overview/risk-distribution"],
+];
+
 const DISCOVERY_NAV_ITEMS = [
   ["shadow", "SH", "Shadow assets"],
   ["brand", "BP", "Brand exposure"],
 ];
 
-function NavLink({ route, symbol, label, activeRoute, suffix = "" }) {
+function NavLink({ route, symbol, label, activeRoute, suffix = "", hrefRoute = route }) {
   const active = route === activeRoute;
   return (
     <a
       className={`nav-link${active ? " active" : ""}`}
-      href={`#/${route}${suffix}`}
+      href={`#/${hrefRoute}${suffix}`}
       aria-current={active ? "page" : undefined}
       title={label}
     >
@@ -30,6 +35,12 @@ function NavLink({ route, symbol, label, activeRoute, suffix = "" }) {
 }
 
 export default function AppShell({ activeRoute, routeMeta, children }) {
+  const [overviewOpen, setOverviewOpen] = useState(activeRoute.startsWith("overview"));
+
+  useEffect(() => {
+    if (activeRoute.startsWith("overview")) setOverviewOpen(true);
+  }, [activeRoute]);
+
   return (
     <div className="app-shell">
       <aside className="app-sidebar" aria-label="Primary navigation">
@@ -43,6 +54,24 @@ export default function AppShell({ activeRoute, routeMeta, children }) {
 
         <nav className="sidebar-nav">
           <div className="nav-section-label">Workspace</div>
+          <details className="nav-overview-group" open={overviewOpen} onToggle={(event) => setOverviewOpen(event.currentTarget.open)}>
+            <summary className="nav-overview-summary" aria-label="Overview navigation">
+              <span className="nav-symbol" aria-hidden="true">OV</span>
+              <span className="nav-label">Overview</span>
+            </summary>
+            <div className="nav-overview-links">
+              {OVERVIEW_NAV_ITEMS.map(([route, symbol, label, hrefRoute]) => (
+                <NavLink
+                  key={route}
+                  route={route}
+                  symbol={symbol}
+                  label={label}
+                  activeRoute={activeRoute}
+                  hrefRoute={hrefRoute}
+                />
+              ))}
+            </div>
+          </details>
           {NAV_ITEMS.map(([route, symbol, label, suffix]) => (
             <NavLink
               key={route}

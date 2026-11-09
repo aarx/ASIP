@@ -69,15 +69,14 @@ beforeEach(() => {
 });
 
 test("Overview metrics and attention assets lead into analyst workflows", async () => {
-  window.location.hash = "#/overview";
+  window.location.hash = "#/overview/needs-attention";
   getV2Overview.mockResolvedValue(overview);
   render(<App />);
 
   expect(await screen.findByText("attention.example")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /High risk/i })).toHaveAttribute("href", "#/risk");
-  expect(screen.getByRole("link", { name: /New assets/i })).toHaveAttribute("href", "#/changes?view=new");
-  expect(screen.getByRole("link", { name: "attention.example" })).toHaveAttribute("href", "#/assets/attention.example?return=overview");
-  expect(screen.getByRole("link", { name: /Disappeared assets/i })).toHaveAttribute("href", "#/changes?view=disappeared");
+  expect(screen.getByText("attention.example").closest("a")).toHaveAttribute("href", "#/assets/attention.example?return=overview%2Fneeds-attention");
+  expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "#/overview");
+  expect(screen.getByRole("link", { name: "Risk Distribution" })).toHaveAttribute("href", "#/overview/risk-distribution");
 });
 
 test("change intelligence shows exact successful-scan membership deltas", async () => {

@@ -110,8 +110,8 @@ test("Brand Perimeter separates Candidate and External evidence from organizatio
   expect(screen.getByText("https://vendor.example/acme")).toBeInTheDocument();
   expect(screen.getByText("Outside confirmed surface")).toBeInTheDocument();
   expect(screen.getByText("Potential brand misuse or lookalike domains")).toBeInTheDocument();
-  expect(screen.getByText("Brand-related domains")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open Brand-related domains (32)" })).toHaveAttribute(
+  expect(screen.getByText("Total brand matches")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open Total brand matches (32)" })).toHaveAttribute(
     "href", "#/assets?discovery_source=brand_union&limit=25"
   );
   expect(screen.getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(
@@ -183,7 +183,7 @@ test("Brand Perimeter has a truthful empty state", async () => {
 
   render(<App />);
 
-  expect(await screen.findByText("No Brand Perimeter assets match")).toBeInTheDocument();
+  expect(await screen.findByText("No Brand Exposure assets match")).toBeInTheDocument();
   expect(screen.queryByText("No org. risk")).not.toBeInTheDocument();
 });
 
@@ -215,7 +215,7 @@ test("Candidate detail keeps the Brand Perimeter return context and no canonical
 
   expect(await screen.findByRole("heading", { name: candidate.domain })).toBeInTheDocument();
   expect(screen.getByText("No organizational canonical risk applies to Needs Verification assets.")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "← Back to Brand Perimeter" })).toHaveAttribute("href", "#/brand");
+  expect(screen.getByRole("link", { name: "← Back to Brand Exposure" })).toHaveAttribute("href", "#/brand");
 });
 
 test("development acceptance fixture exercises Brand review without backend data or persistence", async () => {

@@ -47,16 +47,16 @@ test("renders supported aggregate charts with their scope", () => {
   expect(screen.queryByRole("link", { name: /2xx|3xx|4xx|5xx/i })).not.toBeInTheDocument();
 });
 
-test("renders current unique-domain discovery totals with exact Brand Perimeter links", () => {
+test("renders current unique-domain discovery totals with exact Brand Exposure links", () => {
   render(<OverviewIntelligence discoverySummary={{ scan_id: 42, candidate: 3, external: 2 }} />);
 
   const panel = document.getElementById("overview-discovery-validation");
   expect(within(panel).getByText("SCAN #42")).toBeInTheDocument();
-  expect(within(panel).getByRole("link", { name: "Open Brand Perimeter Needs Verification assets (3)" })).toHaveAttribute(
+  expect(within(panel).getByRole("link", { name: "Open Brand Exposure Needs Verification assets (3)" })).toHaveAttribute(
     "href",
     "#/brand?ownership=CANDIDATE"
   );
-  expect(within(panel).getByRole("link", { name: "Open Brand Perimeter External assets (2)" })).toHaveAttribute(
+  expect(within(panel).getByRole("link", { name: "Open Brand Exposure External assets (2)" })).toHaveAttribute(
     "href",
     "#/brand?ownership=EXTERNAL"
   );
@@ -140,6 +140,15 @@ test("renders authoritative brand discovery totals with exact full and review dr
     "href", "#/assets?discovery_source=brand_union&asset_class=CANDIDATE&limit=25"
   );
   rerender(<BrandDiscoveryPanel value={value} scanId={42} mode="brand" />);
+  expect(screen.getByRole("link", { name: "Open Total brand matches (32)" })).toHaveAttribute(
+    "href", "#/assets?discovery_source=brand_union&limit=25"
+  );
+  expect(screen.getByRole("link", { name: "Open Brand TLD matches (20)" })).toHaveAttribute(
+    "href", "#/assets?discovery_source=brand_tld&limit=25"
+  );
+  expect(screen.getByRole("link", { name: "Open Brand pattern matches (15)" })).toHaveAttribute(
+    "href", "#/assets?discovery_source=brand_pattern&limit=25"
+  );
   expect(screen.getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(
     "href", "#/brand?discovery_source=brand_union&asset_class=CANDIDATE"
   );

@@ -250,23 +250,23 @@ export function DiscoveryValidationPanel({ value, status, scanId }) {
   if (status === "loading") {
     content = <ChartState title="Loading discovery validation" copy="Reading current Needs Verification and External totals." />;
   } else if (status === "error" || !summary) {
-    content = <ChartState title="Discovery validation unavailable" copy="The overview is available, but current Brand Perimeter totals could not be loaded." error />;
+    content = <ChartState title="Discovery validation unavailable" copy="The overview is available, but current Brand Exposure totals could not be loaded." error />;
   } else {
     content = (
       <>
         <div className="discovery-validation-signals" aria-label="Current discovery validation totals">
-          <a className="discovery-validation-signal" href="#/brand?ownership=CANDIDATE" aria-label={`Open Brand Perimeter Needs Verification assets (${summary.candidate})`}>
+          <a className="discovery-validation-signal" href="#/brand?ownership=CANDIDATE" aria-label={`Open Brand Exposure Needs Verification assets (${summary.candidate})`}>
             <span>Needs Verification assets</span>
             <strong>{summary.candidate}</strong>
             <small>Review ownership</small>
           </a>
-          <a className="discovery-validation-signal" href="#/brand?ownership=EXTERNAL" aria-label={`Open Brand Perimeter External assets (${summary.external})`}>
+          <a className="discovery-validation-signal" href="#/brand?ownership=EXTERNAL" aria-label={`Open Brand Exposure External assets (${summary.external})`}>
             <span>External assets</span>
             <strong>{summary.external}</strong>
             <small>Outside confirmed surface</small>
           </a>
         </div>
-        <p className="discovery-validation-note">Current-scan Brand Perimeter totals count unique domains. Historical discovery-only records are excluded, and neither category receives organizational risk.</p>
+        <p className="discovery-validation-note">Current-scan Brand Exposure totals count unique domains. Historical discovery-only records are excluded, and neither category receives organizational risk.</p>
       </>
     );
   }
@@ -321,9 +321,9 @@ export function BrandDiscoveryPanel({ value, status = "ready", scanId, mode = "o
     const union = summary.source_counts.brand_union;
     const metrics = mode === "brand"
       ? [
-        ["Brand-related domains", union.domains, brandDiscoveryHref("brand_union")],
-        ["brand_tld", summary.source_counts.brand_tld.domains, brandDiscoveryHref("brand_tld")],
-        ["brand_pattern", summary.source_counts.brand_pattern.domains, brandDiscoveryHref("brand_pattern")],
+        ["Total brand matches", union.domains, brandDiscoveryHref("brand_union")],
+        ["Brand TLD matches", summary.source_counts.brand_tld.domains, brandDiscoveryHref("brand_tld")],
+        ["Brand pattern matches", summary.source_counts.brand_pattern.domains, brandDiscoveryHref("brand_pattern")],
         ["Needs Verification", union.by_asset_class.candidate, brandDiscoveryHref("brand_union", "CANDIDATE", true)],
       ]
       : [

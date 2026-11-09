@@ -2,10 +2,8 @@ import React, { useEffect, useState } from "react";
 import { getAssetGrowth, getCertExpiry, getHttpStatus, getNamingAssetExposure, getV2BrandAssets, getV2Overview, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
-import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
-import RiskDistributionChart, { RISK_COLORS } from "../components/ui/RiskDistributionChart";
-import AssetLink from "../components/ui/AssetLink";
+import { RISK_COLORS } from "../components/ui/RiskDistributionChart";
 import {
   AssetGrowthPanel,
   BrandDiscoveryPanel,
@@ -21,44 +19,6 @@ const OWNERSHIP_COLORS = {
   "Needs Verification": "#9a79d6",
   External: "#546579",
 };
-
-function humanizeReason(reason) {
-  return String(reason || "")
-    .replace(":", ": ")
-    .replaceAll("_", " ");
-}
-
-function AttentionTable({ assets }) {
-  if (!assets.length) {
-    return <p className="panel-subtitle">No scored assets currently require attention.</p>;
-  }
-
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table className="attention-table">
-        <thead>
-          <tr><th>Asset</th><th>Priority</th><th>Score</th><th>Deterministic reasons</th></tr>
-        </thead>
-        <tbody>
-          {assets.map((asset) => (
-            <tr key={asset.domain}>
-              <td><AssetLink domain={asset.domain} returnTo="overview" /></td>
-              <td><StatusBadge value={asset.priority} /></td>
-              <td><span className="risk-score">{asset.score}</span></td>
-              <td>
-                <div className="reason-list">
-                  {(asset.reasons || []).map((reason) => (
-                    <span className="reason-token" key={reason}>{humanizeReason(reason)}</span>
-                  ))}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 function OwnershipComposition({ counts }) {
   const values = [
@@ -95,47 +55,6 @@ function OwnershipComposition({ counts }) {
         <span>Known and Shadow are confirmed organizational assets. Needs Verification and External remain in the Brand Perimeter and do not receive organizational risk.</span>
       </div>
     </>
-  );
-}
-
-function SupportingIntelligence({ children }) {
-  const [expanded, setExpanded] = useState(false);
-
-  const handleSummaryKeyDown = (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    setExpanded((value) => !value);
-  };
-
-  return (
-    <details
-      className="supporting-intelligence"
-      data-testid="supporting-intelligence"
-      open={expanded}
-    >
-      <summary
-        className="supporting-intelligence-summary"
-        aria-controls="supporting-intelligence-content"
-        aria-expanded={expanded}
-        aria-label={`Supporting intelligence, ${expanded ? "collapse" : "expand"}`}
-        onClick={(event) => {
-          event.preventDefault();
-          setExpanded((value) => !value);
-        }}
-        onKeyDown={handleSummaryKeyDown}
-      >
-        <span>
-          <strong>Supporting intelligence</strong>
-          <small>Risk, ownership, trends, status, and naming signals</small>
-        </span>
-        <span className="supporting-intelligence-action" aria-hidden="true">
-          {expanded ? "Collapse" : "Expand"}
-        </span>
-      </summary>
-      <div id="supporting-intelligence-content" className="supporting-intelligence-grid">
-        {children}
-      </div>
-    </details>
   );
 }
 
@@ -257,8 +176,12 @@ export default function OverviewPage() {
         <MetricCard label="New assets" value={data.changes?.new_assets ?? 0} support="Since previous successful scan" accent="#327d80" href="#/changes?view=new" />
       </section>
 
-      <Panel title="Needs attention" subtitle="Highest deterministic risk scores in the current surface" meta="TOP 10" className="attention-panel primary-attention-panel">
-        <AttentionTable assets={data.needs_attention || []} />
+      <AssetGrowthPanel value={data.assetGrowth} status={data.assetGrowthStatus} />
+
+      <Panel title="What changed" subtitle="Exact membership delta between successful scans" meta={scanContext} className="change-panel">
+        <a className="change-row change-row-link" href="#/changes?view=new"><span className="change-label">New organizational assets</span><span className="change-value">+{data.changes?.new_assets ?? 0}</span></a>
+        <a className="change-row change-row-link" href="#/changes?view=disappeared"><span className="change-label">Disappeared assets</span><span className="change-value">−{data.changes?.disappeared_assets ?? 0}</span></a>
+        <div className="change-row"><span className="change-label">Current authoritative scan</span><span className="change-value">#{data.current_scan_id}</span></div>
       </Panel>
 
       <CertificateHealthPanel
@@ -268,37 +191,24 @@ export default function OverviewPage() {
         now={data.certificateNow}
       />
 
-      <Panel title="What changed" subtitle="Exact membership delta between successful scans" meta={scanContext} className="change-panel">
-        <a className="change-row change-row-link" href="#/changes?view=new"><span className="change-label">New organizational assets</span><span className="change-value">+{data.changes?.new_assets ?? 0}</span></a>
-        <a className="change-row change-row-link" href="#/changes?view=disappeared"><span className="change-label">Disappeared assets</span><span className="change-value">−{data.changes?.disappeared_assets ?? 0}</span></a>
-        <div className="change-row"><span className="change-label">Current authoritative scan</span><span className="change-value">#{data.current_scan_id}</span></div>
-      </Panel>
-
       <DiscoveryValidationPanel
         value={data.discoverySummary}
         status={data.discoverySummaryStatus}
         scanId={data.discoverySummary?.scan_id}
       />
 
-      <SupportingIntelligence>
-        <Panel title="Risk distribution" subtitle="Canonical priorities across confirmed organizational assets" className="risk-panel">
-          <RiskDistributionChart distribution={data.risk_distribution} priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}&limit=25`} />
-        </Panel>
+      <Panel title="Ownership & asset composition" subtitle="Organizational surface and adjacent Brand Exposure" className="ownership-panel">
+        <OwnershipComposition counts={counts} />
+      </Panel>
 
-        <Panel title="Ownership & asset composition" subtitle="Organizational surface and adjacent Brand Perimeter" className="ownership-panel">
-          <OwnershipComposition counts={counts} />
-        </Panel>
+      <BrandDiscoveryPanel
+        value={data.brandDiscovery}
+        status={data.brandDiscoveryStatus}
+        scanId={data.current_scan_id}
+      />
 
-        <BrandDiscoveryPanel
-          value={data.brandDiscovery}
-          status={data.brandDiscoveryStatus}
-          scanId={data.current_scan_id}
-        />
-
-        <AssetGrowthPanel value={data.assetGrowth} status={data.assetGrowthStatus} />
-        <HttpStatusPanel value={data.httpStatus} status={data.httpStatusStatus} />
-        <NamingExposurePanel value={data.namingExposure} status={data.namingExposureStatus} scanId={data.current_scan_id} />
-      </SupportingIntelligence>
+      <HttpStatusPanel value={data.httpStatus} status={data.httpStatusStatus} />
+      <NamingExposurePanel value={data.namingExposure} status={data.namingExposureStatus} scanId={data.current_scan_id} />
     </div>
   );
 }

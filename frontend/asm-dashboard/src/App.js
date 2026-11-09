@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import AppShell from "./components/AppShell";
 import OverviewPage from "./pages/OverviewPage";
+import OverviewNeedsAttentionPage from "./pages/OverviewNeedsAttentionPage";
+import OverviewRiskDistributionPage from "./pages/OverviewRiskDistributionPage";
 import AssetExplorerPage from "./pages/AssetExplorerPage";
 import AssetDetailPage from "./pages/AssetDetailPage";
 import RiskExposurePage from "./pages/RiskExposurePage";
@@ -14,10 +16,12 @@ import "./App.css";
 
 const ROUTES = {
   overview: ["Overview", "Attack surface operations", "Authoritative exposure, change, and priority signals."],
+  "overview-needs-attention": ["Needs Attention", "Overview", "Top deterministic risk scores requiring analyst attention."],
+  "overview-risk-distribution": ["Risk Distribution", "Overview", "Canonical risk categories for the current authoritative scan."],
   assets: ["Assets", "Inventory", "Explore current organizational and perimeter assets."],
   risk: ["Risk & Exposure", "Prioritization", "Review deterministic risk and exposure evidence."],
   shadow: ["Shadow", "Unmanaged inventory", "Investigate confirmed organizational assets outside documented inventory."],
-  brand: ["Brand Perimeter", "Ownership intelligence", "Review Needs Verification and External assets without assuming ownership."],
+  brand: ["Brand Exposure", "Ownership intelligence", "Review Needs Verification and External assets without assuming ownership."],
   scans: ["Scans", "Operations", "Monitor scan lifecycle and authoritative history."],
   investigate: ["Investigate", "Analyst workspace", "Move from deterministic evidence to focused investigation."],
   changes: ["Change Intelligence", "Successful-scan comparison", "Inspect exact membership changes between authoritative scans."],
@@ -32,7 +36,10 @@ function locationFromHash() {
     window.history.replaceState(null, "", "#/overview");
     return { route: "overview", domain: null, query: "" };
   }
-  const route = ROUTES[segments[0]] ? segments[0] : "overview";
+  const overviewSubroute = segments[0] === "overview" && segments[1]
+    ? `overview-${segments[1] === "needs-attention" ? "needs-attention" : segments[1] === "risk-distribution" ? "risk-distribution" : "unknown"}`
+    : null;
+  const route = ROUTES[overviewSubroute] ? overviewSubroute : (ROUTES[segments[0]] ? segments[0] : "overview");
   const domain = route === "assets" && segments.length > 1
     ? decodeURIComponent(segments.slice(1).join("/"))
     : null;
@@ -56,6 +63,8 @@ function App() {
 
   let page = null;
   if (route === "overview") page = <OverviewPage />;
+  if (route === "overview-needs-attention") page = <OverviewNeedsAttentionPage />;
+  if (route === "overview-risk-distribution") page = <OverviewRiskDistributionPage />;
   if (route === "assets") {
     page = domain
       ? <AssetDetailPage domain={domain} returnQuery={query} />

@@ -338,14 +338,16 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   const returnParams = new URLSearchParams(returnQuery);
   const returnTo = returnParams.get("return");
   const explicitReturnQuery = returnParams.get("return_query");
-  const backRoute = ["overview", "risk", "shadow", "brand", "changes", "investigate"].includes(returnTo)
+  const backRoute = ["overview", "overview/needs-attention", "overview/risk-distribution", "risk", "shadow", "brand", "changes", "investigate"].includes(returnTo)
     ? returnTo
     : "assets";
   const backLabels = {
     overview: "Overview",
+    "overview/needs-attention": "Needs Attention",
+    "overview/risk-distribution": "Risk Distribution",
     risk: "Risk & Exposure",
     shadow: "Shadow",
-    brand: "Brand Perimeter",
+    brand: "Brand Exposure",
     changes: "Change Intelligence",
     investigate: "Investigate",
     assets: "Assets",
@@ -380,7 +382,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   const classificationContext = data.asset_class === "SHADOW"
     ? { href: "#/shadow", label: "Open Shadow workflow" }
     : ["CANDIDATE", "EXTERNAL"].includes(data.asset_class)
-      ? { href: `#/brand?ownership=${data.asset_class}`, label: "Open Brand Perimeter" }
+      ? { href: `#/brand?ownership=${data.asset_class}`, label: "Open Brand Exposure" }
       : null;
   return (
     <div className="asset-detail">

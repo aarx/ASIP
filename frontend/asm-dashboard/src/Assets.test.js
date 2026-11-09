@@ -416,7 +416,7 @@ test("asset detail renders exact evidence and no risk for a Candidate", async ()
   expect(screen.getByText("Observed redirect destination is outside the reviewed hostname.")).toBeInTheDocument();
   expect(screen.getByText(/observational evidence only and is not authorized for active testing by association/i)).toBeInTheDocument();
   expect(screen.getByText(/does not establish external ownership, malicious activity, or a vulnerability/i)).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open Brand Perimeter" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "Open Brand Exposure" })).toHaveAttribute(
     "href", "#/brand?ownership=CANDIDATE"
   );
   expect(screen.getByRole("link", { name: "← Back to Assets" })).toHaveAttribute(
@@ -467,7 +467,7 @@ test("asset detail separates effective class from stored ownership and groups pr
   expect(within(provenancePanel).getByText("Certificate exposure · SAN expansion")).toBeInTheDocument();
   expect(within(provenancePanel).getByText("Pentest tools")).toBeInTheDocument();
   expect(within(provenancePanel).getByText("internal-source-7")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "← Back to Brand Perimeter" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "← Back to Brand Exposure" })).toHaveAttribute(
     "href", "#/brand?search=legacy&ownership=CANDIDATE&page=2"
   );
 });
@@ -543,7 +543,7 @@ test("asset detail uses effective outside-scope class over historical confirmati
   expect((await screen.findAllByText("Needs Verification")).length).toBeGreaterThan(0);
   expect(screen.getByText("Stored ownership status").parentElement).toHaveTextContent("CONFIRMED");
   expect(screen.getByText("No organizational canonical risk applies to Needs Verification assets.")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open Brand Perimeter" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "Open Brand Exposure" })).toHaveAttribute(
     "href", "#/brand?ownership=CANDIDATE"
   );
 });

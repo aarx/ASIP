@@ -89,7 +89,7 @@ test("renders the permanent shell and authoritative overview", async () => {
   render(<App />);
 
   expect(screen.getByText("Loading authoritative state")).toBeInTheDocument();
-  expect(await screen.findByText("alpha.example")).toBeInTheDocument();
+  expect(await screen.findByText("Brand discovery")).toBeInTheDocument();
   expect(screen.getByText("ShadowRecon")).toBeInTheDocument();
   const kpiStrip = screen.getByRole("region", { name: "Overview metrics" });
   expect([...kpiStrip.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
@@ -100,7 +100,10 @@ test("renders the permanent shell and authoritative overview", async () => {
   ]);
   expect(within(kpiStrip).queryByText("Brand perimeter")).not.toBeInTheDocument();
   expect(screen.getByText("scan 41 → 42")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
+  expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
+  expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "#/overview");
+  expect(screen.getByRole("link", { name: "Needs Attention" })).toHaveAttribute("href", "#/overview/needs-attention");
+  expect(screen.getByRole("link", { name: "Risk Distribution" })).toHaveAttribute("href", "#/overview/risk-distribution");
   expect(screen.getByRole("link", { name: "Assets" })).toBeInTheDocument();
   expect(screen.getByText("Asset Discovery")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Shadow assets" })).toHaveAttribute("href", "#/shadow");
@@ -109,28 +112,27 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByRole("link", { name: /Authoritative scan #42 completed 2h ago/i })).toHaveAttribute("href", "#/scans");
   expect(screen.queryByText(/Authoritative scan #43/)).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Authoritative scan #42/i })).toHaveAttribute("title", expect.stringContaining("2026"));
-  expect(screen.getByRole("link", { name: "High 1" })).toHaveAttribute("href", "#/assets?priority=High&limit=25");
-  expect(screen.getByRole("link", { name: "Elevated 2" })).toHaveAttribute("href", "#/assets?priority=Elevated&limit=25");
-  expect(screen.getByRole("link", { name: "Review 4" })).toHaveAttribute("href", "#/assets?priority=Review&limit=25");
-  expect(screen.getByRole("link", { name: "Low 11" })).toHaveAttribute("href", "#/assets?priority=Low&limit=25");
   expect(screen.getByRole("link", { name: "Open Known assets" })).toHaveAttribute("href", "#/assets?asset_class=KNOWN&limit=25");
   expect(screen.getByRole("link", { name: "Open Shadow assets" })).toHaveAttribute("href", "#/shadow");
   expect(screen.getByRole("link", { name: "Open Needs Verification assets" })).toHaveAttribute("href", "#/assets?asset_class=CANDIDATE&limit=25");
   expect(screen.getByRole("link", { name: "Open External assets" })).toHaveAttribute("href", "#/brand?ownership=EXTERNAL");
-  const attentionPanel = screen.getByText("Needs attention").closest("section");
+  const overviewContent = document.querySelector(".page-content-overview");
+  expect(within(overviewContent).queryByText("Needs attention")).not.toBeInTheDocument();
+  expect(within(overviewContent).queryByText("Risk distribution")).not.toBeInTheDocument();
+  expect(within(overviewContent).getByText("Asset growth trend")).toBeInTheDocument();
   const certificatePanel = screen.getByText("Certificate health").closest("section");
   const changedPanel = screen.getByText("What changed").closest("section");
   const discoveryPanel = screen.getByText("Discovery & validation").closest("section");
-  expect(attentionPanel).toHaveClass("attention-panel", "primary-attention-panel");
   expect(certificatePanel).toHaveClass("certificate-health-panel");
   expect(changedPanel).toHaveClass("change-panel");
   expect(discoveryPanel).toHaveClass("discovery-validation-panel");
-  expect(attentionPanel.compareDocumentPosition(certificatePanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(certificatePanel.compareDocumentPosition(changedPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const assetGrowthPanel = screen.getByText("Asset growth trend").closest("section");
+  expect(assetGrowthPanel.compareDocumentPosition(changedPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(changedPanel.compareDocumentPosition(certificatePanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(changedPanel.compareDocumentPosition(discoveryPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(getCertExpiry).toHaveBeenCalledTimes(1);
   expect(screen.getByText("Discovery & validation")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open Brand Perimeter Needs Verification assets (3)" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "Open Brand Exposure Needs Verification assets (3)" })).toHaveAttribute(
     "href",
     "#/brand?ownership=CANDIDATE"
   );
@@ -138,46 +140,17 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByLabelText("DEV: 2 matching confirmed assets")).toBeInTheDocument();
   expect(getNamingAssetExposure).toHaveBeenCalledTimes(1);
 
-  const supporting = screen.getByTestId("supporting-intelligence");
-  const supportingSummary = within(supporting).getByText("Supporting intelligence").closest("summary");
-  expect(supporting).not.toHaveAttribute("open");
-  expect(supportingSummary).toHaveAttribute("aria-expanded", "false");
-  expect(supportingSummary).toHaveAttribute("aria-label", "Supporting intelligence, expand");
-  expect(supportingSummary.tagName).toBe("SUMMARY");
-
-  const requestCounts = {
-    assetGrowth: getAssetGrowth.mock.calls.length,
-    httpStatus: getHttpStatus.mock.calls.length,
-    certExpiry: getCertExpiry.mock.calls.length,
-    namingExposure: getNamingAssetExposure.mock.calls.length,
-  };
-  fireEvent.click(supportingSummary);
-  expect(supporting).toHaveAttribute("open");
-  expect(supportingSummary).toHaveAttribute("aria-expanded", "true");
-  expect(supportingSummary).toHaveAttribute("aria-label", "Supporting intelligence, collapse");
-  expect(within(supporting).getByText("Risk distribution")).toBeInTheDocument();
-  expect(within(supporting).getByText("Ownership & asset composition")).toBeInTheDocument();
-  expect(within(supporting).getByText("Brand discovery")).toBeInTheDocument();
-  expect(within(supporting).getByRole("link", { name: "Open Brand-related domains (32)" })).toHaveAttribute(
+  expect(screen.queryByTestId("supporting-intelligence")).not.toBeInTheDocument();
+  expect(within(overviewContent).getByText("Ownership & asset composition")).toBeInTheDocument();
+  expect(within(overviewContent).getByText("Brand discovery")).toBeInTheDocument();
+  expect(within(overviewContent).getByRole("link", { name: "Open Brand-related domains (32)" })).toHaveAttribute(
     "href", "#/assets?discovery_source=brand_union&limit=25"
   );
-  expect(within(supporting).getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(
+  expect(within(overviewContent).getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(
     "href", "#/assets?discovery_source=brand_union&asset_class=CANDIDATE&limit=25"
   );
-  expect(within(supporting).getByText("Asset growth trend")).toBeInTheDocument();
-  expect(within(supporting).getByText("HTTP status distribution")).toBeInTheDocument();
-  expect(within(supporting).getByText("Naming exposure")).toBeInTheDocument();
-  expect(getAssetGrowth).toHaveBeenCalledTimes(requestCounts.assetGrowth);
-  expect(getHttpStatus).toHaveBeenCalledTimes(requestCounts.httpStatus);
-  expect(getCertExpiry).toHaveBeenCalledTimes(requestCounts.certExpiry);
-  expect(getNamingAssetExposure).toHaveBeenCalledTimes(requestCounts.namingExposure);
-
-  fireEvent.keyDown(supportingSummary, { key: " " });
-  expect(supporting).not.toHaveAttribute("open");
-  expect(supportingSummary).toHaveAttribute("aria-expanded", "false");
-  fireEvent.keyDown(supportingSummary, { key: "Enter" });
-  expect(supporting).toHaveAttribute("open");
-  expect(window.location.hash).toBe("#/overview");
+  expect(within(overviewContent).getByText("HTTP status distribution")).toBeInTheDocument();
+  expect(within(overviewContent).getByText("Naming exposure")).toBeInTheDocument();
   Date.now.mockRestore();
 });
 
@@ -197,14 +170,42 @@ test("shows no-authoritative-scan state without fabricating values", async () =>
   expect(screen.queryByText("alpha.example")).not.toBeInTheDocument();
 });
 
+test("renders the Needs Attention overview subpage with the bounded queue", async () => {
+  window.location.hash = "#/overview/needs-attention";
+  getV2Overview.mockResolvedValue(overview);
+  render(<App />);
+
+  expect(await screen.findByText("alpha.example")).toBeInTheDocument();
+  expect(screen.getByText("Highest deterministic risk scores in the current surface")).toBeInTheDocument();
+  expect(screen.getByText("TOP 10")).toBeInTheDocument();
+  expect(screen.getByText("alpha.example").closest("a")).toHaveAttribute(
+    "href", "#/assets/alpha.example?return=overview%2Fneeds-attention"
+  );
+  expect(screen.getByRole("link", { name: "Needs Attention" })).toHaveAttribute("aria-current", "page");
+  expect(getV2Overview).toHaveBeenCalledTimes(1);
+});
+
+test("renders the Risk Distribution overview subpage with exact priority drilldowns", async () => {
+  window.location.hash = "#/overview/risk-distribution";
+  getV2Overview.mockResolvedValue(overview);
+  render(<App />);
+
+  expect(await screen.findByText("Risk distribution")).toBeInTheDocument();
+  expect(screen.getByText("Canonical priorities across confirmed organizational assets")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /High 1/ })).toHaveAttribute("href", "#/assets?priority=High&limit=25");
+  expect(screen.getByRole("link", { name: /Low 11/ })).toHaveAttribute("href", "#/assets?priority=Low&limit=25");
+  expect(screen.getByRole("link", { name: "Risk Distribution" })).toHaveAttribute("aria-current", "page");
+  expect(getV2Overview).toHaveBeenCalledTimes(1);
+});
+
 test("redirects the legacy Settings route to Overview without placeholder content", async () => {
   window.location.hash = "#/settings";
   getV2Overview.mockResolvedValue(overview);
   render(<App />);
 
   expect(window.location.hash).toBe("#/overview");
-  expect(await screen.findByText("alpha.example")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
+  expect(await screen.findByText("Brand discovery")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
   expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   expect(screen.queryByText("FUTURE")).not.toBeInTheDocument();
   expect(screen.queryByText(/Scheduled for a later Frontend V2 phase|This navigation destination is reserved/)).not.toBeInTheDocument();
@@ -217,6 +218,6 @@ test("shows an API error and retries the overview request", async () => {
   expect(await screen.findByText("Overview unavailable")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Retry request" }));
 
-  expect(await screen.findByText("alpha.example")).toBeInTheDocument();
+  expect(await screen.findByText("Brand discovery")).toBeInTheDocument();
   await waitFor(() => expect(getV2Overview).toHaveBeenCalledTimes(2));
 });
