@@ -42,7 +42,7 @@ services:
   backend:
     # Production backend releases are built from committed source and promoted
     # by updating this exact image reference. Do not add an implicit build here.
-    image: asip-backend:2f2e0a06d4fb08db0612351a77cf37d6bace8591
+    image: asip-backend:c16623c593f9e4a1ae7c8a1493d5e9c73bd6f204
     pull_policy: never
     container_name: asm_backend
 
@@ -80,7 +80,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   frontend:
-    image: asip-frontend:2f2e0a06d4fb08db0612351a77cf37d6bace8591
+    image: asip-frontend:c16623c593f9e4a1ae7c8a1493d5e9c73bd6f204
     pull_policy: never
     build: ./frontend
     container_name: asm_frontend
