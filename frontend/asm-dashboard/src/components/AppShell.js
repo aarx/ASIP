@@ -1,30 +1,41 @@
 import React, { useEffect, useState } from "react";
 
-const NAV_ITEMS = [
-  ["assets", "AS", "Assets"],
-  ["risk", "RX", "Risk & Exposure"],
-  ["scans", "SC", "Scans"],
+const DIRECT_NAV_ITEMS = [
+  ["overview", "OV", "Overview"],
   ["investigate", "IN", "Investigate"],
-  ["adhoc", "AC", "Adhoc Checks", "/php-rce"],
 ];
 
-const OVERVIEW_NAV_ITEMS = [
-  ["overview", "OV", "Dashboard", "overview"],
-  ["overview-needs-attention", "NA", "Needs Attention", "overview/needs-attention"],
-  ["overview-risk-distribution", "RD", "Risk Distribution", "overview/risk-distribution"],
+const NAV_GROUPS = [
+  {
+    key: "assets",
+    symbol: "AS",
+    label: "Assets",
+    items: [["assets", "AI", "Asset Inventory"], ["shadow", "SH", "Shadow Assets"]],
+  },
+  {
+    key: "risk",
+    symbol: "RX",
+    label: "Risk & Exposure",
+    items: [
+      ["risk", "RX", "Risk & Exposure"],
+      ["risk-needs-attention", "NA", "Needs Attention", "risk/needs-attention"],
+      ["brand", "BP", "Brand Exposure"],
+    ],
+  },
+  {
+    key: "scans",
+    symbol: "SC",
+    label: "Scans",
+    items: [["scans", "SC", "Scan Centre"], ["adhoc", "AC", "Adhoc Checks", "adhoc/php-rce"]],
+  },
 ];
 
-const DISCOVERY_NAV_ITEMS = [
-  ["shadow", "SH", "Shadow assets"],
-  ["brand", "BP", "Brand exposure"],
-];
-
-function NavLink({ route, symbol, label, activeRoute, suffix = "", hrefRoute = route }) {
+function NavLink({ route, symbol, label, activeRoute, hrefRoute = route }) {
   const active = route === activeRoute;
   return (
     <a
       className={`nav-link${active ? " active" : ""}`}
-      href={`#/${hrefRoute}${suffix}`}
+      href={`#/${hrefRoute}`}
       aria-current={active ? "page" : undefined}
       title={label}
     >
@@ -34,11 +45,35 @@ function NavLink({ route, symbol, label, activeRoute, suffix = "", hrefRoute = r
   );
 }
 
+function NavGroup({ group, activeRoute, open, onToggle }) {
+  const active = group.items.some(([route]) => route === activeRoute);
+  return (
+    <details className="nav-group" open={open} onToggle={onToggle}>
+      <summary className={`nav-group-summary${active ? " active" : ""}`} aria-label={`${group.label} navigation`} aria-expanded={open}>
+        <span className="nav-symbol" aria-hidden="true">{group.symbol}</span>
+        <span className="nav-label">{group.label}</span>
+      </summary>
+      <div className="nav-group-links">
+        {group.items.map(([route, symbol, label, hrefRoute]) => (
+          <NavLink key={route} route={route} symbol={symbol} label={label} activeRoute={activeRoute} hrefRoute={hrefRoute || route} />
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export default function AppShell({ activeRoute, routeMeta, children }) {
-  const [overviewOpen, setOverviewOpen] = useState(activeRoute.startsWith("overview"));
+  const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(
+    NAV_GROUPS.map((group) => [group.key, true])
+  ));
 
   useEffect(() => {
-    if (activeRoute.startsWith("overview")) setOverviewOpen(true);
+    setOpenGroups((current) => Object.fromEntries(
+      NAV_GROUPS.map((group) => [
+        group.key,
+        current[group.key] || group.items.some(([route]) => route === activeRoute),
+      ])
+    ));
   }, [activeRoute]);
 
   return (
@@ -54,43 +89,19 @@ export default function AppShell({ activeRoute, routeMeta, children }) {
 
         <nav className="sidebar-nav">
           <div className="nav-section-label">Workspace</div>
-          <details className="nav-overview-group" open={overviewOpen} onToggle={(event) => setOverviewOpen(event.currentTarget.open)}>
-            <summary className="nav-overview-summary" aria-label="Overview navigation">
-              <span className="nav-symbol" aria-hidden="true">OV</span>
-              <span className="nav-label">Overview</span>
-            </summary>
-            <div className="nav-overview-links">
-              {OVERVIEW_NAV_ITEMS.map(([route, symbol, label, hrefRoute]) => (
-                <NavLink
-                  key={route}
-                  route={route}
-                  symbol={symbol}
-                  label={label}
-                  activeRoute={activeRoute}
-                  hrefRoute={hrefRoute}
-                />
-              ))}
-            </div>
-          </details>
-          {NAV_ITEMS.map(([route, symbol, label, suffix]) => (
-            <NavLink
-              key={route}
-              route={route}
-              symbol={symbol}
-              label={label}
-              activeRoute={activeRoute}
-              suffix={suffix}
-            />
+          {DIRECT_NAV_ITEMS.map(([route, symbol, label]) => (
+            <NavLink key={route} route={route} symbol={symbol} label={label} activeRoute={activeRoute} />
           ))}
-          <div className="nav-section-label nav-section-label-discovery">Asset Discovery</div>
-          {DISCOVERY_NAV_ITEMS.map(([route, symbol, label, suffix]) => (
-            <NavLink
-              key={route}
-              route={route}
-              symbol={symbol}
-              label={label}
+          {NAV_GROUPS.map((group) => (
+            <NavGroup
+              key={group.key}
+              group={group}
               activeRoute={activeRoute}
-              suffix={suffix}
+              open={openGroups[group.key]}
+              onToggle={(event) => {
+                const nextOpen = event.currentTarget.open;
+                setOpenGroups((current) => ({ ...current, [group.key]: nextOpen }));
+              }}
             />
           ))}
         </nav>

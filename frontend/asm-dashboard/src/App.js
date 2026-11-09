@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from "react";
 import AppShell from "./components/AppShell";
 import OverviewPage from "./pages/OverviewPage";
-import OverviewNeedsAttentionPage from "./pages/OverviewNeedsAttentionPage";
-import OverviewRiskDistributionPage from "./pages/OverviewRiskDistributionPage";
 import AssetExplorerPage from "./pages/AssetExplorerPage";
 import AssetDetailPage from "./pages/AssetDetailPage";
 import RiskExposurePage from "./pages/RiskExposurePage";
+import RiskNeedsAttentionPage from "./pages/RiskNeedsAttentionPage";
 import ShadowCentrePage from "./pages/ShadowCentrePage";
 import ScanCentrePage from "./pages/ScanCentrePage";
 import BrandPerimeterPage from "./pages/BrandPerimeterPage";
@@ -16,10 +15,9 @@ import "./App.css";
 
 const ROUTES = {
   overview: ["Overview", "Attack surface operations", "Authoritative exposure, change, and priority signals."],
-  "overview-needs-attention": ["Needs Attention", "Overview", "Top deterministic risk scores requiring analyst attention."],
-  "overview-risk-distribution": ["Risk Distribution", "Overview", "Canonical risk categories for the current authoritative scan."],
   assets: ["Assets", "Inventory", "Explore current organizational and perimeter assets."],
   risk: ["Risk & Exposure", "Prioritization", "Review deterministic risk and exposure evidence."],
+  "risk-needs-attention": ["Needs Attention", "Risk & Exposure", "Top deterministic risk scores followed by canonical risk distribution."],
   shadow: ["Shadow", "Unmanaged inventory", "Investigate confirmed organizational assets outside documented inventory."],
   brand: ["Brand Exposure", "Ownership intelligence", "Review Needs Verification and External assets without assuming ownership."],
   scans: ["Scans", "Operations", "Monitor scan lifecycle and authoritative history."],
@@ -36,10 +34,14 @@ function locationFromHash() {
     window.history.replaceState(null, "", "#/overview");
     return { route: "overview", domain: null, query: "" };
   }
-  const overviewSubroute = segments[0] === "overview" && segments[1]
-    ? `overview-${segments[1] === "needs-attention" ? "needs-attention" : segments[1] === "risk-distribution" ? "risk-distribution" : "unknown"}`
+  if (segments[0] === "overview" && ["needs-attention", "risk-distribution"].includes(segments[1])) {
+    window.history.replaceState(null, "", `#/risk/needs-attention${query ? `?${query}` : ""}`);
+    return { route: "risk-needs-attention", domain: null, query };
+  }
+  const riskSubroute = segments[0] === "risk" && segments[1] === "needs-attention"
+    ? "risk-needs-attention"
     : null;
-  const route = ROUTES[overviewSubroute] ? overviewSubroute : (ROUTES[segments[0]] ? segments[0] : "overview");
+  const route = ROUTES[riskSubroute] ? riskSubroute : (ROUTES[segments[0]] ? segments[0] : "overview");
   const domain = route === "assets" && segments.length > 1
     ? decodeURIComponent(segments.slice(1).join("/"))
     : null;
@@ -63,14 +65,13 @@ function App() {
 
   let page = null;
   if (route === "overview") page = <OverviewPage />;
-  if (route === "overview-needs-attention") page = <OverviewNeedsAttentionPage />;
-  if (route === "overview-risk-distribution") page = <OverviewRiskDistributionPage />;
   if (route === "assets") {
     page = domain
       ? <AssetDetailPage domain={domain} returnQuery={query} />
       : <AssetExplorerPage query={query} />;
   }
   if (route === "risk") page = <RiskExposurePage query={query} />;
+  if (route === "risk-needs-attention") page = <RiskNeedsAttentionPage />;
   if (route === "shadow") page = <ShadowCentrePage query={query} />;
   if (route === "scans") page = <ScanCentrePage />;
   if (route === "brand") page = <BrandPerimeterPage query={query} />;

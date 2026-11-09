@@ -129,10 +129,10 @@ test("risk workspace presents exact metrics and separate review evidence", async
   render(<App />);
 
   expect((await screen.findAllByText("critical.example.com"))[0]).toBeInTheDocument();
-  expect(screen.getByText("Risk distribution")).toBeInTheDocument();
+  expect(screen.queryByText("Risk distribution")).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Assets with IP addresses/ })).toHaveAttribute("href", "#/assets?has_ip=true");
   expect(screen.getByRole("link", { name: /HTTP responding/ })).toHaveAttribute("href", "#/assets?http_live=true");
-  expect(screen.getByRole("link", { name: "High 1" })).toHaveAttribute("href", "#/assets?priority=High");
+  expect(screen.queryByRole("link", { name: "High 1" })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "2xx 4" })).toHaveAttribute("href", "#/assets?http_status_group=2xx");
   expect(screen.getByRole("link", { name: "3xx 2" })).toHaveAttribute("href", "#/assets?http_status_group=3xx");
   expect(screen.getByRole("link", { name: "4xx 1" })).toHaveAttribute("href", "#/assets?http_status_group=4xx");
@@ -231,7 +231,7 @@ test("review indicators have truthful empty and isolated failure states", async 
   getV2ReviewIndicators.mockRejectedValue(new Error("offline"));
   render(<App />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Redirect review evidence could not be loaded");
-  expect(screen.getByText("Risk distribution")).toBeInTheDocument();
+  expect(screen.queryByText("Risk distribution")).not.toBeInTheDocument();
 });
 
 test("review indicators label historical and incomplete redirect evidence without implying a verified chain", async () => {

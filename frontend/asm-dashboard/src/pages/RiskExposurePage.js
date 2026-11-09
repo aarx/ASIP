@@ -11,7 +11,7 @@ import {
 import AssetLink from "../components/ui/AssetLink";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
-import RiskDistributionChart, { RISK_COLORS } from "../components/ui/RiskDistributionChart";
+import { RISK_COLORS } from "../components/ui/RiskDistributionChart";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { displayAssetClass } from "../utils/presentation";
@@ -178,10 +178,6 @@ export default function RiskExposurePage({ query }) {
         <MetricCard label="Sensitive port exposure" value={sensitivePorts.length} support="Configured sensitive ports" accent="#a96f1f" href="#/risk?section=sensitive-ports" />
         <MetricCard label="Review Indicators" value={reviewIndicators.count ?? "—"} support="Review only · not findings" accent="#9a79d6" href="#/risk?section=review-indicators" />
       </section>
-
-      <Panel title="Risk distribution" meta={`SCAN #${overview.current_scan_id}`} className="operation-panel-full">
-        <RiskDistributionChart distribution={overview.risk_distribution} priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}`} />
-      </Panel>
 
       {groups.length > 0 && (
         <nav className="risk-http-drilldown" aria-label="Filter assets by HTTP status group">
