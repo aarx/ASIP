@@ -25,9 +25,9 @@ const SECONDARY_VIEWS = [
 ];
 
 const DISCOVERY_SOURCE_GROUPS = [
-  { label: "Pentest Tools", keys: ["Pentest Tool", "Pentest Tools"], sources: ["subfinder", "assetfinder", "findassets", "amass"] },
-  { label: "SAN Exposure", keys: ["SAN Expansion", "SAN Exposure"], sources: ["san discovery"] },
-  { label: "Brand Exposure", keys: ["Brand Expansion", "Brand Exposure"], sources: ["crt.sh", "certspotter"] },
+  { label: "Pentest Tools", keys: ["Pentest Tool", "Pentest Tools"] },
+  { label: "SAN Exposure", keys: ["SAN Expansion", "SAN Exposure"] },
+  { label: "Brand Exposure", keys: ["Brand Expansion", "Brand Exposure"] },
 ];
 
 function reasons(reasonsList) {
@@ -81,26 +81,21 @@ function discoverySourceCount(value, keys) {
   return Number.isFinite(count) && count >= 0 ? count : null;
 }
 
-function DiscoverySourcesPanel({ value, status }) {
+function DiscoverySourcesCard({ value, status }) {
   let content;
   if (status === "loading") {
-    content = <div className="detail-empty">Loading discovery sources…</div>;
+    content = <span className="discovery-source-state">Loading…</span>;
   } else if (status === "error" || !value) {
-    content = <div className="detail-empty">Discovery source totals unavailable.</div>;
+    content = <span className="discovery-source-state">Unavailable</span>;
   } else {
     content = (
-      <div className="discovery-sources-grid" aria-label="Grouped discovery source totals">
+      <div className="discovery-source-kpi-list" aria-label="All-time grouped discovery source domain counts">
         {DISCOVERY_SOURCE_GROUPS.map((group) => {
           const count = discoverySourceCount(value, group.keys);
           return (
-            <div className="discovery-sources-group" key={group.label}>
-              <div className="discovery-sources-heading">
-                <span>{group.label}</span>
-                <strong>{count == null ? "—" : count}</strong>
-              </div>
-              <div className="discovery-sources-list">
-                {group.sources.map((source) => <span key={source}>{source}</span>)}
-              </div>
+            <div className="discovery-source-kpi-row" key={group.label}>
+              <span>{group.label}</span>
+              <strong>{count == null ? "—" : count}</strong>
             </div>
           );
         })}
@@ -108,7 +103,7 @@ function DiscoverySourcesPanel({ value, status }) {
     );
   }
 
-  return <Panel title="Discovery Sources" meta="ALL-TIME DOMAIN COUNTS" className="operation-panel-full discovery-sources-panel">{content}</Panel>;
+  return <MetricCard label="Discovery Sources" value={content} support="All-time domain counts" accent="#4655a6" />;
 }
 
 export default function RiskExposurePage({ query }) {
@@ -215,12 +210,10 @@ export default function RiskExposurePage({ query }) {
 
   return (
     <div className="operations-grid">
-      <DiscoverySourcesPanel value={discoverySources} status={discoverySourcesStatus} />
-
       <section className="operations-kpis" aria-label="Risk and exposure metrics">
         <MetricCard label="High risk" value={overview.risk_distribution?.High ?? 0} support="Current scan" accent={RISK_COLORS.High} href="#/assets?priority=High" />
         <MetricCard label="Assets with risk scores" value={priorityData?.count ?? "—"} support="Current scan" accent="#a96f1f" />
-        <MetricCard label="Assets with IP addresses" value={exposure.resolving_domains ?? "—"} support="Current scan" accent="#327d80" href="#/assets?has_ip=true" />
+        <DiscoverySourcesCard value={discoverySources} status={discoverySourcesStatus} />
         <MetricCard label="HTTP responding" value={exposure.http_responding_domains ?? "—"} support="Current scan" accent="#2f7d5b" href="#/assets?http_live=true" />
       </section>
 
@@ -228,6 +221,7 @@ export default function RiskExposurePage({ query }) {
         <MetricCard label="Findings" value={findings.length} support="Deterministic observations" accent="#b43d4a" href="#/risk?section=findings" />
         <MetricCard label="Sensitive port exposure" value={sensitivePorts.length} support="Configured sensitive ports" accent="#a96f1f" href="#/risk?section=sensitive-ports" />
         <MetricCard label="Review Indicators" value={reviewIndicators.count ?? "—"} support="Review only · not findings" accent="#9a79d6" href="#/risk?section=review-indicators" />
+        <MetricCard label="Assets with IP addresses" value={exposure.resolving_domains ?? "—"} support="Current scan" accent="#327d80" href="#/assets?has_ip=true" />
       </section>
 
       {groups.length > 0 && (

@@ -133,15 +133,20 @@ test("risk workspace presents exact metrics and separate review evidence", async
   render(<App />);
 
   expect((await screen.findAllByText("critical.example.com"))[0]).toBeInTheDocument();
-  const discoveryPanel = screen.getByRole("heading", { name: "Discovery Sources" }).closest("section");
-  expect(within(discoveryPanel).getByText("ALL-TIME DOMAIN COUNTS")).toBeInTheDocument();
-  expect(discoveryPanel.nextElementSibling).toHaveAttribute("aria-label", "Risk and exposure metrics");
-  expect(within(discoveryPanel).getByText("Pentest Tools").parentElement).toHaveTextContent("12");
-  expect(within(discoveryPanel).getByText("SAN Exposure").parentElement).toHaveTextContent("3");
-  expect(within(discoveryPanel).getByText("Brand Exposure").parentElement).toHaveTextContent("7");
-  expect(within(discoveryPanel).getByText("findassets")).toBeInTheDocument();
-  expect(within(discoveryPanel).getByText("san discovery")).toBeInTheDocument();
-  expect(within(discoveryPanel).getByText("crt.sh")).toBeInTheDocument();
+  const primaryKpis = screen.getByRole("region", { name: "Risk and exposure metrics" });
+  const discoveryCard = within(primaryKpis).getByText("Discovery Sources").closest(".metric-card");
+  expect(screen.getAllByText("Discovery Sources")).toHaveLength(1);
+  expect(within(discoveryCard).getByText("All-time domain counts")).toBeInTheDocument();
+  expect([...primaryKpis.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
+    "High risk", "Assets with risk scores", "Discovery Sources", "HTTP responding",
+  ]);
+  expect(within(discoveryCard).getByText("Pentest Tools").parentElement).toHaveTextContent("12");
+  expect(within(discoveryCard).getByText("SAN Exposure").parentElement).toHaveTextContent("3");
+  expect(within(discoveryCard).getByText("Brand Exposure").parentElement).toHaveTextContent("7");
+  const actionableKpis = screen.getByRole("region", { name: "Actionable evidence" });
+  expect([...actionableKpis.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
+    "Findings", "Sensitive port exposure", "Review Indicators", "Assets with IP addresses",
+  ]);
   expect(screen.queryByText("Risk distribution")).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Assets with IP addresses/ })).toHaveAttribute("href", "#/assets?has_ip=true");
   expect(screen.getByRole("link", { name: /HTTP responding/ })).toHaveAttribute("href", "#/assets?http_live=true");
