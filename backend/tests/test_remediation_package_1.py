@@ -122,15 +122,15 @@ class SanPipelineTests(unittest.TestCase):
             BACKEND / "dns_worker.py",
             ["dns_worker.py", "42"]
         )
-        cursor = RecordingCursor(fetchalls=[[(20, "child.example", False)]])
+        cursor = RecordingCursor(fetchones=[(True,)], fetchalls=[[(20, "child.example", False)]])
         connection = FakeConnection(cursor)
         module.get_conn = lambda: connection
-        module.resolve_dns = lambda domain: [
+        module.resolve_dns = lambda domain, before_query=None: [
             ("A", "192.0.2.20"),
             ("A", "192.0.2.10"),
             ("CNAME", "target.example")
         ]
-        module.reverse_dns = lambda ip: "child-rdns.example"
+        module.reverse_dns = lambda ip, before_query=None: "child-rdns.example"
 
         module.main()
 
@@ -152,10 +152,10 @@ class SanPipelineTests(unittest.TestCase):
             BACKEND / "dns_worker.py",
             ["dns_worker.py", "42"]
         )
-        cursor = RecordingCursor(fetchalls=[[(20, "child.example", True)]])
+        cursor = RecordingCursor(fetchones=[(True,)], fetchalls=[[(20, "child.example", True)]])
         connection = FakeConnection(cursor)
         module.get_conn = lambda: connection
-        module.resolve_dns = lambda domain: [("A", "192.0.2.50")]
+        module.resolve_dns = lambda domain, before_query=None: [("A", "192.0.2.50")]
 
         module.main()
 

@@ -599,7 +599,8 @@ class FailClosedWriterTests(unittest.TestCase):
             {"db": make_db_module(connection, guard)},
             ["dns_worker.py", "42"],
         )
-        module.resolve_dns = lambda domain: [("A", "192.0.2.1")]
+        module.passive_dns_target_allowed = lambda *_args: True
+        module.resolve_dns = lambda domain, before_query=None: [("A", "192.0.2.1")]
 
         with mock.patch("builtins.print"):
             module.main()
@@ -619,7 +620,8 @@ class FailClosedWriterTests(unittest.TestCase):
             {"db": make_db_module(connection, guard)},
             ["dns_worker.py", "42"],
         )
-        module.resolve_dns = lambda domain: [("A", "192.0.2.1")]
+        module.passive_dns_target_allowed = lambda *_args: True
+        module.resolve_dns = lambda domain, before_query=None: [("A", "192.0.2.1")]
 
         with mock.patch("builtins.print"), self.assertRaisesRegex(
             RuntimeError, "became terminal"
@@ -639,7 +641,7 @@ class FailClosedWriterTests(unittest.TestCase):
         cases = (
             ("cert_worker.py", (7, "cert.example", "192.0.2.7", None),
              "fetch_cert_expiry", (None, None, "no_cert"), "domain_cert"),
-            ("port_scan_worker.py", (7, "port.example"),
+            ("port_scan_worker.py", (7, "port.example", "45.67.89.7"),
              "scan_ports", [(443, "https")], "domain_ports"),
             ("asn_worker.py", (7, "asn.example", "192.0.2.7"),
              "enrich_asn", ("AS1", "example"), "domain_asn"),
@@ -650,6 +652,12 @@ class FailClosedWriterTests(unittest.TestCase):
                     cursor = RecordingCursor(
                         fetchone=None if status is None else (status,), fetchall=[row]
                     )
+                    if filename == "port_scan_worker.py" and status == "RUNNING":
+                        cursor.fetchone = mock.Mock(
+                            side_effect=[
+                                (status,), (status,), (row[2], True), (status,)
+                            ]
+                        )
                     connection = FakeConnection(cursor)
                     guard = mock.Mock(wraps=real_db.require_running_scan)
                     fake_db = make_db_module(connection, guard)
@@ -658,6 +666,10 @@ class FailClosedWriterTests(unittest.TestCase):
                     )
                     network = mock.Mock(return_value=result)
                     setattr(module, observation, network)
+                    if filename == "port_scan_worker.py":
+                        module.recheck_active_authorization = mock.Mock(
+                            return_value=(True, "authorized")
+                        )
                     with mock.patch("builtins.print"):
                         if status == "RUNNING":
                             module.main()

@@ -8,7 +8,11 @@ import unittest
 from unittest import mock
 
 from backend.tests import test_remediation_package_2d1c as convergence
-from backend.authorization_policy import recheck_active_authorization
+from backend.authorization_policy import (
+    active_scan_authorization_sql,
+    passive_dns_discovery_sql,
+    recheck_active_authorization,
+)
 
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
@@ -286,10 +290,11 @@ class PostgreSQLMembershipTests(unittest.TestCase):
             self.sql("INSERT INTO scan_results VALUES (%s, %s, 'root.example')",
                      (member_scan, domain_id))
         if state_scan is not None:
+            observed_ip = f"45.67.89.{(domain_id % 250) + 1}"
             self.sql("""
                 INSERT INTO domain_states(domain_id,scan_id,ip,has_ip,http_status,http_live)
-                VALUES (%s,%s,'192.0.2.1',%s,%s,%s)
-            """, (domain_id, state_scan, has_ip, http_status, http_status > 0))
+                VALUES (%s,%s,%s,%s,%s,%s)
+            """, (domain_id, state_scan, observed_ip, has_ip, http_status, http_status > 0))
         return domain_id
 
     def snapshot(self):
@@ -582,6 +587,61 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.assertEqual(self.sql('SELECT domain_id FROM scan_results WHERE scan_id=41'), [(historic,)])
         self.assertEqual(self.sql('SELECT domain_id FROM domain_san WHERE scan_id=42'), [(parent,)])
 
+    def test_passive_dns_keeps_seeded_candidates_but_rejects_arbitrary_or_excluded_targets(self):
+        candidate = self.domain('brand-lookalike.net', 42)
+        arbitrary = self.domain('arbitrary.test', 42)
+        manually_rejected = self.domain('rejected.example', 42)
+        excluded = self.domain('excluded.example', 42)
+        self.sql("UPDATE domains SET ownership_status='CANDIDATE' WHERE id=%s", (candidate,))
+        self.sql("UPDATE domains SET confidence_reasons=ARRAY['manually rejected'] WHERE id=%s",
+                 (manually_rejected,))
+        self.sql("UPDATE scan_results SET seed='root.example,known.example' WHERE domain_id=%s AND scan_id=42",
+                 (candidate,))
+        self.sql("UPDATE scan_results SET seed='outside.test' WHERE domain_id=%s AND scan_id=42",
+                 (arbitrary,))
+        self.sql("UPDATE scan_results SET seed='root.example' WHERE domain_id IN (%s,%s) AND scan_id=42",
+                 (manually_rejected, excluded))
+        self.sql("""
+            INSERT INTO active_scan_scopes(
+                scope_domain,include_subdomains,testing_level,approved_by,
+                excluded_domains
+            ) VALUES ('example',TRUE,'PORT_SCAN','test',ARRAY['excluded.example'])
+        """)
+        candidate_allowed = self.sql(f"""
+            SELECT {passive_dns_discovery_sql('d', 'sr')}
+            FROM domains d JOIN scan_results sr ON sr.domain_id=d.id
+            WHERE d.id=%s AND sr.scan_id=42
+        """, (candidate,))
+        self.assertEqual(candidate_allowed, [(True,)])
+        selected_before_worker = self.sql(f"""
+            SELECT d.id,d.domain,ds.has_ip
+            FROM domains d
+            JOIN scan_results sr ON d.id=sr.domain_id AND sr.scan_id=%s
+            JOIN domain_states ds ON d.id=ds.domain_id AND ds.scan_id=%s
+            WHERE {passive_dns_discovery_sql('d','sr')}
+        """, (42, 42))
+        self.assertEqual(selected_before_worker, [(candidate, 'brand-lookalike.net', True)])
+
+        resolver = mock.Mock(return_value=[('A', '45.67.89.5')])
+        self.run_worker(
+            'dns_worker.py',
+            overrides={'resolve_dns': resolver},
+        )
+        self.assertEqual(
+            [call.args[0] for call in resolver.call_args_list],
+            ['brand-lookalike.net'],
+        )
+        self.assertEqual(
+            self.sql("SELECT count(*) FROM domain_dns WHERE scan_id=42 AND domain_id=%s",
+                     (candidate,)),
+            [(1,)],
+        )
+        self.assertEqual(
+            self.sql("SELECT count(*) FROM domain_dns WHERE scan_id=42 AND domain_id=ANY(%s)",
+                     ([arbitrary, manually_rejected, excluded],)),
+            [(0,)],
+        )
+
     def _run_shared_san_children(self, completion_order, existing_child=False):
         parent_a = self.domain('parent-a.example', 42)
         parent_b = self.domain('parent-b.example', 42)
@@ -797,8 +857,8 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         self.assertEqual(self.sql('SELECT risk_score,reasons FROM domain_risk WHERE domain_id=%s', (orphan,)), [(99,'preserve')])
 
     def test_ingest_retry_then_membership_sync_and_downstream_retry_rejection(self):
-        self.ingest(42, [{'Domain':'removed.example'}])
-        self.ingest(42, [{'Domain':'member.example'}])
+        self.ingest(42, [{'Domain':'removed.example', 'Source':'subfinder', 'Seed':'root.example'}])
+        self.ingest(42, [{'Domain':'member.example', 'Source':'subfinder', 'Seed':'root.example'}])
         self.run_worker('san_state_sync.py')
         self.assertEqual(self.sql('SELECT d.domain FROM domain_states ds JOIN domains d ON d.id=ds.domain_id WHERE scan_id=42'), [('member.example',)])
         self.run_worker('dns_worker.py')
@@ -1041,8 +1101,8 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         detected.assert_not_called()
 
     def test_expired_legacy_grant_does_not_override_default_operation_policy(self):
-        domain_id = self.domain("port.example.com", 42)
-        self.authorize_scope("example.com", "PORT_SCAN")
+        domain_id = self.domain("port.example", 42)
+        self.authorize_scope("example", "PORT_SCAN")
         scanned = mock.Mock(return_value=[(443, "https")])
         expired = False
 
@@ -1061,14 +1121,22 @@ class PostgreSQLMembershipTests(unittest.TestCase):
             },
         )
         scanned.assert_called_once()
-        self.assertEqual(scanned.call_args.args[0], "port.example.com")
+        self.assertEqual(scanned.call_args.args[0], "45.67.89.2")
         self.assertIsNotNone(scanned.call_args.kwargs.get("cancel_event"))
 
     def test_default_policy_allows_trusted_technology_and_port_network_work(self):
-        self.domain("tech.example.com", 42)
-        self.domain("port.example.com", 42)
-        self.authorize_scope("tech.example.com", "TECHNOLOGY_HTTP", include_subdomains=False)
-        self.authorize_scope("port.example.com", "PORT_SCAN", include_subdomains=False)
+        self.domain("tech.example", 42)
+        self.domain("port.example", 42)
+        self.authorize_scope("tech.example", "TECHNOLOGY_HTTP", include_subdomains=False)
+        self.authorize_scope("port.example", "PORT_SCAN", include_subdomains=False)
+        selected_auth = self.sql(f"""
+            SELECT d.domain, {active_scan_authorization_sql('d', 'TECHNOLOGY_HTTP')}
+            FROM domains d WHERE d.domain IN ('tech.example', 'port.example')
+            ORDER BY d.domain
+        """)
+        self.assertEqual(selected_auth, [
+            ('port.example', True), ('tech.example', True),
+        ])
         detected = mock.Mock(return_value=["nginx"])
         scanned = mock.Mock(return_value=[])
 
@@ -1077,11 +1145,11 @@ class PostgreSQLMembershipTests(unittest.TestCase):
 
         self.assertEqual(
             [call.args[0] for call in detected.call_args_list],
-            ["tech.example.com", "port.example.com"],
+            ["tech.example", "port.example"],
         )
         self.assertCountEqual(
             [call.args[0] for call in scanned.call_args_list],
-            ["tech.example.com", "port.example.com"],
+            ["45.67.89.2", "45.67.89.3"],
         )
 
     def test_denied_target_does_not_block_later_authorized_target(self):

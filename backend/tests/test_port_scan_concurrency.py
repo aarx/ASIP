@@ -57,7 +57,7 @@ class Cursor:
         return list(self.rows)
 
     def fetchone(self):
-        return (1,)
+        return ("8.8.8.8", True)
 
 
 class Connection:
@@ -98,7 +98,7 @@ class PortScanConcurrencyTests(unittest.TestCase):
         peak = 0
         seen = []
 
-        def target(_scan_id, domain_id, domain, _cancel_event):
+        def target(_scan_id, domain_id, domain, _destination_ip, _cancel_event):
             nonlocal active, peak
             with lock:
                 active += 1
@@ -115,7 +115,7 @@ class PortScanConcurrencyTests(unittest.TestCase):
         return peak, seen, result
 
     def test_default_pool_never_exceeds_two_and_deduplicates_targets(self):
-        targets = [(i, f"host{i}.example") for i in range(8)]
+        targets = [(i, f"host{i}.example", f"8.8.8.{i + 1}") for i in range(8)]
         peak, seen, outcomes = self._measure_pool(2, targets + [targets[0]])
         self.assertEqual(peak, 2)
         self.assertEqual(len(seen), 8)
@@ -123,23 +123,25 @@ class PortScanConcurrencyTests(unittest.TestCase):
         self.assertEqual(len(outcomes), 8)
 
     def test_configured_pool_clamps_at_four_and_one_is_serial(self):
-        targets = [(i, f"host{i}.example") for i in range(10)]
+        targets = [(i, f"host{i}.example", f"8.8.4.{i + 1}") for i in range(10)]
         peak, seen, _ = self._measure_pool(99, targets)
         self.assertEqual(peak, 4)
         self.assertEqual(len(seen), len(targets))
         peak, seen, outcomes = self._measure_pool(1, targets)
         self.assertEqual(peak, 1)
-        self.assertEqual(seen, targets)
+        self.assertEqual(seen, [(domain_id, domain) for domain_id, domain, _ip in targets])
         self.assertEqual(len(outcomes), len(targets))
 
     def test_target_selection_preserves_membership_and_authorization_predicates(self):
-        cursor = Cursor([(9, "member.example")])
+        cursor = Cursor([(9, "member.example", "8.8.8.8")])
         rows = self.worker.get_resolving_domains(cursor, 42)
         sql, params = cursor.executions[0]
-        self.assertEqual(rows, [(9, "member.example")])
+        self.assertEqual(rows, [(9, "member.example", "8.8.8.8")])
         self.assertIn("DISTINCT ON (d.id)", sql)
         self.assertIn("scan_results", sql)
         self.assertIn("s.has_ip = TRUE", sql)
+        self.assertIn("s.ip", sql)
+        self.assertIn("shared_state.ip = s.ip", sql)
         self.assertIn("active_scan_authorization_sql", self.worker.get_resolving_domains.__code__.co_names)
         self.assertEqual(params, (42, 42))
 
@@ -151,7 +153,9 @@ class PortScanConcurrencyTests(unittest.TestCase):
         )
         nmap = mock.Mock()
         self.worker.scan_ports = nmap
-        result = self.worker.scan_target(42, 9, "outside.example", threading.Event())
+        result = self.worker.scan_target(
+            42, 9, "outside.example", "8.8.8.8", threading.Event()
+        )
         self.assertEqual(result["status"], "skipped")
         nmap.assert_not_called()
         self.assertFalse(any("INSERT INTO domain_ports" in sql for sql, _ in conn._cursor.executions))
@@ -165,13 +169,15 @@ class PortScanConcurrencyTests(unittest.TestCase):
         )
         nmap = mock.Mock()
         self.worker.scan_ports = nmap
-        result = self.worker.scan_target(42, 9, "member.example", threading.Event())
+        result = self.worker.scan_target(
+            42, 9, "member.example", "8.8.8.8", threading.Event()
+        )
         self.assertEqual(result["status"], "failed")
         nmap.assert_not_called()
         with self.assertRaises(self.worker.PortScanStageError):
             self.worker.run_port_scan_pool(
                 42,
-                [(9, "member.example")],
+                [(9, "member.example", "8.8.8.8")],
                 target_worker=lambda *_args: result,
             )
 
@@ -183,7 +189,9 @@ class PortScanConcurrencyTests(unittest.TestCase):
         ]
         nmap = mock.Mock(return_value=[(443, "https")])
         self.worker.scan_ports = nmap
-        result = self.worker.scan_target(42, 9, "member.example", threading.Event())
+        result = self.worker.scan_target(
+            42, 9, "member.example", "8.8.8.8", threading.Event()
+        )
         self.assertEqual(result["status"], "failed")
         nmap.assert_called_once()
         self.assertFalse(any("INSERT INTO domain_ports" in sql for sql, _ in conn._cursor.executions))
@@ -196,7 +204,9 @@ class PortScanConcurrencyTests(unittest.TestCase):
             True, "authorized"
         )
         self.worker.scan_ports = mock.Mock(return_value=[(443, "https"), (8443, "https-alt")])
-        result = self.worker.scan_target(42, 9, "member.example", threading.Event())
+        result = self.worker.scan_target(
+            42, 9, "member.example", "8.8.8.8", threading.Event()
+        )
         self.assertEqual(result, {"status": "complete", "domain": "member.example", "ports": 2})
         writes = [(sql, params) for sql, params in conn._cursor.executions if "INSERT INTO domain_ports" in sql]
         self.assertEqual(len(writes), 2)
@@ -209,13 +219,51 @@ class PortScanConcurrencyTests(unittest.TestCase):
         proc.communicate.return_value = ("443/tcp open https\n", "")
         proc.returncode = 0
         with mock.patch.object(self.worker.subprocess, "Popen", return_value=proc) as popen:
-            result = self.worker.scan_ports("member.example")
+            result = self.worker.scan_ports("8.8.8.8")
         self.assertEqual(result, [(443, "https")])
         args, kwargs = popen.call_args
-        self.assertEqual(args[0][:4], ["nmap", "-Pn", "-T3", "--open"])
-        self.assertEqual(args[0][-1], "member.example")
+        self.assertEqual(args[0][:5], ["nmap", "-n", "-Pn", "-T3", "--open"])
+        self.assertEqual(args[0][-1], "8.8.8.8")
         self.assertEqual(kwargs, {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True})
         self.assertEqual(popen.call_count, 1)
+
+    def test_hostname_and_nonpublic_ip_are_rejected_before_nmap(self):
+        with mock.patch.object(self.worker.subprocess, "Popen") as popen:
+            for destination in ("member.example", "192.0.2.10", "127.0.0.1", "::1"):
+                with self.subTest(destination=destination):
+                    with self.assertRaises(self.worker.PortScanError):
+                        self.worker.scan_ports(destination)
+            popen.assert_not_called()
+
+    def test_known_shared_destination_is_rejected_before_nmap(self):
+        conn = Connection()
+        conn._cursor.fetchone = mock.Mock(return_value=("8.8.8.8", False))
+        self.worker._test_db.get_conn.return_value = conn
+        self.worker._test_auth.recheck_active_authorization.return_value = (
+            True, "authorized"
+        )
+        nmap = mock.Mock(return_value=[])
+        self.worker.scan_ports = nmap
+        result = self.worker.scan_target(
+            42, 9, "member.example", "8.8.8.8", threading.Event()
+        )
+        self.assertEqual(result["status"], "skipped")
+        nmap.assert_not_called()
+
+    def test_changed_scan_ip_cannot_be_replaced_by_another_public_answer(self):
+        conn = Connection()
+        conn._cursor.fetchone = mock.Mock(return_value=("8.8.8.9", True))
+        self.worker._test_db.get_conn.return_value = conn
+        self.worker._test_auth.recheck_active_authorization.return_value = (
+            True, "authorized"
+        )
+        nmap = mock.Mock(return_value=[])
+        self.worker.scan_ports = nmap
+        result = self.worker.scan_target(
+            42, 9, "member.example", "8.8.8.8", threading.Event()
+        )
+        self.assertEqual(result["status"], "skipped")
+        nmap.assert_not_called()
 
     def test_timeout_and_cancellation_terminate_without_retry_or_partial_write(self):
         proc = mock.Mock()
@@ -225,7 +273,7 @@ class PortScanConcurrencyTests(unittest.TestCase):
         with mock.patch.object(self.worker, "PORT_SCAN_TIMEOUT_SECONDS", 0), mock.patch.object(
             self.worker.subprocess, "Popen", return_value=proc
         ) as popen, self.assertRaises(self.worker.PortScanTimeout):
-            self.worker.scan_ports("member.example")
+            self.worker.scan_ports("8.8.8.8")
         self.assertEqual(popen.call_count, 1)
         proc.terminate.assert_called_once()
 
@@ -247,14 +295,14 @@ class PortScanConcurrencyTests(unittest.TestCase):
         with mock.patch.object(
             self.worker.subprocess, "Popen", return_value=proc
         ) as popen, self.assertRaises(self.worker.PortScanCancelled):
-            self.worker.scan_ports("member.example", event)
+            self.worker.scan_ports("8.8.8.8", event)
         self.assertEqual(popen.call_count, 1)
         proc.terminate.assert_called_once()
 
     def test_worker_exception_isolated_but_marks_stage_incomplete(self):
         completed = threading.Event()
 
-        def target(_scan_id, _domain_id, domain, _cancel):
+        def target(_scan_id, _domain_id, domain, _destination_ip, _cancel):
             if domain == "bad.example":
                 raise RuntimeError("mocked worker failure")
             completed.set()
@@ -263,7 +311,7 @@ class PortScanConcurrencyTests(unittest.TestCase):
         with self.assertRaisesRegex(self.worker.PortScanStageError, "incomplete"):
             self.worker.run_port_scan_pool(
                 42,
-                [(1, "bad.example"), (2, "good.example")],
+                [(1, "bad.example", "8.8.8.1"), (2, "good.example", "8.8.8.2")],
                 worker_count=2,
                 target_worker=target,
             )

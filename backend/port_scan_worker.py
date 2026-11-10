@@ -1,4 +1,5 @@
 import logging
+import ipaddress
 import os
 import re
 import signal
@@ -68,7 +69,7 @@ def configured_worker_count(value=None):
 
 def get_resolving_domains(cur, scan_id):
     cur.execute(f"""
-    SELECT DISTINCT ON (d.id) d.id, d.domain
+    SELECT DISTINCT ON (d.id) d.id, d.domain, s.ip
     FROM domains d
     JOIN domain_states s
       ON d.id = s.domain_id
@@ -82,8 +83,20 @@ def get_resolving_domains(cur, scan_id):
       AND dp.scan_id = %s
 
     WHERE s.has_ip = TRUE
+    AND s.ip IS NOT NULL
+    AND BTRIM(s.ip) <> ''
     AND dp.domain_id IS NULL
     AND {active_scan_authorization_sql("d", "PORT_SCAN")}
+    AND NOT EXISTS (
+        SELECT 1
+        FROM domain_states shared_state
+        JOIN scan_results shared_membership
+          ON shared_membership.domain_id = shared_state.domain_id
+         AND shared_membership.scan_id = shared_state.scan_id
+        WHERE shared_state.scan_id = s.scan_id
+          AND shared_state.ip = s.ip
+          AND shared_state.domain_id <> d.id
+    )
     ORDER BY d.id, s.scan_id DESC
     """, (scan_id, scan_id))
     return cur.fetchall()
@@ -124,15 +137,29 @@ def _terminate_process(process):
     return stdout
 
 
-def scan_ports(domain, cancel_event=None):
+def validate_destination_ip(value):
+    """Accept only one public numeric address selected from this scan's state."""
+    try:
+        address = ipaddress.ip_address(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise PortScanError("Nmap destination is not a valid numeric IP") from exc
+    if (not address.is_global or address.is_private or address.is_loopback
+            or address.is_link_local or address.is_multicast
+            or address.is_reserved or address.is_unspecified):
+        raise PortScanError("Nmap destination IP is outside the permitted address policy")
+    return str(address)
+
+
+def scan_ports(destination_ip, cancel_event=None):
     """Run the existing bounded Nmap profile once, without retries."""
+    destination_ip = validate_destination_ip(destination_ip)
     asm_ports = (
         "21,22,23,25,53,80,110,143,389,443,445,"
         "1521,3000,3306,3389,5000,5432,5900,"
         "5985,5986,6379,7001,7002,8000,8080,8443,"
         "8888,27017,11211"
     )
-    cmd = ["nmap", "-Pn", "-T3", "--open", "-p", asm_ports, domain]
+    cmd = ["nmap", "-n", "-Pn", "-T3", "--open", "-p", asm_ports, destination_ip]
 
     if cancel_event is not None and cancel_event.is_set():
         raise PortScanCancelled("cancelled before Nmap process start")
@@ -145,7 +172,7 @@ def scan_ports(domain, cancel_event=None):
             text=True,
         )
     except Exception as exc:
-        raise PortScanError(f"could not start Nmap for {domain}: {exc}") from exc
+        raise PortScanError(f"could not start Nmap for {destination_ip}: {exc}") from exc
 
     deadline = time.monotonic() + PORT_SCAN_TIMEOUT_SECONDS
     while True:
@@ -153,7 +180,7 @@ def scan_ports(domain, cancel_event=None):
             stdout = _terminate_process(process)
             partial_ports = _parse_ports(stdout)
             raise PortScanCancelled(
-                f"cancelled Nmap for {domain}; discarded {len(partial_ports)} partial ports",
+                f"cancelled Nmap for {destination_ip}; discarded {len(partial_ports)} partial ports",
                 partial_ports,
             )
 
@@ -162,7 +189,7 @@ def scan_ports(domain, cancel_event=None):
             stdout = _terminate_process(process)
             partial_ports = _parse_ports(stdout)
             raise PortScanTimeout(
-                f"Nmap timed out after {PORT_SCAN_TIMEOUT_SECONDS}s for {domain}; "
+                f"Nmap timed out after {PORT_SCAN_TIMEOUT_SECONDS}s for {destination_ip}; "
                 f"discarded {len(partial_ports)} partial ports",
                 partial_ports,
             )
@@ -178,14 +205,14 @@ def scan_ports(domain, cancel_event=None):
     ports = _parse_ports(stdout)
     if process.returncode != 0:
         raise PortScanError(
-            f"Nmap exited {process.returncode} for {domain}: {stderr or ''}; "
+            f"Nmap exited {process.returncode} for {destination_ip}: {stderr or ''}; "
             f"discarded {len(ports)} partial ports",
             ports,
         )
     return ports
 
 
-def scan_target(scan_id, domain_id, domain, cancel_event):
+def scan_target(scan_id, domain_id, domain, destination_ip, cancel_event):
     """Authorize, scan, and persist one target using its own DB connection."""
     conn = None
     try:
@@ -195,6 +222,41 @@ def scan_target(scan_id, domain_id, domain, cancel_event):
         conn = get_conn()
         cur = conn.cursor()
         require_running_scan(cur, scan_id)
+        # The destination must be the single address captured in this scan's
+        # domain state. Reject known shared addresses rather than letting Nmap
+        # resolve the hostname to a potentially different/multiple IP set.
+        destination_ip = validate_destination_ip(destination_ip)
+        cur.execute("""
+        SELECT s.ip,
+               NOT EXISTS (
+                   SELECT 1
+                   FROM domain_states shared_state
+                   JOIN scan_results shared_membership
+                     ON shared_membership.domain_id = shared_state.domain_id
+                    AND shared_membership.scan_id = shared_state.scan_id
+                   WHERE shared_state.scan_id = s.scan_id
+                     AND shared_state.ip = s.ip
+                     AND shared_state.domain_id <> s.domain_id
+               )
+        FROM domain_states s
+        JOIN scan_results sr
+          ON sr.scan_id = s.scan_id
+         AND sr.domain_id = s.domain_id
+        WHERE s.scan_id = %s AND s.domain_id = %s AND s.has_ip IS TRUE
+        """, (scan_id, domain_id))
+        destination_state = cur.fetchone()
+        if (destination_state is None
+                or str(destination_state[0]).strip() != destination_ip
+                or not destination_state[1]):
+            conn.rollback()
+            return {
+                "status": "skipped",
+                "domain": domain,
+                "reason": "destination IP is absent, changed, or shared in the current scan",
+            }
+
+        # Recheck the domain operation grant after validating the exact
+        # destination and immediately before handing that numeric IP to Nmap.
         authorized, reason = recheck_active_authorization(
             cur,
             scan_id=scan_id,
@@ -202,7 +264,6 @@ def scan_target(scan_id, domain_id, domain, cancel_event):
             testing_level="PORT_SCAN",
             required_scan_status="RUNNING",
         )
-        conn.commit()
         if not authorized:
             if reason == "authorization check failed":
                 return {
@@ -212,13 +273,14 @@ def scan_target(scan_id, domain_id, domain, cancel_event):
                 }
             logging.info("Skipping port scan for %s: %s", domain, reason)
             return {"status": "skipped", "domain": domain, "reason": reason}
+        conn.commit()
 
         # Authorization is checked independently in the worker immediately
         # before this single Nmap invocation. No batch decision is reused.
         if cancel_event.is_set():
             return {"status": "cancelled", "domain": domain}
         logging.info("Scanning %s", domain)
-        ports = scan_ports(domain, cancel_event=cancel_event)
+        ports = scan_ports(destination_ip, cancel_event=cancel_event)
 
         if cancel_event.is_set():
             return {"status": "cancelled", "domain": domain}
@@ -286,16 +348,18 @@ def run_port_scan_pool(
 
     # The selection SQL already returns DISTINCT ON (d.id); this guard keeps
     # accidental duplicate input from launching duplicate Nmap processes.
-    unique_targets = list({domain_id: (domain_id, domain)
-                           for domain_id, domain in domains}.values())
+    unique_targets = list({domain_id: (domain_id, domain, destination_ip)
+                           for domain_id, domain, destination_ip in domains}.values())
     if not unique_targets:
         return []
 
     outcomes = []
     executor = ThreadPoolExecutor(max_workers=workers)
     futures = {
-        executor.submit(target_worker, scan_id, domain_id, domain, cancel_event): domain
-        for domain_id, domain in unique_targets
+        executor.submit(
+            target_worker, scan_id, domain_id, domain, destination_ip, cancel_event
+        ): domain
+        for domain_id, domain, destination_ip in unique_targets
     }
     try:
         for future in as_completed(futures):

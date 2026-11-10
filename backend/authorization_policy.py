@@ -303,6 +303,33 @@ def active_scope_exclusion_sql(domain_alias="d", testing_level="TECHNOLOGY_HTTP"
     """
 
 
+def passive_dns_discovery_sql(domain_alias="d", membership_alias="sr"):
+    """Limit legacy DNS enrichment to seed-derived discovery in this scan.
+
+    Passive DNS resolution is a discovery enrichment, not a DNS_SECURITY or
+    active-assessment grant.  The scan membership's recorded seed provenance
+    must still trace to a configured seed namespace (or exact known host), and
+    an explicit/manual rejection or scope exclusion always suppresses it.
+    """
+    provenance = f"{membership_alias}.seed"
+    exclusions = " OR ".join(
+        f"({active_scope_exclusion_sql(domain_alias, level)})"
+        for level in sorted(SCOPE_TESTING_LEVELS)
+    )
+    return f"""
+        EXISTS (
+            SELECT 1
+            FROM unnest(string_to_array(COALESCE({provenance}, ''), ','))
+                AS provenance_seed(value)
+            WHERE {trusted_boundary_sql('provenance_seed.value')}
+        )
+        AND NOT COALESCE(
+            'manually rejected' = ANY({domain_alias}.confidence_reasons), FALSE
+        )
+        AND NOT ({exclusions})
+    """
+
+
 def active_scope_coverage_sql(domain_alias="d", testing_level=None):
     """Return SQL for active scope coverage with exclusions applied.
 
