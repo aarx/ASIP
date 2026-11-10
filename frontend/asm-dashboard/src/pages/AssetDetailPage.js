@@ -5,7 +5,7 @@ import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { brandAcceptanceDetail, isBrandAcceptanceFixture } from "../fixtures/brandAcceptance";
-import { displayAssetClass, displayEvidence } from "../utils/presentation";
+import { displayAssetClass, displayEvidence, displayHttpStatus } from "../utils/presentation";
 
 function EvidenceRow({ label, value, mono = false, wide = false }) {
   return (
@@ -22,10 +22,6 @@ function DetailEmpty({ children, compact = false }) {
 
 function isObservedHttpStatus(value) {
   return value !== null && value !== undefined && value !== "" && value !== 0 && value !== "0";
-}
-
-function httpStatusValue(value) {
-  return isObservedHttpStatus(value) ? value : "Unknown";
 }
 
 function discoverySourceGroup(source) {
@@ -456,7 +452,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
         <Panel title="HTTP" subtitle="Observed response state and destination" className="detail-panel">
           <div className="evidence-grid">
             <div className="evidence-row"><span className="evidence-label">Observation</span><span className="evidence-value"><StatusBadge value={data.http?.observation_status} /></span></div>
-            <EvidenceRow label="HTTP status" value={httpStatusValue(data.http?.status)} mono />
+            <EvidenceRow label="HTTP status" value={displayHttpStatus(data.http?.observation_status, data.http?.status)} mono />
             <EvidenceRow label="Reason" value={data.http?.reason} />
             {redirectEvidence.completion_status === "COMPLETE" && isObservedHttpStatus(data.http?.final_status) && (
               <EvidenceRow label="Verified final status" value={data.http?.final_status} mono />

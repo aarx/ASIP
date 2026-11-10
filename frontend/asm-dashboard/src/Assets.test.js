@@ -209,6 +209,26 @@ test("explorer loads current assets, applies server filters, and clears them", a
   await waitFor(() => expect(window.location.hash).toBe("#/assets?limit=25"));
 });
 
+test("Asset Explorer distinguishes UNKNOWN and NO_RESPONSE HTTP status wording", async () => {
+  window.location.hash = "#/assets";
+  getV2Assets.mockResolvedValue({
+    ...assetPage,
+    count: 2,
+    assets: [
+      { ...currentAsset, domain: "unknown.example.com", http_live: null, http_observation_status: "UNKNOWN", http_status: 0 },
+      { ...currentAsset, domain: "no-response.example.com", http_live: false, http_observation_status: "NO_RESPONSE", http_status: 0 },
+    ],
+  });
+  render(<App />);
+
+  const unknownRow = within(await screen.findByText("unknown.example.com").then((node) => node.closest("tr")));
+  const noResponseRow = within(screen.getByText("no-response.example.com").closest("tr"));
+  expect(unknownRow.getByText("UNKNOWN")).toBeInTheDocument();
+  expect(unknownRow.getByText("No HTTP status recorded")).toBeInTheDocument();
+  expect(noResponseRow.getByText("NO_RESPONSE")).toBeInTheDocument();
+  expect(noResponseRow.getByText("No HTTP response")).toBeInTheDocument();
+});
+
 test("explorer pagination is server-backed and preserves deterministic ordering", async () => {
   window.location.hash = "#/assets?ownership=CONFIRMED&limit=25";
   getV2Assets.mockResolvedValue(assetPage);
@@ -460,7 +480,7 @@ test("asset detail separates effective class from stored ownership and groups pr
   expect(screen.getByText("Historical URL (unverified)")).toBeInTheDocument();
   expect(screen.queryByText("Historical status (unverified)")).not.toBeInTheDocument();
   const httpPanel = screen.getByText("HTTP").closest("section");
-  expect(within(httpPanel).getByText("Unknown")).toBeInTheDocument();
+  expect(within(httpPanel).getByText("No HTTP status recorded")).toBeInTheDocument();
   const provenancePanel = screen.getByText("Discovery & provenance").closest("section");
   expect(within(provenancePanel).getByText("Brand exposure")).toBeInTheDocument();
   expect(within(provenancePanel).getByText("Certificate exposure")).toBeInTheDocument();

@@ -76,7 +76,7 @@ test("Overview metrics and attention assets lead into analyst workflows", async 
   expect(await screen.findByText("attention.example")).toBeInTheDocument();
   expect(screen.getByText("attention.example").closest("a")).toHaveAttribute("href", "#/assets/attention.example?return=risk%2Fneeds-attention");
   expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("href", "#/overview");
-  expect(screen.getByRole("link", { name: "Risk & Exposure" })).toHaveAttribute("href", "#/risk");
+  expect(screen.getByRole("link", { name: "Risk Overview" })).toHaveAttribute("href", "#/risk");
 });
 
 test("change intelligence shows exact successful-scan membership deltas", async () => {

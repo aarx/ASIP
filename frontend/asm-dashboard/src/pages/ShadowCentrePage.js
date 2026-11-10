@@ -4,6 +4,7 @@ import { getV2Assets } from "../services/api";
 import AssetLink from "../components/ui/AssetLink";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
+import { displayHttpStatus } from "../utils/presentation";
 
 const LIMIT = 25;
 
@@ -90,7 +91,7 @@ export default function ShadowCentrePage({ query }) {
                   <span className="asset-secondary">Provenance available in asset detail</span>
                 </td>
                 <td>{asset.provider || "Unknown"}<span className="asset-secondary">{asset.ip || "No current IP"}</span></td>
-                <td><StatusBadge value={asset.http_observation_status} /><span className="asset-secondary">{asset.http_status || "No status"}</span></td>
+                <td><StatusBadge value={asset.http_observation_status} /><span className="asset-secondary">{displayHttpStatus(asset.http_observation_status, asset.http_status)}</span></td>
                 <td>{asset.risk ? <><div className="table-risk"><StatusBadge value={asset.risk.priority} /><span className="risk-score">{asset.risk.score}</span></div><div className="reason-list table-reasons">{asset.risk.reasons.map((reason) => <span className="reason-token" key={reason}>{reason.replaceAll("_", " ")}</span>)}</div></> : <span className="not-applicable">Unavailable</span>}</td>
                 <td><AssetLink domain={asset.domain} returnTo="shadow" className="row-action">→</AssetLink></td>
               </tr>

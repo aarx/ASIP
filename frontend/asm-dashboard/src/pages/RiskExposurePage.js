@@ -15,7 +15,7 @@ import Panel from "../components/ui/Panel";
 import { RISK_COLORS } from "../components/ui/RiskDistributionChart";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
-import { displayAssetClass } from "../utils/presentation";
+import { displayAssetClass, displayHttpStatus, isUsableHttpStatus } from "../utils/presentation";
 
 const PRIORITY_LIMIT = 25;
 const SECONDARY_VIEWS = [
@@ -53,7 +53,9 @@ function redirectLabel(indicator) {
 }
 
 function responseSummary(indicator) {
-  const initial = indicator.http_status == null ? "Initial response unavailable" : `Initial ${indicator.http_status}`;
+  const initial = isUsableHttpStatus(indicator.http_status)
+    ? `Initial ${indicator.http_status}`
+    : displayHttpStatus(indicator.http_observation_status, indicator.http_status);
   if (indicator.final_url_verification === "COMPLETE" && indicator.final_status != null) {
     return `${initial} · Verified terminal ${indicator.final_status}`;
   }

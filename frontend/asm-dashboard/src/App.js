@@ -16,7 +16,7 @@ import "./App.css";
 const ROUTES = {
   overview: ["Overview", "Attack surface operations", "Authoritative exposure, change, and priority signals."],
   assets: ["Assets", "Inventory", "Explore current organizational and perimeter assets."],
-  risk: ["Risk & Exposure", "Prioritization", "Review deterministic risk and exposure evidence."],
+  risk: ["Risk Overview", "Prioritization", "Review deterministic risk and exposure evidence."],
   "risk-needs-attention": ["Needs Attention", "Risk & Exposure", "Top deterministic risk scores followed by canonical risk distribution."],
   shadow: ["Shadow", "Unmanaged inventory", "Investigate confirmed organizational assets outside documented inventory."],
   brand: ["Brand Exposure", "Ownership intelligence", "Review Needs Verification and External assets without assuming ownership."],

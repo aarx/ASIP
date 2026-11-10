@@ -104,12 +104,17 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("href", "#/overview");
   expect(screen.getByRole("link", { name: "Asset Inventory" })).toHaveAttribute("href", "#/assets");
   expect(screen.getByRole("link", { name: "Shadow Assets" })).toHaveAttribute("href", "#/shadow");
-  expect(screen.getByRole("link", { name: "Risk & Exposure" })).toHaveAttribute("href", "#/risk");
+  expect(screen.getByRole("link", { name: "Risk Overview" })).toHaveAttribute("href", "#/risk");
   expect(screen.getByRole("link", { name: "Needs Attention" })).toHaveAttribute("href", "#/risk/needs-attention");
   expect(screen.getByRole("link", { name: "Brand Exposure" })).toHaveAttribute("href", "#/brand");
   expect(screen.getByRole("link", { name: "Scan Centre" })).toHaveAttribute("href", "#/scans");
   expect(screen.getByRole("link", { name: "Adhoc Checks" })).toHaveAttribute("href", "#/adhoc/php-rce");
   expect(screen.getByRole("link", { name: "Investigate" })).toHaveAttribute("href", "#/investigate");
+  const primaryNavigation = screen.getByLabelText("Primary navigation").querySelector("nav");
+  expect([...primaryNavigation.children]
+    .filter((item) => item.matches("a, details"))
+    .map((item) => item.querySelector(".nav-label").textContent.trim()))
+    .toEqual(["Overview", "Assets", "Risk & Exposure", "Scans", "Investigate"]);
   expect(screen.queryByText("Asset Discovery")).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "Dashboard" })).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "Risk Distribution" })).not.toBeInTheDocument();

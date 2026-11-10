@@ -4,7 +4,7 @@ import { getInvestigationAssets, getV2AssetAssistant, getV2AssetDetail } from ".
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
-import { displayAssetClass, displayEvidence } from "../utils/presentation";
+import { displayAssetClass, displayEvidence, displayHttpStatus } from "../utils/presentation";
 
 const LIMIT = 20;
 const ACTIONS = [
@@ -58,7 +58,7 @@ function AssetEvidence({ asset, detailHref }) {
             <EvidenceItem label="Provider">{displayEvidence(asset.provider, "Unknown")}</EvidenceItem>
             <EvidenceItem label="ASN" mono>{displayEvidence(asset.asn?.asn, "Unknown")}</EvidenceItem>
             <EvidenceItem label="HTTP observation"><StatusBadge value={asset.http?.observation_status} /></EvidenceItem>
-            <EvidenceItem label="HTTP status" mono>{asset.http?.status === 0 ? "Unknown" : displayEvidence(asset.http?.status, "Unknown")}</EvidenceItem>
+            <EvidenceItem label="HTTP status" mono>{displayHttpStatus(asset.http?.observation_status, asset.http?.status)}</EvidenceItem>
             <EvidenceItem label="Observed redirect destination" mono>{displayEvidence(asset.http?.redirect_evidence?.first_hop_destination, "Not observed")}</EvidenceItem>
             <EvidenceItem label={asset.http?.redirect_evidence?.completion_status === "COMPLETE" ? "Verified final URL" : "Final URL unresolved"} mono>{displayEvidence(asset.http?.redirect_evidence?.completion_status === "COMPLETE" ? asset.http.redirect_evidence.verified_terminal_url : null, "Unresolved or unavailable")}</EvidenceItem>
             {asset.http?.redirect_evidence?.completion_status === "LEGACY_UNKNOWN" && asset.http?.final_url && <EvidenceItem label="Historical URL (unverified)" mono>{asset.http.final_url}</EvidenceItem>}

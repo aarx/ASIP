@@ -2,6 +2,9 @@ import React, { useEffect, useState } from "react";
 
 const DIRECT_NAV_ITEMS = [
   ["overview", "OV", "Overview"],
+];
+
+const TRAILING_NAV_ITEMS = [
   ["investigate", "IN", "Investigate"],
 ];
 
@@ -17,7 +20,7 @@ const NAV_GROUPS = [
     symbol: "RX",
     label: "Risk & Exposure",
     items: [
-      ["risk", "RX", "Risk & Exposure"],
+      ["risk", "RX", "Risk Overview"],
       ["risk-needs-attention", "NA", "Needs Attention", "risk/needs-attention"],
       ["brand", "BP", "Brand Exposure"],
     ],
@@ -103,6 +106,9 @@ export default function AppShell({ activeRoute, routeMeta, children }) {
                 setOpenGroups((current) => ({ ...current, [group.key]: nextOpen }));
               }}
             />
+          ))}
+          {TRAILING_NAV_ITEMS.map(([route, symbol, label]) => (
+            <NavLink key={route} route={route} symbol={symbol} label={label} activeRoute={activeRoute} />
           ))}
         </nav>
 

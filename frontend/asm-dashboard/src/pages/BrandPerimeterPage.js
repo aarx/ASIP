@@ -6,7 +6,7 @@ import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { BrandDiscoveryPanel } from "../components/ui/OverviewIntelligence";
 import { brandAcceptanceInventory, isBrandAcceptanceFixture } from "../fixtures/brandAcceptance";
-import { displayAssetClass, displayEvidence } from "../utils/presentation";
+import { displayAssetClass, displayEvidence, displayHttpStatus } from "../utils/presentation";
 
 const LIMIT = 25;
 
@@ -31,12 +31,6 @@ function brandHash({ page = 1, search = "", ownership = "", asset_class: assetCl
   if (page > 1) params.set("page", String(page));
   if (fixture) params.set("fixture", fixture);
   return `#/brand${params.toString() ? `?${params}` : ""}`;
-}
-
-function httpStatusValue(value) {
-  return value === null || value === undefined || value === "" || value === 0 || value === "0" || Number.isNaN(value)
-    ? "Unknown"
-    : value;
 }
 
 function destinationEvidence(asset) {
@@ -168,7 +162,7 @@ export default function BrandPerimeterPage({ query }) {
               <tr key={asset.domain}>
                 <td><AssetLink domain={asset.domain} returnTo="brand" returnQuery={queryForReturn(query)} /><StatusBadge value={displayAssetClass(asset.asset_class)} /></td>
                 <td><span className="technical-value">{displayEvidence(asset.ip)}</span><span className="asset-secondary">{asset.has_ip ? "Resolution observed" : "No current IP evidence"}</span></td>
-                <td><StatusBadge value={asset.http_observation_status} /><span className="asset-secondary">{httpStatusValue(asset.http_status)}</span></td>
+                <td><StatusBadge value={asset.http_observation_status} /><span className="asset-secondary">{displayHttpStatus(asset.http_observation_status, asset.http_status)}</span></td>
                 <td>{destination ? <><span className="evidence-label">{destination.label}</span><span className="brand-destination technical-value" title={destination.value}>{destination.value}</span></> : <span className="not-applicable">—</span>}{asset.title && <span className="asset-secondary">Title: {asset.title}</span>}</td>
                 <td><AssetLink domain={asset.domain} returnTo="brand" returnQuery={queryForReturn(query)} className="row-action">→</AssetLink></td>
               </tr>

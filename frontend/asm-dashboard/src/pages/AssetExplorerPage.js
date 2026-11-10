@@ -10,7 +10,7 @@ import {
 import { exportV2AssetsCsv, getV2Assets } from "../services/api";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
-import { displayAssetClass, displayEvidence, isMissingEvidence } from "../utils/presentation";
+import { displayAssetClass, displayEvidence, displayHttpStatus, isMissingEvidence } from "../utils/presentation";
 
 const DEFAULT_LIMIT = 25;
 const SORT_DEFAULTS = { domain: "asc", priority: "desc", risk_score: "desc" };
@@ -141,7 +141,7 @@ function AssetTable({ assets, returnQuery, sortBy, sortDir, onSort }) {
                 </td>
                 <td>
                   <StatusBadge value={asset.http_observation_status} />
-                  <span className="asset-secondary">{asset.http_status == null ? "No status recorded" : asset.http_status}</span>
+                  <span className="asset-secondary">{displayHttpStatus(asset.http_observation_status, asset.http_status)}</span>
                   <span className="asset-secondary">{asset.http_live === true ? "HTTP responding" : asset.http_live === false ? "HTTP not responding" : "HTTP state unknown"}</span>
                 </td>
                 <td>

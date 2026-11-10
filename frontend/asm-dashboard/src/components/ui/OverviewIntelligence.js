@@ -8,7 +8,8 @@ const STATUS_GROUPS = [
   { key: "3xx", label: "3xx", color: "#327d80" },
   { key: "4xx", label: "4xx", color: "#e7a84b" },
   { key: "5xx", label: "5xx", color: "#f06467" },
-  { key: "no_response", label: "No recorded HTTP status", color: "#7e91a8" },
+  { key: "no_response", label: "No HTTP response", color: "#7e91a8" },
+  { key: "unknown", label: "No HTTP status recorded", color: "#a8b3c2" },
 ];
 
 export function parseCertificateExpiry(value) {
@@ -151,7 +152,7 @@ export function HttpStatusPanel({ value, status }) {
   } else {
     content = (
       <div className="overview-http-status-chart">
-        <div className="overview-chart-canvas" data-testid="overview-http-status-chart" aria-label="HTTP status distribution chart: 2xx, 3xx, 4xx, 5xx, No recorded HTTP status">
+        <div className="overview-chart-canvas" data-testid="overview-http-status-chart" aria-label="HTTP status distribution chart: 2xx, 3xx, 4xx, 5xx, No HTTP response, No HTTP status recorded">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 4, right: 12, bottom: 4, left: 0 }}>
               <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
@@ -164,7 +165,7 @@ export function HttpStatusPanel({ value, status }) {
             </BarChart>
           </ResponsiveContainer>
         </div>
-        <p className="overview-chart-note">Aggregate bucket for assets without a recognized numeric HTTP status; not the explicit NO_RESPONSE observation enum.</p>
+        <p className="overview-chart-note">NO_RESPONSE is shown separately; the No HTTP status recorded bucket is the backend&apos;s aggregate UNKNOWN group.</p>
       </div>
     );
   }
@@ -322,8 +323,8 @@ export function BrandDiscoveryPanel({ value, status = "ready", scanId, mode = "o
     const metrics = mode === "brand"
       ? [
         ["Total brand matches", union.domains, brandDiscoveryHref("brand_union")],
-        ["Brand TLD matches", summary.source_counts.brand_tld.domains, brandDiscoveryHref("brand_tld")],
-        ["Brand pattern matches", summary.source_counts.brand_pattern.domains, brandDiscoveryHref("brand_pattern")],
+        ["Other Domain Extensions", summary.source_counts.brand_tld.domains, brandDiscoveryHref("brand_tld")],
+        ["Brand Name Variations", summary.source_counts.brand_pattern.domains, brandDiscoveryHref("brand_pattern")],
         ["Needs Verification", union.by_asset_class.candidate, brandDiscoveryHref("brand_union", "CANDIDATE", true)],
       ]
       : [

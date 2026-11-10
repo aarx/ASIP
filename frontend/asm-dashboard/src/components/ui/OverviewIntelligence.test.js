@@ -36,10 +36,10 @@ test("renders supported aggregate charts with their scope", () => {
   expect(screen.getByText("Current authoritative confirmed-organizational scan")).toBeInTheDocument();
   expect(screen.getByTestId("overview-http-status-chart")).toHaveClass("overview-chart-canvas");
   expect(screen.getByTestId("overview-http-status-chart").parentElement).toHaveClass("overview-http-status-chart");
-  expect(screen.getByText(/not the explicit NO_RESPONSE observation enum/i)).toBeInTheDocument();
+  expect(screen.getByText(/NO_RESPONSE is shown separately/i)).toBeInTheDocument();
   expect(screen.getByTestId("overview-http-status-chart")).toHaveAttribute(
     "aria-label",
-    expect.stringContaining("No recorded HTTP status")
+    expect.stringContaining("No HTTP status recorded")
   );
   expect(screen.queryByRole("link", { name: /Open confirmed assets with no response/i })).not.toBeInTheDocument();
   expect(screen.queryByText("NO_RESPONSE")).not.toBeInTheDocument();
@@ -143,10 +143,10 @@ test("renders authoritative brand discovery totals with exact full and review dr
   expect(screen.getByRole("link", { name: "Open Total brand matches (32)" })).toHaveAttribute(
     "href", "#/assets?discovery_source=brand_union&limit=25"
   );
-  expect(screen.getByRole("link", { name: "Open Brand TLD matches (20)" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "Open Other Domain Extensions (20)" })).toHaveAttribute(
     "href", "#/assets?discovery_source=brand_tld&limit=25"
   );
-  expect(screen.getByRole("link", { name: "Open Brand pattern matches (15)" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "Open Brand Name Variations (15)" })).toHaveAttribute(
     "href", "#/assets?discovery_source=brand_pattern&limit=25"
   );
   expect(screen.getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(

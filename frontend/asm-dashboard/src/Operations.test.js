@@ -132,6 +132,8 @@ test("risk workspace presents exact metrics and separate review evidence", async
 
   render(<App />);
 
+  expect(screen.getByRole("heading", { name: "Risk Overview" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Risk Overview" })).toHaveAttribute("href", "#/risk");
   expect((await screen.findAllByText("critical.example.com"))[0]).toBeInTheDocument();
   const primaryKpis = screen.getByRole("region", { name: "Risk and exposure metrics" });
   const discoveryCard = within(primaryKpis).getByText("Discovery Sources").closest(".metric-card");
