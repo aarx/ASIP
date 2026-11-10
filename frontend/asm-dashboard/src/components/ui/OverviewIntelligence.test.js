@@ -1,12 +1,14 @@
 import React from "react";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import OverviewIntelligence, {
   BrandDiscoveryPanel,
   classifyCertificateExpiry,
   normalizeBrandDiscovery,
   normalizeNamingExposure,
   normalizeCertificateRecords,
+  normalizeSeedDistribution,
   parseCertificateExpiry,
+  SeedDistributionPanel,
 } from "./OverviewIntelligence";
 
 jest.mock("recharts", () => {
@@ -27,7 +29,6 @@ test("renders supported aggregate charts with their scope", () => {
     <OverviewIntelligence
       assetGrowth={growth}
       httpStatus={{ "2xx": 4, "3xx": 2, "4xx": 1, "5xx": 0, no_response: 3 }}
-      discoverySummary={{ scan_id: 42, candidate: 3, external: 2 }}
     />
   );
 
@@ -47,21 +48,55 @@ test("renders supported aggregate charts with their scope", () => {
   expect(screen.queryByRole("link", { name: /2xx|3xx|4xx|5xx/i })).not.toBeInTheDocument();
 });
 
-test("renders current unique-domain discovery totals with exact Brand Exposure links", () => {
-  render(<OverviewIntelligence discoverySummary={{ scan_id: 42, candidate: 3, external: 2 }} />);
+test("normalizes and renders verified current-scan seed groups", async () => {
+  expect(normalizeSeedDistribution([
+    { seed: "beta.example", domains_discovered: 4 },
+    { seed: "alpha.example", domains_discovered: 8 },
+    { seed: "beta.example", domains_discovered: 2 },
+    { seed: "invalid", domains_discovered: -1 },
+  ])).toEqual([
+    { seed: "beta.example", count: 6 },
+    { seed: "alpha.example", count: 8 },
+  ].sort((left, right) => right.count - left.count || left.seed.localeCompare(right.seed)));
 
-  const panel = document.getElementById("overview-discovery-validation");
-  expect(within(panel).getByText("SCAN #42")).toBeInTheDocument();
-  expect(within(panel).getByRole("link", { name: "Open Brand Exposure Needs Verification assets (3)" })).toHaveAttribute(
-    "href",
-    "#/brand?ownership=CANDIDATE"
+  render(<SeedDistributionPanel
+    value={[
+      { seed: "alpha.example", domains_discovered: 8 },
+      { seed: "beta.example", domains_discovered: 6 },
+    ]}
+    scanId={42}
+  />);
+
+  expect(screen.getByText("Seeds distribution")).toBeInTheDocument();
+  expect(screen.getByTestId("overview-seed-distribution-chart")).toHaveAttribute(
+    "aria-label", "Current authoritative scan 42 seed distribution"
   );
-  expect(within(panel).getByRole("link", { name: "Open Brand Exposure External assets (2)" })).toHaveAttribute(
-    "href",
-    "#/brand?asset_class=EXTERNAL"
-  );
-  expect(within(panel).getByText(/count unique domains/i)).toBeInTheDocument();
-  expect(within(panel).getByText(/Historical discovery-only records are excluded/i)).toBeInTheDocument();
+  expect(screen.getByRole("listitem", { name: "alpha.example: 8 discovered domains" })).toBeInTheDocument();
+  expect(screen.getByRole("listitem", { name: "beta.example: 6 discovered domains" })).toBeInTheDocument();
+  await waitFor(() => expect(document.querySelectorAll(".seed-distribution-bar-rise")).toHaveLength(2));
+  expect(screen.getAllByText("8")).toHaveLength(1);
+  expect(screen.getAllByText("6")).toHaveLength(1);
+});
+
+test("keeps seed distribution unavailable without verified data", () => {
+  const { rerender } = render(<SeedDistributionPanel status="error" />);
+  expect(screen.getByText("Seed distribution unavailable")).toBeInTheDocument();
+  rerender(<SeedDistributionPanel value={[]} />);
+  expect(screen.getByText("No verified current-scan seed attribution is available.")).toBeInTheDocument();
+  expect(screen.queryByTestId("overview-seed-distribution-chart")).not.toBeInTheDocument();
+});
+
+test("renders seed bars at final heights when reduced motion is requested", async () => {
+  const originalMatchMedia = window.matchMedia;
+  window.matchMedia = jest.fn().mockReturnValue({ matches: true });
+  try {
+    render(<SeedDistributionPanel value={[{ seed: "alpha.example", domains_discovered: 8 }]} scanId={42} />);
+    await waitFor(() => expect(document.querySelector(".seed-distribution-bar-reduced-motion")).toBeInTheDocument());
+    const bar = document.querySelector(".seed-distribution-bar-reduced-motion");
+    expect(bar).toHaveStyle({ height: "100%" });
+  } finally {
+    window.matchMedia = originalMatchMedia;
+  }
 });
 
 test("normalizes overlapping naming categories without treating them as additive", () => {
@@ -105,18 +140,6 @@ test("renders naming exposure loading, failure, and empty states", () => {
 
   rerender(<OverviewIntelligence namingExposure={[]} />);
   expect(screen.getByText("No naming matches")).toBeInTheDocument();
-});
-
-test("preserves zero discovery totals and handles loading or failed discovery requests", () => {
-  const { rerender } = render(<OverviewIntelligence discoverySummary={{ scan_id: 42, candidate: 0, external: 0 }} />);
-  const panel = document.getElementById("overview-discovery-validation");
-  expect(within(panel).getAllByText("0")).toHaveLength(2);
-
-  rerender(<OverviewIntelligence discoverySummaryStatus="loading" />);
-  expect(screen.getByText("Loading discovery validation")).toBeInTheDocument();
-
-  rerender(<OverviewIntelligence discoverySummaryStatus="error" />);
-  expect(screen.getByText("Discovery validation unavailable")).toBeInTheDocument();
 });
 
 test("renders authoritative brand discovery totals with exact full and review drilldowns", () => {

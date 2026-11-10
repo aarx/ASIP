@@ -125,6 +125,11 @@ export const getAssetGrowth = async () => {
   return res.data;
 };
 
+export const getSeeds = async () => {
+  const res = await axios.get(`${API_URL}/seeds`);
+  return res.data;
+};
+
 export const getCertExpiry = async () => {
   const res = await axios.get(`${API_URL}/cert-expiry`);
   return res.data;

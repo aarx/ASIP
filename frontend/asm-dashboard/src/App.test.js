@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getV2Assets, getV2Overview, getV2Scans } from "./services/api";
+import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getSeeds, getV2Assets, getV2Overview, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -14,6 +14,7 @@ jest.mock("./services/api", () => ({
   updateV2AssetOwnership: jest.fn(),
   getV2Scans: jest.fn(),
   getNamingAssetExposure: jest.fn(),
+  getSeeds: jest.fn(),
   getV2ReviewIndicators: jest.fn(),
   getV2AssetAssistant: jest.fn(),
   getInvestigationAssets: jest.fn(),
@@ -76,6 +77,7 @@ beforeEach(() => {
   getV2Scans.mockReset();
   getHttpStatus.mockReset();
   getNamingAssetExposure.mockReset();
+  getSeeds.mockReset();
   getCertExpiry.mockReset();
   getDiscoverySources.mockReset();
   getExposureSummary.mockReset();
@@ -96,6 +98,10 @@ test("renders the permanent shell and authoritative overview", async () => {
     { keyword: "STAGE", count: 1 },
   ]);
   getCertExpiry.mockResolvedValue([]);
+  getSeeds.mockResolvedValue([
+    { seed: "abc.com", domains_discovered: 18 },
+    { seed: "other.example", domains_discovered: 5 },
+  ]);
   getDiscoverySources.mockResolvedValue({ "Pentest Tool": 617, "SAN Expansion": 427, "Brand Expansion": 1241 });
   getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 14, http_responding_domains: 9 });
   render(<App />);
@@ -138,6 +144,14 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(within(overviewMetrics).getByText("14")).toBeInTheDocument();
   const kpiAssetGrowthPanel = screen.getByText("Asset growth trend").closest("section");
   expect(overviewMetrics.compareDocumentPosition(kpiAssetGrowthPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const chartRow = document.querySelector(".overview-chart-row");
+  expect(chartRow).toBeInTheDocument();
+  expect([...chartRow.querySelectorAll(":scope > .panel .panel-title")].map((node) => node.textContent)).toEqual([
+    "Asset growth trend", "Seeds distribution",
+  ]);
+  expect(within(chartRow).getByTestId("overview-seed-distribution-chart")).toHaveAttribute(
+    "aria-label", "Current authoritative scan 42 seed distribution"
+  );
   const discoverySourcesPanel = screen.getByRole("heading", { name: "Discovery Sources" }).closest("section");
   expect(discoverySourcesPanel).toHaveTextContent("All-time domain counts");
   expect(within(discoverySourcesPanel).getByText("Pentest Tools").parentElement).toHaveTextContent("617");
@@ -188,30 +202,28 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(within(overviewContent).getByText("Asset growth trend")).toBeInTheDocument();
   const certificatePanel = screen.getByText("Certificate health").closest("section");
   const changedPanel = screen.getByText("What changed").closest("section");
-  const discoveryPanel = screen.getByText("Discovery & validation").closest("section");
   expect(certificatePanel).toHaveClass("certificate-health-panel");
   expect(changedPanel).toHaveClass("change-panel");
-  expect(discoveryPanel).toHaveClass("discovery-validation-panel");
   const assetGrowthPanel = screen.getByText("Asset growth trend").closest("section");
   expect(assetGrowthPanel.compareDocumentPosition(changedPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(changedPanel.compareDocumentPosition(certificatePanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(changedPanel.compareDocumentPosition(discoveryPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(getCertExpiry).toHaveBeenCalledTimes(1);
-  expect(screen.getByText("Discovery & validation")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open Brand Exposure Needs Verification assets (3)" })).toHaveAttribute(
-    "href",
-    "#/brand?ownership=CANDIDATE"
+  expect(screen.queryByText("Discovery & validation")).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open Brand-related domains (32)" })).toHaveAttribute(
+    "href", "#/assets?discovery_source=brand_union&limit=25"
+  );
+  const brandPanel = screen.getByText("Brand discovery").closest("section");
+  expect(within(brandPanel).getByRole("link", { name: "Open External (2)" })).toHaveAttribute(
+    "href", "#/assets?discovery_source=brand_union&asset_class=EXTERNAL&limit=25"
   );
   expect(screen.getByText("Naming exposure")).toBeInTheDocument();
   expect(screen.getByLabelText("DEV: 2 matching confirmed assets")).toBeInTheDocument();
   expect(getNamingAssetExposure).toHaveBeenCalledTimes(1);
+  expect(getSeeds).toHaveBeenCalledTimes(1);
 
   expect(screen.queryByTestId("supporting-intelligence")).not.toBeInTheDocument();
   expect(within(overviewContent).getByText("Ownership & asset composition")).toBeInTheDocument();
   expect(within(overviewContent).getByText("Brand discovery")).toBeInTheDocument();
-  expect(within(overviewContent).getByRole("link", { name: "Open Brand-related domains (32)" })).toHaveAttribute(
-    "href", "#/assets?discovery_source=brand_union&limit=25"
-  );
   expect(within(overviewContent).getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(
     "href", "#/assets?discovery_source=brand_union&asset_class=CANDIDATE&limit=25"
   );

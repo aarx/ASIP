@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import Panel from "./Panel";
 import AssetLink from "./AssetLink";
@@ -134,6 +134,72 @@ export function AssetGrowthPanel({ value, status }) {
   );
 }
 
+export function normalizeSeedDistribution(value, maxGroups = 8) {
+  if (!Array.isArray(value)) return [];
+  const grouped = new Map();
+  value.forEach((row) => {
+    const seed = String(row?.seed || "").trim();
+    const count = Number(row?.domains_discovered);
+    if (!seed || !Number.isInteger(count) || count < 0) return;
+    grouped.set(seed, (grouped.get(seed) || 0) + count);
+  });
+  const sorted = [...grouped.entries()]
+    .map(([seed, count]) => ({ seed, count }))
+    .sort((left, right) => (right.count - left.count) || left.seed.localeCompare(right.seed));
+  const limit = Number.isInteger(maxGroups) && maxGroups > 0 ? maxGroups : 8;
+  const visible = sorted.slice(0, limit);
+  if (sorted.length > limit) {
+    const otherCount = sorted.slice(limit).reduce((total, row) => total + row.count, 0);
+    if (otherCount > 0) visible.push({ seed: "Other", count: otherCount });
+  }
+  return visible;
+}
+
+export function SeedDistributionPanel({ value, status = "ready", scanId }) {
+  const data = normalizeSeedDistribution(value);
+  const signature = data.map((row) => `${row.seed}:${row.count}`).join("|");
+  const [animatedSignature, setAnimatedSignature] = useState("");
+  const reducedMotion = typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  useEffect(() => {
+    if (signature) setAnimatedSignature(signature);
+  }, [signature]);
+
+  let content;
+  if (status === "loading") {
+    content = <ChartState title="Loading seed distribution" copy="Reading current-scan seed attribution." />;
+  } else if (status === "error") {
+    content = <ChartState title="Seed distribution unavailable" copy="Current-scan seed attribution could not be loaded." error />;
+  } else if (!data.length) {
+    content = <ChartState title="Seed distribution unavailable" copy="No verified current-scan seed attribution is available." />;
+  } else {
+    const maxCount = Math.max(...data.map((row) => row.count), 1);
+    content = (
+      <div className="seed-distribution-chart" data-testid="overview-seed-distribution-chart" aria-label={`Current authoritative scan ${scanId ?? ""} seed distribution`}>
+        <div className="seed-distribution-bars" role="list">
+          {data.map((row, index) => (
+            <div className="seed-distribution-bar-item" key={row.seed} role="listitem" aria-label={`${row.seed}: ${row.count.toLocaleString()} discovered domains`}>
+              <strong className="seed-distribution-bar-count">{row.count.toLocaleString()}</strong>
+              <div className="seed-distribution-bar-track">
+                <div
+                  className={`seed-distribution-bar${animatedSignature === signature ? (reducedMotion ? " seed-distribution-bar-reduced-motion" : " seed-distribution-bar-rise") : ""}`}
+                  style={{ height: `${(row.count / maxCount) * 100}%`, "--seed-delay": `${index * 60}ms` }}
+                  title={`${row.seed}: ${row.count.toLocaleString()} discovered domains`}
+                />
+              </div>
+              <span className="seed-distribution-bar-label" title={row.seed}>{row.seed}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return <Panel title="Seeds distribution" meta={scanId != null ? `SCAN #${scanId} · CURRENT-SCAN` : "CURRENT-SCAN"} className="intelligence-panel seed-distribution-panel">{content}</Panel>;
+}
+
 export function HttpStatusPanel({ value, status }) {
   const data = STATUS_GROUPS.map(({ key, label, color }) => ({
     key,
@@ -238,47 +304,6 @@ export function CertificateHealthPanel({ value, status, scanId, now }) {
   );
 }
 
-function normalizeDiscoverySummary(value) {
-  const candidate = Number(value?.candidate);
-  const external = Number(value?.external);
-  if (!Number.isInteger(candidate) || candidate < 0 || !Number.isInteger(external) || external < 0) return null;
-  return { candidate, external };
-}
-
-export function DiscoveryValidationPanel({ value, status, scanId }) {
-  const summary = normalizeDiscoverySummary(value);
-  let content;
-  if (status === "loading") {
-    content = <ChartState title="Loading discovery validation" copy="Reading current Needs Verification and External totals." />;
-  } else if (status === "error" || !summary) {
-    content = <ChartState title="Discovery validation unavailable" copy="The overview is available, but current Brand Exposure totals could not be loaded." error />;
-  } else {
-    content = (
-      <>
-        <div className="discovery-validation-signals" aria-label="Current discovery validation totals">
-          <a className="discovery-validation-signal" href="#/brand?ownership=CANDIDATE" aria-label={`Open Brand Exposure Needs Verification assets (${summary.candidate})`}>
-            <span>Needs Verification assets</span>
-            <strong>{summary.candidate}</strong>
-            <small>Review ownership</small>
-          </a>
-          <a className="discovery-validation-signal" href="#/brand?asset_class=EXTERNAL" aria-label={`Open Brand Exposure External assets (${summary.external})`}>
-            <span>External assets</span>
-            <strong>{summary.external}</strong>
-            <small>Outside confirmed surface</small>
-          </a>
-        </div>
-        <p className="discovery-validation-note">Current-scan Brand Exposure totals count unique domains. Historical discovery-only records are excluded, and neither category receives organizational risk.</p>
-      </>
-    );
-  }
-
-  return (
-    <Panel id="overview-discovery-validation" title="Discovery & validation" subtitle="Current unvalidated discovery outside the confirmed organizational surface" meta={scanId != null ? `SCAN #${scanId}` : "CURRENT"} className="intelligence-panel discovery-validation-panel">
-      {content}
-    </Panel>
-  );
-}
-
 function normalizeBrandCount(value) {
   const count = Number(value);
   return Number.isInteger(count) && count >= 0 ? count : null;
@@ -333,6 +358,9 @@ export function BrandDiscoveryPanel({ value, status = "ready", scanId, mode = "o
         ["Known", union.by_asset_class.known, brandDiscoveryHref("brand_union", "KNOWN")],
         ["Shadow", union.by_asset_class.shadow, brandDiscoveryHref("brand_union", "SHADOW")],
       ];
+    if (mode !== "brand" && union.by_asset_class.external > 0) {
+      metrics.push(["External", union.by_asset_class.external, brandDiscoveryHref("brand_union", "EXTERNAL")]);
+    }
     content = (
       <div className="brand-discovery-signals" aria-label="Current brand discovery totals">
         {metrics.map(([label, count, href]) => (
@@ -347,7 +375,7 @@ export function BrandDiscoveryPanel({ value, status = "ready", scanId, mode = "o
   }
 
   return (
-    <Panel id={mode === "brand" ? "brand-discovery-summary" : "overview-brand-discovery"} title="Brand discovery" meta={scanId != null ? `SCAN #${scanId}` : "CURRENT"} className={`${mode === "brand" ? "brand-discovery-panel-page" : "intelligence-panel brand-discovery-panel"}`}>
+    <Panel id={mode === "brand" ? "brand-discovery-summary" : "overview-brand-discovery"} title="Brand discovery" meta={scanId != null ? `SCAN #${scanId} · CURRENT-SCAN SUBSET` : "CURRENT-SCAN SUBSET"} className={`${mode === "brand" ? "brand-discovery-panel-page" : "intelligence-panel brand-discovery-panel"}`}>
       {content}
     </Panel>
   );
@@ -404,11 +432,10 @@ export function NamingExposurePanel({ value, status, scanId }) {
   );
 }
 
-export default function OverviewIntelligence({ assetGrowth, assetGrowthStatus = "ready", httpStatus, httpStatusStatus = "ready", certificateExpiry, certificateExpiryStatus = "ready", certificateScanId, certificateNow, discoverySummary, discoverySummaryStatus = "ready", namingExposure, namingExposureStatus = "ready" }) {
+export default function OverviewIntelligence({ assetGrowth, assetGrowthStatus = "ready", httpStatus, httpStatusStatus = "ready", certificateExpiry, certificateExpiryStatus = "ready", certificateScanId, certificateNow, namingExposure, namingExposureStatus = "ready" }) {
   return (
     <>
       <CertificateHealthPanel value={certificateExpiry} status={certificateExpiryStatus} scanId={certificateScanId} now={certificateNow} />
-      <DiscoveryValidationPanel value={discoverySummary} status={discoverySummaryStatus} scanId={discoverySummary?.scan_id} />
       <AssetGrowthPanel value={assetGrowth} status={assetGrowthStatus} />
       <HttpStatusPanel value={httpStatus} status={httpStatusStatus} />
       <NamingExposurePanel value={namingExposure} status={namingExposureStatus} scanId={certificateScanId} />

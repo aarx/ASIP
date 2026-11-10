@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getV2Overview, getV2Scans } from "../services/api";
+import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getSeeds, getV2Overview, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
@@ -8,9 +8,9 @@ import {
   AssetGrowthPanel,
   BrandDiscoveryPanel,
   CertificateHealthPanel,
-  DiscoveryValidationPanel,
   HttpStatusPanel,
   NamingExposurePanel,
+  SeedDistributionPanel,
 } from "../components/ui/OverviewIntelligence";
 
 const OWNERSHIP_COLORS = {
@@ -177,30 +177,26 @@ export default function OverviewPage() {
       getV2Overview(),
       Promise.resolve(getV2Scans(100)).catch(() => null),
       optionalRequest(getAssetGrowth),
+      optionalRequest(getSeeds),
       optionalRequest(getHttpStatus),
       optionalRequest(getCertExpiry),
       optionalRequest(getNamingAssetExposure),
       optionalRequest(getDiscoverySources),
       optionalRequest(getExposureSummary),
     ])
-      .then(([result, scans, assetGrowth, httpStatus, certificateExpiry, namingExposure, discoverySources, exposureSummary]) => {
+      .then(([result, scans, assetGrowth, seedDistribution, httpStatus, certificateExpiry, namingExposure, discoverySources, exposureSummary]) => {
         if (active) {
-          const candidateCount = countValue(result.counts?.candidate);
-          const externalCount = countValue(result.counts?.external);
-          const scopedDiscoverySummary = result.current_scan_id != null && candidateCount != null && externalCount != null
-            ? { value: { scan_id: result.current_scan_id, candidate: candidateCount, external: externalCount }, status: "ready" }
-            : { value: null, status: "error" };
           setData({
             ...result,
             scanHistory: scans,
             assetGrowth: assetGrowth.value,
             assetGrowthStatus: assetGrowth.status,
+            seedDistribution: seedDistribution.value,
+            seedDistributionStatus: seedDistribution.status,
             httpStatus: httpStatus.value,
             httpStatusStatus: httpStatus.status,
             certificateExpiry: certificateExpiry.value,
             certificateExpiryStatus: certificateExpiry.status,
-            discoverySummary: scopedDiscoverySummary.value,
-            discoverySummaryStatus: scopedDiscoverySummary.status,
             brandDiscovery: result.brand_discovery,
             brandDiscoveryStatus: result.brand_discovery ? "ready" : "error",
             namingExposure: namingExposure.value,
@@ -281,7 +277,10 @@ export default function OverviewPage() {
         </div>
       </section>
 
-      <AssetGrowthPanel value={data.assetGrowth} status={data.assetGrowthStatus} />
+      <div className="overview-chart-row">
+        <AssetGrowthPanel value={data.assetGrowth} status={data.assetGrowthStatus} />
+        <SeedDistributionPanel value={data.seedDistribution} status={data.seedDistributionStatus} scanId={data.current_scan_id} />
+      </div>
 
       <Panel title="What changed" subtitle="Exact membership delta between successful scans" meta={scanContext} className="change-panel">
         <a className="change-row change-row-link" href="#/changes?view=new"><span className="change-label">New organizational assets</span><span className="change-value">+{data.changes?.new_assets ?? 0}</span></a>
@@ -294,12 +293,6 @@ export default function OverviewPage() {
         status={data.certificateExpiryStatus}
         scanId={data.current_scan_id}
         now={data.certificateNow}
-      />
-
-      <DiscoveryValidationPanel
-        value={data.discoverySummary}
-        status={data.discoverySummaryStatus}
-        scanId={data.discoverySummary?.scan_id}
       />
 
       <Panel title="Ownership & asset composition" subtitle="Organizational surface and adjacent Brand Exposure" className="ownership-panel">
