@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { getAssetGrowth, getCertExpiry, getHttpStatus, getNamingAssetExposure, getV2BrandAssets, getV2Overview, getV2Scans } from "./services/api";
+import { getAssetGrowth, getCertExpiry, getHttpStatus, getNamingAssetExposure, getV2Assets, getV2BrandAssets, getV2Overview, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -53,9 +53,24 @@ const overview = {
   }],
 };
 
+const rankedAssetPage = {
+  scan_id: 42,
+  page: 1,
+  limit: 10,
+  sort_by: "risk_score",
+  sort_dir: "desc",
+  count: 1,
+  assets: [{
+    domain: "alpha.example",
+    asset_class: "SHADOW",
+    risk: { score: 9, priority: "High", reasons: ["finding", "shadow_asset"] },
+  }],
+};
+
 beforeEach(() => {
   window.location.hash = "#/overview";
   getV2Overview.mockReset();
+  getV2Assets.mockReset();
   getAssetGrowth.mockReset();
   getV2Scans.mockReset();
   getV2BrandAssets.mockReset();
@@ -194,13 +209,14 @@ test("shows no-authoritative-scan state without fabricating values", async () =>
 test("redirects the legacy Needs Attention overview route to the consolidated risk page", async () => {
   window.location.hash = "#/overview/needs-attention";
   getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue(rankedAssetPage);
   render(<App />);
 
   expect(await screen.findByText("alpha.example")).toBeInTheDocument();
-  expect(screen.getByText("Highest deterministic risk scores in the current surface")).toBeInTheDocument();
-  expect(screen.getByText("TOP 10")).toBeInTheDocument();
+  expect(screen.getByText("Positive-score assets ranked by deterministic risk")).toBeInTheDocument();
+  expect(screen.getByText("1 RANKED ASSETS")).toBeInTheDocument();
   expect(screen.getByText("alpha.example").closest("a")).toHaveAttribute(
-    "href", "#/assets/alpha.example?return=risk%2Fneeds-attention"
+    "href", "#/assets/alpha.example?return=risk%2Fneeds-attention&return_query=page%3D1%26limit%3D10"
   );
   expect(window.location.hash).toBe("#/risk/needs-attention");
   expect(screen.getByRole("link", { name: "Needs Attention" })).toHaveAttribute("aria-current", "page");
@@ -210,10 +226,11 @@ test("redirects the legacy Needs Attention overview route to the consolidated ri
 test("renders the consolidated Risk Distribution section after Needs Attention", async () => {
   window.location.hash = "#/overview/risk-distribution";
   getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue(rankedAssetPage);
   render(<App />);
 
   expect(await screen.findByText("Risk distribution")).toBeInTheDocument();
-  expect(screen.getByText("Needs attention").compareDocumentPosition(screen.getByText("Risk distribution")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByText("Risk distribution").compareDocumentPosition(screen.getByText("Needs attention")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.getByText("Canonical priorities across confirmed organizational assets")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /High 1/ })).toHaveAttribute("href", "#/assets?priority=High");
   expect(screen.getByRole("link", { name: /Low 11/ })).toHaveAttribute("href", "#/assets?priority=Low");
@@ -225,12 +242,84 @@ test("renders the consolidated Risk Distribution section after Needs Attention",
 test("renders the direct consolidated Needs Attention route", async () => {
   window.location.hash = "#/risk/needs-attention";
   getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue(rankedAssetPage);
   render(<App />);
 
   expect(await screen.findByText("Needs attention")).toBeInTheDocument();
   expect(screen.getByText("Risk distribution")).toBeInTheDocument();
   expect(window.location.hash).toBe("#/risk/needs-attention");
   expect(screen.getByRole("link", { name: "Needs Attention" })).toHaveAttribute("aria-current", "page");
+});
+
+test("paginates the ranked Needs Attention queue with stable backend ordering", async () => {
+  window.location.hash = "#/risk/needs-attention";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets
+    .mockResolvedValueOnce({ ...rankedAssetPage, count: 51 })
+    .mockResolvedValueOnce({ ...rankedAssetPage, limit: 25, count: 51 })
+    .mockResolvedValueOnce({ ...rankedAssetPage, page: 2, limit: 25, count: 51 })
+    .mockResolvedValueOnce({ ...rankedAssetPage, limit: 25, count: 51 });
+  render(<App />);
+
+  expect(await screen.findByText("51 RANKED ASSETS")).toBeInTheDocument();
+  expect(getV2Assets).toHaveBeenCalledWith({
+    page: 1,
+    limit: 10,
+    risk_positive: true,
+    sort_by: "risk_score",
+    sort_dir: "desc",
+  });
+  expect(screen.getByLabelText("Rows per page")).toHaveValue("10");
+  expect(screen.getByRole("option", { name: "50" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+  expect(getV2Assets).toHaveBeenCalledTimes(1);
+
+  fireEvent.change(screen.getByLabelText("Rows per page"), { target: { value: "25" } });
+  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 1,
+    limit: 25,
+    risk_positive: true,
+    sort_by: "risk_score",
+    sort_dir: "desc",
+  }));
+  expect(window.location.hash).toBe("#/risk/needs-attention?page=1&limit=25");
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 2,
+    limit: 25,
+    risk_positive: true,
+    sort_by: "risk_score",
+    sort_dir: "desc",
+  }));
+  expect(window.location.hash).toBe("#/risk/needs-attention?page=2&limit=25");
+  expect(screen.getByRole("button", { name: "Previous" })).toBeEnabled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 1,
+    limit: 25,
+    risk_positive: true,
+    sort_by: "risk_score",
+    sort_dir: "desc",
+  }));
+  expect(window.location.hash).toBe("#/risk/needs-attention?page=1&limit=25");
+});
+
+test("shows honest ranked queue empty and error states", async () => {
+  window.location.hash = "#/risk/needs-attention";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue({ ...rankedAssetPage, count: 0, assets: [] });
+  const { unmount } = render(<App />);
+
+  expect(await screen.findByText("No ranked assets")).toBeInTheDocument();
+  unmount();
+
+  getV2Assets.mockRejectedValue(new Error("offline"));
+  render(<App />);
+  expect(await screen.findByText("Ranked assets unavailable")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Retry request" })).toBeInTheDocument();
 });
 
 test("redirects the legacy Settings route to Overview without placeholder content", async () => {

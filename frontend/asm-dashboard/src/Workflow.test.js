@@ -3,6 +3,7 @@ import App from "./App";
 import {
   getDisappearedDomains,
   getNewDomainsDelta,
+  getV2Assets,
   getV2AssetDetail,
   getV2Overview,
 } from "./services/api";
@@ -63,6 +64,7 @@ const detail = {
 
 beforeEach(() => {
   getV2Overview.mockReset();
+  getV2Assets.mockReset();
   getNewDomainsDelta.mockReset();
   getDisappearedDomains.mockReset();
   getV2AssetDetail.mockReset();
@@ -71,10 +73,23 @@ beforeEach(() => {
 test("Overview metrics and attention assets lead into analyst workflows", async () => {
   window.location.hash = "#/risk/needs-attention";
   getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue({
+    scan_id: 42,
+    page: 1,
+    limit: 10,
+    sort_by: "risk_score",
+    sort_dir: "desc",
+    count: 1,
+    assets: [{
+      domain: "attention.example",
+      asset_class: "KNOWN",
+      risk: { score: 9, priority: "High", reasons: ["finding"] },
+    }],
+  });
   render(<App />);
 
   expect(await screen.findByText("attention.example")).toBeInTheDocument();
-  expect(screen.getByText("attention.example").closest("a")).toHaveAttribute("href", "#/assets/attention.example?return=risk%2Fneeds-attention");
+  expect(screen.getByText("attention.example").closest("a")).toHaveAttribute("href", "#/assets/attention.example?return=risk%2Fneeds-attention&return_query=page%3D1%26limit%3D10");
   expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("href", "#/overview");
   expect(screen.getByRole("link", { name: "Risk Overview" })).toHaveAttribute("href", "#/risk");
 });

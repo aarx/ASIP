@@ -8,7 +8,7 @@ function humanizeReason(reason) {
     .replaceAll("_", " ");
 }
 
-export function AttentionTable({ assets, returnTo = "overview" }) {
+export function AttentionTable({ assets, returnTo = "overview", returnQuery }) {
   if (!assets.length) {
     return <p className="panel-subtitle">No scored assets currently require attention.</p>;
   }
@@ -22,7 +22,7 @@ export function AttentionTable({ assets, returnTo = "overview" }) {
         <tbody>
           {assets.map((asset) => (
             <tr key={asset.domain}>
-              <td><AssetLink domain={asset.domain} returnTo={returnTo} /></td>
+              <td><AssetLink domain={asset.domain} returnTo={returnTo} returnQuery={returnQuery} /></td>
               <td><StatusBadge value={asset.priority} /></td>
               <td><span className="risk-score">{asset.score}</span></td>
               <td>
