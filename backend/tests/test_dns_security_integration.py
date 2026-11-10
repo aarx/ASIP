@@ -1,6 +1,10 @@
 import os
 import pathlib
+import shutil
+import socket
 import sys
+import tempfile
+import subprocess
 import unittest
 from unittest import mock
 
@@ -146,10 +150,10 @@ class DnsSecurityApiTests(unittest.TestCase):
         else:
             os.environ["ASIP_DEFAULT_SCAN_OPERATIONS"] = self.old_env
 
-    def test_summary_distinguishes_checked_unchecked_findings_and_disabled(self):
+    def test_summary_distinguishes_checked_unchecked_findings_and_not_executed(self):
         cursor = ApiCursor([
             ("SUCCEEDED", {"version": 1, "attempts": []}),
-            (10, 3, 9, 2),
+            (10, 3, 5, 4, 2),
             [("CLEAR", 5), ("WARNING", 2), ("INCONCLUSIVE", 2)],
             [("INFO", 5), ("LOW", 4)],
             [("dns_a_resolution", 5), ("cname_health", 4)],
@@ -157,11 +161,12 @@ class DnsSecurityApiTests(unittest.TestCase):
         conn = ApiConnection(cursor)
         with mock.patch.object(main, "get_conn", return_value=conn):
             result = main.dns_security_summary(scan_id=91)
-        self.assertEqual(result["execution_state"], "DISABLED")
+        self.assertEqual(result["execution_state"], "NOT_EXECUTED")
         self.assertEqual((result["eligible_assets"], result["checked_assets"],
                           result["unchecked_assets"], result["affected_assets"]), (10, 3, 7, 2))
         self.assertEqual(result["dns_finding_records"], 2)
-        self.assertEqual(result["checks_executed"], 9)
+        self.assertEqual(result["checks_executed"], 5)
+        self.assertEqual(result["not_checked_records"], 4)
         self.assertEqual(result["counts_by_outcome"]["CLEAR"], 5)
         self.assertTrue(all("'KNOWN','SHADOW'" in sql or "'KNOWN', 'SHADOW'" in sql
                             for sql, _ in cursor.executions[1:]))
@@ -183,7 +188,8 @@ class DnsSecurityApiTests(unittest.TestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["findings"][0]["domain"], "synthetic.example")
         self.assertEqual(cursor.executions[1][1], (91, "cname_health", "WARNING", "SHADOW"))
-        self.assertIn("JOIN scan_results sr ON sr.scan_id = c.scan_id", cursor.executions[1][0])
+        self.assertIn("EXISTS (SELECT 1 FROM scan_results sr", cursor.executions[1][0])
+        self.assertNotIn("JOIN scan_results sr", cursor.executions[1][0])
         self.assertIn("ORDER BY c.checked_at DESC, d.domain ASC", cursor.executions[2][0])
         self.assertEqual(cursor.executions[2][1][-2:], (1, 1))
 
@@ -217,9 +223,16 @@ class DnsSecurityApiTests(unittest.TestCase):
         self.assertEqual(result["domain_id"], 4)
         self.assertEqual(result["execution_state"], "CHECKED")
         self.assertEqual(result["checks"][0]["verification_status"], "POTENTIAL_EXPOSURE")
-        self.assertEqual(cursor.executions[1][1], (91, 4))
+        self.assertEqual(cursor.executions[1][1], (4, 91))
         self.assertEqual(cursor.executions[2][1], (91, 4))
         self.assertIn("WHERE scan_id = %s AND domain_id = %s", cursor.executions[2][0])
+
+    def test_historical_execution_state_uses_only_persisted_diagnostics(self):
+        with mock.patch.object(main, "default_operation_enabled", return_value=True):
+            self.assertEqual(main._dns_security_execution({"version": 1, "attempts": []}),
+                             ("NOT_EXECUTED", None))
+            self.assertEqual(main._dns_security_execution(None), ("UNKNOWN", None))
+            self.assertEqual(main._dns_security_execution({"version": 1}), ("UNKNOWN", None))
 
     def test_dns_stage_worker_summary_is_available_to_diagnostics(self):
         summary = extract_worker_summary(
@@ -228,6 +241,122 @@ class DnsSecurityApiTests(unittest.TestCase):
         self.assertEqual(summary, {"selected": 3, "completed": 2,
                                    "checks_persisted": 14, "disabled": False})
 
+
+class PostgreSQLDnsSecurityReportingTests(unittest.TestCase):
+    """Exercise reporting SQL against a real disposable PostgreSQL instance."""
+
+    @classmethod
+    def setUpClass(cls):
+        initdb = shutil.which("initdb") or "/usr/lib/postgresql/18/bin/initdb"
+        pg_ctl = shutil.which("pg_ctl") or "/usr/lib/postgresql/18/bin/pg_ctl"
+        if not pathlib.Path(initdb).is_file() or not pathlib.Path(pg_ctl).is_file():
+            raise unittest.SkipTest("PostgreSQL server binaries are unavailable")
+        cls.runtime = tempfile.TemporaryDirectory(prefix="asip-dns-reporting-pg-")
+        root = pathlib.Path(cls.runtime.name)
+        cls.data_dir, cls.socket_dir = root / "data", root / "socket"
+        cls.socket_dir.mkdir()
+        cls.log_file = root / "postgres.log"
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            cls.port = sock.getsockname()[1]
+        cls.pg_ctl = pg_ctl
+        cls.initdb = initdb
+        try:
+            subprocess.run([initdb, f"--pgdata={cls.data_dir}", "--auth=trust",
+                            "--username=asip_dns_report_test", "--no-locale"],
+                           check=True, capture_output=True, text=True)
+            subprocess.run([pg_ctl, f"--pgdata={cls.data_dir}", "start", "--wait",
+                            f"--log={cls.log_file}", "--options",
+                            f"-F -k {cls.socket_dir} -p {cls.port} -c listen_addresses=''"],
+                           check=True, capture_output=True, text=True)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            cls.runtime.cleanup()
+            raise unittest.SkipTest(f"Disposable PostgreSQL could not start: {exc}") from exc
+        import psycopg2
+        cls.psycopg2 = psycopg2
+        cls.db_args = {"host": str(cls.socket_dir), "port": cls.port,
+                       "dbname": "postgres", "user": "asip_dns_report_test"}
+        with psycopg2.connect(**cls.db_args) as conn, conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE scans (id integer PRIMARY KEY, status text NOT NULL,
+                                    stage_diagnostics jsonb);
+                CREATE TABLE seed_domains (domain text);
+                CREATE TABLE known_domains (domain text);
+                CREATE TABLE domains (id integer PRIMARY KEY, domain text UNIQUE,
+                                      ownership_status text NOT NULL,
+                                      scannable boolean NOT NULL);
+                CREATE TABLE scan_results (scan_id integer NOT NULL, domain_id integer NOT NULL,
+                                           seed text NOT NULL);
+                CREATE TABLE dns_security_checks (
+                    id integer PRIMARY KEY, scan_id integer NOT NULL, domain_id integer NOT NULL,
+                    check_key text NOT NULL, target_identity text NOT NULL DEFAULT '',
+                    record_type text NOT NULL DEFAULT '', outcome text NOT NULL,
+                    severity text NOT NULL, confidence text NOT NULL, evidence jsonb NOT NULL,
+                    remediation text, checked_at timestamptz NOT NULL
+                );
+                INSERT INTO scans VALUES (91, 'SUCCEEDED', '{"version":1,"attempts":[]}');
+                INSERT INTO seed_domains VALUES ('example.test');
+                INSERT INTO domains VALUES
+                  (1,'zero.example.test','CONFIRMED',true),
+                  (2,'one.example.test','CONFIRMED',true),
+                  (3,'multi.example.test','CONFIRMED',true),
+                  (4,'unchecked.example.test','CONFIRMED',true),
+                  (5,'mixed.example.test','CONFIRMED',true),
+                  (6,'affected.example.test','CONFIRMED',true),
+                  (7,'candidate.example.test','CANDIDATE',true),
+                  (8,'external.example.test','EXTERNAL',true);
+                INSERT INTO scan_results
+                  SELECT 91, id, 'seed-a' FROM domains
+                  UNION ALL SELECT 91, id, 'seed-b' FROM domains WHERE id IN (3,6);
+                INSERT INTO dns_security_checks VALUES
+                  (1,91,2,'dns_a_resolution','','A','CLEAR','INFO','HIGH','{}',NULL,'2026-01-01'),
+                  (2,91,3,'dns_a_resolution','','A','CLEAR','INFO','HIGH','{}',NULL,'2026-01-02'),
+                  (3,91,3,'spf_configuration','','TXT','WARNING','LOW','MEDIUM','{}',NULL,'2026-01-03'),
+                  (4,91,4,'dns_a_resolution','','A','NOT_CHECKED','UNKNOWN','UNKNOWN','{}',NULL,'2026-01-04'),
+                  (5,91,5,'dns_a_resolution','','A','NOT_CHECKED','UNKNOWN','UNKNOWN','{}',NULL,'2026-01-05'),
+                  (6,91,5,'dns_aaaa_resolution','','AAAA','INCONCLUSIVE','UNKNOWN','LOW','{}',NULL,'2026-01-06'),
+                  (7,91,6,'cname_health','a.example.test','CNAME','POTENTIAL_EXPOSURE','MEDIUM','MEDIUM','{}',NULL,'2026-01-07'),
+                  (8,91,6,'cname_health','b.example.test','CNAME','WARNING','LOW','MEDIUM','{}',NULL,'2026-01-08'),
+                  (9,91,7,'dns_a_resolution','','A','CONFIRMED_ISSUE','HIGH','HIGH','{}',NULL,'2026-01-09'),
+                  (10,91,8,'dns_a_resolution','','A','CONFIRMED_ISSUE','HIGH','HIGH','{}',NULL,'2026-01-10');
+            """)
+
+    @classmethod
+    def tearDownClass(cls):
+        if hasattr(cls, "data_dir") and cls.data_dir.exists():
+            subprocess.run([cls.pg_ctl, f"--pgdata={cls.data_dir}", "stop", "--wait"],
+                           check=False, capture_output=True, text=True)
+        if hasattr(cls, "runtime"):
+            cls.runtime.cleanup()
+
+    def connect(self):
+        return self.psycopg2.connect(**self.db_args)
+
+    def test_real_sql_counts_are_domain_and_assessment_accurate(self):
+        with mock.patch.object(main, "get_conn", side_effect=self.connect), \
+             mock.patch.object(main, "default_operation_enabled", return_value=True):
+            result = main.dns_security_summary(scan_id=91)
+        self.assertEqual(result["eligible_assets"], 6)
+        self.assertEqual(result["checked_assets"], 4)
+        self.assertEqual(result["unchecked_assets"], 2)
+        self.assertEqual(result["checks_executed"], 6)
+        self.assertEqual(result["not_checked_records"], 2)
+        self.assertEqual(result["affected_assets"], 2)
+        self.assertEqual(result["dns_finding_records"], 3)
+        self.assertEqual(result["counts_by_outcome"], {
+            "CLEAR": 2, "INCONCLUSIVE": 1, "NOT_CHECKED": 2,
+            "POTENTIAL_EXPOSURE": 1, "WARNING": 2,
+        })
+        self.assertEqual(sum(result["counts_by_category"].values()), 8)
+
+    def test_real_sql_findings_and_domain_evidence_deduplicate_seed_membership(self):
+        with mock.patch.object(main, "get_conn", side_effect=self.connect):
+            page = main.dns_security_findings(scan_id=91, outcome="WARNING", limit=20)
+            evidence = main.dns_security_domain_evidence(3, scan_id=91)
+        self.assertEqual(page["total"], 2)
+        self.assertEqual([row["domain_id"] for row in page["findings"]], [6, 3])
+        self.assertEqual(len(evidence["checks"]), 2)
+        self.assertEqual(evidence["domain_id"], 3)
 
 if __name__ == "__main__":
     unittest.main()

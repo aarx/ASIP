@@ -3338,19 +3338,23 @@ def _dns_security_eligible_cte():
 
 
 def _dns_security_execution(scan_diagnostics):
+    diagnostics_available = scan_diagnostics is not None
     if isinstance(scan_diagnostics, str):
         try:
             scan_diagnostics = json.loads(scan_diagnostics)
         except (TypeError, ValueError):
             scan_diagnostics = None
+            diagnostics_available = False
     attempts = scan_diagnostics.get("attempts", []) if isinstance(scan_diagnostics, dict) else []
-    dns_attempts = [item for item in attempts if item.get("stage") == "DNS Security"]
+    dns_attempts = [item for item in attempts
+                    if isinstance(item, dict) and item.get("stage") == "DNS Security"]
     if dns_attempts:
         attempt = dns_attempts[-1]
-        return attempt.get("status", "UNKNOWN"), attempt.get("worker_summary")
-    if default_operation_enabled("DNS_SECURITY"):
-        return "NOT_EXECUTED", None
-    return "DISABLED", None
+        return attempt.get("status") or "UNKNOWN", attempt.get("worker_summary")
+    # Current configuration says nothing about whether a historical scan ran
+    # this optional stage. Only persisted scan diagnostics can establish that.
+    return ("NOT_EXECUTED" if diagnostics_available and isinstance(scan_diagnostics, dict)
+            and isinstance(scan_diagnostics.get("attempts"), list) else "UNKNOWN"), None
 
 
 def _dns_filter_value(value, allowed, name):
@@ -3374,16 +3378,24 @@ def dns_security_summary(scan_id: int = None):
         scan_id, diagnostics = _dns_security_scan(cur, scan_id)
         eligible_cte = _dns_security_eligible_cte()
         cur.execute(eligible_cte + """
-            SELECT COUNT(*), COUNT(DISTINCT e.domain_id) FILTER (WHERE c.domain_id IS NOT NULL),
-                   COUNT(c.id),
-                   COUNT(DISTINCT c.domain_id) FILTER (
-                       WHERE c.outcome IN ('CONFIRMED_ISSUE','POTENTIAL_EXPOSURE','WARNING')
-                   )
-              FROM eligible e
-              LEFT JOIN dns_security_checks c
-                ON c.scan_id = %s AND c.domain_id = e.domain_id
+            , check_counts AS (
+                SELECT COUNT(*) FILTER (WHERE c.outcome <> 'NOT_CHECKED') AS checks_executed,
+                       COUNT(*) FILTER (WHERE c.outcome = 'NOT_CHECKED') AS not_checked_records,
+                       COUNT(DISTINCT c.domain_id) FILTER (
+                           WHERE c.outcome <> 'NOT_CHECKED'
+                       ) AS checked_assets,
+                       COUNT(DISTINCT c.domain_id) FILTER (
+                           WHERE c.outcome IN ('CONFIRMED_ISSUE','POTENTIAL_EXPOSURE','WARNING')
+                       ) AS affected_assets
+                  FROM dns_security_checks c
+                  JOIN eligible e ON e.domain_id = c.domain_id
+                 WHERE c.scan_id = %s
+            )
+            SELECT (SELECT COUNT(DISTINCT domain_id) FROM eligible),
+                   checked_assets, checks_executed, not_checked_records, affected_assets
+              FROM check_counts
         """, (scan_id, scan_id))
-        eligible, checked, check_count, affected = cur.fetchone()
+        eligible, checked, check_count, not_checked_count, affected = cur.fetchone()
 
         def grouped(column):
             cur.execute(eligible_cte + f"""
@@ -3413,6 +3425,8 @@ def dns_security_summary(scan_id: int = None):
                 "CONFIRMED_ISSUE", "POTENTIAL_EXPOSURE", "WARNING",
             )),
             "checks_executed": check_count,
+            "not_checked_records": not_checked_count,
+            "checks_executed_semantics": "check records with an outcome other than NOT_CHECKED",
             "counts_by_outcome": by_outcome,
             "counts_by_severity": by_severity,
             "counts_by_category": by_category,
@@ -3449,7 +3463,8 @@ def dns_security_findings(
         scan_id, _diagnostics = _dns_security_scan(cur, scan_id)
         classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
         filters = [
-            "c.scan_id = %s", "sr.scan_id = c.scan_id",
+            "c.scan_id = %s",
+            "EXISTS (SELECT 1 FROM scan_results sr WHERE sr.scan_id = c.scan_id AND sr.domain_id = c.domain_id)",
             "d.scannable IS TRUE", f"({classification}) IN ('KNOWN','SHADOW')",
         ]
         params = [scan_id]
@@ -3463,7 +3478,6 @@ def dns_security_findings(
         cur.execute(f"""
             SELECT COUNT(*)
               FROM dns_security_checks c
-              JOIN scan_results sr ON sr.scan_id = c.scan_id AND sr.domain_id = c.domain_id
               JOIN domains d ON d.id = c.domain_id
              WHERE {where}
         """, tuple(params))
@@ -3473,7 +3487,6 @@ def dns_security_findings(
                    c.check_key, c.outcome, c.severity, c.confidence, c.record_type,
                    c.target_identity, c.evidence, c.remediation, c.checked_at
               FROM dns_security_checks c
-              JOIN scan_results sr ON sr.scan_id = c.scan_id AND sr.domain_id = c.domain_id
               JOIN domains d ON d.id = c.domain_id
              WHERE {where}
              ORDER BY c.checked_at DESC, d.domain ASC, c.check_key ASC,
@@ -3512,13 +3525,13 @@ def dns_security_domain_evidence(domain_id: int, scan_id: int = None):
         classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
         cur.execute(f"""
             SELECT d.id, d.domain, ({classification}) AS asset_class
-              FROM scan_results sr
-              JOIN domains d ON d.id = sr.domain_id
-             WHERE sr.scan_id = %s AND d.id = %s
+              FROM domains d
+             WHERE d.id = %s
+               AND EXISTS (SELECT 1 FROM scan_results sr WHERE sr.scan_id = %s AND sr.domain_id = d.id)
                AND d.scannable IS TRUE
                AND ({classification}) IN ('KNOWN','SHADOW')
              LIMIT 1
-        """, (scan_id, domain_id))
+        """, (domain_id, scan_id))
         asset = cur.fetchone()
         if asset is None:
             raise HTTPException(status_code=404, detail="Organizational scan asset not found")
