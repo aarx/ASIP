@@ -1,11 +1,14 @@
 import os
 import pathlib
+import shlex
 import shutil
 import socket
 import sys
 import tempfile
 import subprocess
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from unittest import mock
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
@@ -82,6 +85,62 @@ class CreateScanConnection:
 
 
 class DnsSecurityWorkerTests(unittest.TestCase):
+    def test_worker_emits_one_flushable_structured_summary_with_counters(self):
+        cursor = WorkerCursor(
+            [(4, "known.example")], scan_row=("RUNNING", [4, 5, 6])
+        )
+        selection_conn = WorkerConnection(cursor)
+        target_conn = WorkerConnection(WorkerCursor())
+        connections = iter((selection_conn, target_conn))
+        stdout = StringIO()
+        with mock.patch.object(dns_security_worker, "default_operation_enabled", return_value=True), \
+             mock.patch.object(dns_security_worker, "get_conn", side_effect=lambda: next(connections)), \
+             mock.patch.object(dns_security_worker, "dns_security_query_authorizer", return_value=lambda _name: True), \
+             mock.patch.object(dns_security_worker, "persist_dns_security_check", return_value=True), \
+             redirect_stdout(stdout):
+            result = dns_security_worker.run_dns_security_stage(
+                91, run_scoped=True, resolver_factory=lambda: _EmptyResolver()
+            )
+
+        lines = stdout.getvalue().splitlines()
+        self.assertEqual(result, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("dns_security_stage {"))
+        summary = extract_worker_summary(lines[0])
+        self.assertEqual(summary["selected"], 1)
+        self.assertEqual(summary["completed"], 1)
+        self.assertEqual(summary["checks_persisted"], 6)
+        self.assertEqual(summary["query_attempts"], 6)
+        self.assertTrue(summary["run_scoped"])
+        self.assertEqual(summary["run_scope_target_count"], 3)
+        self.assertFalse(summary["query_budget_exhausted"])
+
+    def test_orchestrator_captures_dns_worker_summary_from_stdout(self):
+        output = (
+            'dns_security_stage {"selected":3,"completed":2,'
+            '"checks_persisted":14,"query_attempts":18,'
+            '"query_budget_exhausted":false,"disabled":false}'
+        )
+        command = f"{shlex.quote(sys.executable)} -c {shlex.quote(f'print({output!r})')}"
+        with mock.patch.object(orchestration, "_diagnostics_start"), \
+             mock.patch.object(orchestration, "_diagnostics_finish") as finish:
+            result = orchestration.run_step(
+                "DNS Security", command, 1, 1, timeout_seconds=5,
+                scan_id=91, runner_token="runner", stage_order=12,
+            )
+
+        self.assertEqual(result, 0)
+        finish.assert_called_once()
+        summary = finish.call_args.args[-1]
+        self.assertEqual(summary, {
+            "selected": 3,
+            "completed": 2,
+            "checks_persisted": 14,
+            "query_attempts": 18,
+            "query_budget_exhausted": False,
+            "disabled": False,
+        })
+
     def test_normal_scan_persists_bounded_dns_target_ids_on_its_own_row(self):
         conn = CreateScanConnection()
         identity = {}

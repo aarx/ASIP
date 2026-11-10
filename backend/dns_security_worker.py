@@ -25,7 +25,11 @@ from dns_security import (
 
 
 def _emit(summary):
-    logging.info("dns_security_stage %s", json.dumps(summary, sort_keys=True, separators=(",", ":")))
+    print(
+        "dns_security_stage "
+        + json.dumps(summary, sort_keys=True, separators=(",", ":")),
+        flush=True,
+    )
 
 
 def run_dns_security_stage(scan_id, *, run_scoped=False, resolver_factory=None):
