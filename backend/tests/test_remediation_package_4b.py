@@ -219,7 +219,7 @@ class Package4BApiTests(unittest.TestCase):
         self.assertEqual(count_params, (42, None, None, None))
         self.assertEqual(page_params, (42, None, None, None, 20, 0))
 
-    def test_dashboard_organizational_queries_require_confirmed_ownership(self):
+    def test_dashboard_organizational_queries_use_effective_known_shadow_scope(self):
         text = (BACKEND / "main.py").read_text(encoding="utf-8")
         for name in (
             "http_status", "exposure_summary", "sensitive_exposure",
@@ -231,7 +231,15 @@ class Package4BApiTests(unittest.TestCase):
                 start = text.index(f"def {name}(")
                 end = text.find("\n@app.get", start)
                 block = text[start:end if end != -1 else None]
-                self.assertIn("ownership_status = 'CONFIRMED'", block)
+                if name in {"http_status", "exposure_summary"}:
+                    # Current reporting uses the shared effective class. A
+                    # historical CONFIRMED decision alone must not include
+                    # an out-of-scope Candidate in organizational metrics.
+                    self.assertIn("reporting_asset_class_sql(", block)
+                    self.assertIn("IN ('KNOWN', 'SHADOW')", block)
+                    self.assertNotIn("ownership_status = 'CONFIRMED'", block)
+                else:
+                    self.assertIn("ownership_status = 'CONFIRMED'", block)
 
 
 if __name__ == "__main__":
