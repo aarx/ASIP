@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getV2Assets, getV2BrandAssets, getV2Overview, getV2Scans } from "./services/api";
+import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getV2Assets, getV2Overview, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -13,7 +13,6 @@ jest.mock("./services/api", () => ({
   getV2AssetDetail: jest.fn(),
   updateV2AssetOwnership: jest.fn(),
   getV2Scans: jest.fn(),
-  getV2BrandAssets: jest.fn(),
   getNamingAssetExposure: jest.fn(),
   getV2ReviewIndicators: jest.fn(),
   getV2AssetAssistant: jest.fn(),
@@ -75,7 +74,6 @@ beforeEach(() => {
   getV2Assets.mockReset();
   getAssetGrowth.mockReset();
   getV2Scans.mockReset();
-  getV2BrandAssets.mockReset();
   getHttpStatus.mockReset();
   getNamingAssetExposure.mockReset();
   getCertExpiry.mockReset();
@@ -93,13 +91,6 @@ test("renders the permanent shell and authoritative overview", async () => {
       { scan_id: 42, status: "SUCCEEDED", completed_at: "2026-09-26T10:00:00Z", is_current_authoritative: true },
     ],
   });
-  getV2BrandAssets.mockImplementation(({ asset_class: assetClass }) => Promise.resolve({
-    scan_id: 42,
-    page: 1,
-    limit: 1,
-    count: assetClass === "CANDIDATE" ? 3 : 2,
-    assets: [],
-  }));
   getNamingAssetExposure.mockResolvedValue([
     { keyword: "DEV", count: 2 },
     { keyword: "STAGE", count: 1 },
@@ -112,35 +103,46 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByText("Loading authoritative state")).toBeInTheDocument();
   expect(await screen.findByText("Brand discovery")).toBeInTheDocument();
   expect(screen.getByText("ShadowRecon")).toBeInTheDocument();
-  const kpiStrip = screen.getByRole("region", { name: "Overview metrics" });
-  expect([...kpiStrip.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
-    "Organizational assets",
-    "High risk",
-    "Shadow assets",
-    "New assets",
-    "Current scan assets",
-    "Needs Verification",
-    "All-time domains",
-    "Assets with IP Addresses",
-    "Discovery Sources",
-  ]);
-  expect(within(kpiStrip).getByText("Known + Shadow")).toBeInTheDocument();
-  expect(within(kpiStrip).getByText("Organizational + Needs Verification + External")).toBeInTheDocument();
-  expect(within(kpiStrip).getByText("Ownership not established")).toBeInTheDocument();
-  expect(within(kpiStrip).getByText("Historical discovery inventory")).toBeInTheDocument();
-  expect(within(kpiStrip).getByText("All-time domain counts")).toBeInTheDocument();
-  expect(within(kpiStrip).getByText("2285")).toBeInTheDocument();
-  expect(within(kpiStrip).getByText("14")).toBeInTheDocument();
-  expect(within(kpiStrip).getByRole("link", { name: /Current scan assets/ })).toHaveAttribute("href", "#/assets");
-  expect(kpiStrip.querySelector('a[href="#/assets?asset_class=CANDIDATE&limit=25"]')).toBeInTheDocument();
-  expect(within(kpiStrip).getByRole("link", { name: /Assets with IP Addresses/ })).toHaveAttribute("href", "#/assets?has_ip=true");
+  const overviewMetrics = screen.getByRole("region", { name: "Overview metrics" });
+  const coveragePanel = screen.getByRole("heading", { name: "Asset Coverage" }).closest("section");
+  expect(overviewMetrics.querySelectorAll(".panel")).toHaveLength(2);
+  expect(overviewMetrics.querySelectorAll(".metric-card")).toHaveLength(3);
+  expect(coveragePanel).toHaveClass("asset-coverage-panel");
+  expect(overviewMetrics.querySelector(".overview-discovery-sources-panel")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("Historical")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("Current authoritative scan")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("All-time domains")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("2,285")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("Current scan assets")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("23")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("Organizational assets")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("18")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("Known")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("11")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("Shadow")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("7")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("Needs Verification")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("3")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("External")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("2")).toBeInTheDocument();
+  expect(coveragePanel.querySelector(".asset-coverage-current")).toHaveAttribute("aria-label", "Open Current scan assets (23)");
+  expect(coveragePanel.querySelector(".asset-coverage-organizational")).toHaveAttribute("aria-label", "Open Organizational assets (18)");
+  expect(coveragePanel.querySelector('a[href="#/assets?asset_class=KNOWN&limit=25"]')).toBeInTheDocument();
+  expect(coveragePanel.querySelector('a[href="#/shadow"]')).toBeInTheDocument();
+  expect(coveragePanel.querySelector('a[href="#/assets?asset_class=CANDIDATE&limit=25"]')).toBeInTheDocument();
+  expect(coveragePanel.querySelector('a[href="#/brand?ownership=EXTERNAL"]')).toBeInTheDocument();
+  expect(within(overviewMetrics).getByRole("link", { name: /High Risk/ })).toHaveAttribute("href", "#/risk");
+  expect(within(overviewMetrics).getByRole("link", { name: /New Assets/ })).toHaveAttribute("href", "#/changes?view=new");
+  expect(within(overviewMetrics).getByRole("link", { name: /Assets with IP Addresses/ })).toHaveAttribute("href", "#/assets?has_ip=true");
+  expect(within(overviewMetrics).getByText("14")).toBeInTheDocument();
   const kpiAssetGrowthPanel = screen.getByText("Asset growth trend").closest("section");
-  expect(kpiStrip.compareDocumentPosition(kpiAssetGrowthPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  const discoveryCard = within(kpiStrip).getByText("Discovery Sources").closest(".metric-card");
-  expect(within(discoveryCard).getByText("Pentest Tools").parentElement).toHaveTextContent("617");
-  expect(within(discoveryCard).getByText("SAN Exposure").parentElement).toHaveTextContent("427");
-  expect(within(discoveryCard).getByText("Brand Exposure").parentElement).toHaveTextContent("1241");
-  expect(within(kpiStrip).queryByText("Brand perimeter")).not.toBeInTheDocument();
+  expect(overviewMetrics.compareDocumentPosition(kpiAssetGrowthPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const discoverySourcesPanel = screen.getByRole("heading", { name: "Discovery Sources" }).closest("section");
+  expect(discoverySourcesPanel).toHaveTextContent("All-time domain counts");
+  expect(within(discoverySourcesPanel).getByText("Pentest Tools").parentElement).toHaveTextContent("617");
+  expect(within(discoverySourcesPanel).getByText("SAN Exposure").parentElement).toHaveTextContent("427");
+  expect(within(discoverySourcesPanel).getByText("Brand Exposure").parentElement).toHaveTextContent("1241");
+  expect(overviewMetrics.querySelectorAll(".metric-card")).toHaveLength(3);
   expect(screen.getByText("scan 41 → 42")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
   expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("href", "#/overview");
@@ -175,9 +177,9 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByRole("link", { name: /Authoritative scan #42 completed 2h ago/i })).toHaveAttribute("href", "#/scans");
   expect(screen.queryByText(/Authoritative scan #43/)).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Authoritative scan #42/i })).toHaveAttribute("title", expect.stringContaining("2026"));
-  expect(screen.getByRole("link", { name: "Open Known assets" })).toHaveAttribute("href", "#/assets?asset_class=KNOWN&limit=25");
+  expect(screen.getAllByRole("link", { name: /Open Known/ }).some((link) => link.getAttribute("href") === "#/assets?asset_class=KNOWN&limit=25")).toBe(true);
   expect(screen.getByRole("link", { name: "Open Shadow assets" })).toHaveAttribute("href", "#/shadow");
-  expect(screen.getByRole("link", { name: "Open Needs Verification assets" })).toHaveAttribute("href", "#/assets?asset_class=CANDIDATE&limit=25");
+  expect(screen.getAllByRole("link", { name: /Open Needs Verification/ }).some((link) => link.getAttribute("href") === "#/assets?asset_class=CANDIDATE&limit=25")).toBe(true);
   expect(screen.getByRole("link", { name: "Open External assets" })).toHaveAttribute("href", "#/brand?ownership=EXTERNAL");
   const overviewContent = document.querySelector(".page-content-overview");
   expect(within(overviewContent).queryByText("Needs attention")).not.toBeInTheDocument();
@@ -217,7 +219,7 @@ test("renders the permanent shell and authoritative overview", async () => {
   Date.now.mockRestore();
 });
 
-test("does not fabricate moved KPI totals when supporting contracts are incomplete", async () => {
+test("keeps historical and current coverage unavailable when their source contracts are incomplete", async () => {
   getV2Overview.mockResolvedValue({
     ...overview,
     counts: { organizational: 6, known: 4, shadow: 2, candidate: 3, external: 0 },
@@ -226,13 +228,36 @@ test("does not fabricate moved KPI totals when supporting contracts are incomple
   getExposureSummary.mockResolvedValue({ scan_id: 41, resolving_domains: 99 });
   render(<App />);
 
-  expect(await screen.findByText("Current scan assets")).toBeInTheDocument();
-  const kpiStrip = screen.getByRole("region", { name: "Overview metrics" });
-  expect(within(kpiStrip).getByText("9")).toBeInTheDocument();
-  expect(within(kpiStrip).getByText("Organizational + Needs Verification", { exact: true })).toBeInTheDocument();
-  expect(within(kpiStrip).getAllByText("Unavailable")).toHaveLength(2);
-  const discoveryCard = within(kpiStrip).getByText("Discovery Sources").closest(".metric-card");
-  expect(within(discoveryCard).getByText("Brand Exposure").parentElement).toHaveTextContent("—");
+  expect(await screen.findByText("Asset Coverage")).toBeInTheDocument();
+  const coveragePanel = screen.getByRole("heading", { name: "Asset Coverage" }).closest("section");
+  expect(within(coveragePanel).getByText("9")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("6")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("All-time domains").parentElement).toHaveTextContent("Unavailable");
+  expect(within(coveragePanel).queryByText("External")).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Assets with IP Addresses/ })).toHaveTextContent("Unavailable");
+  const discoveryPanel = screen.getByRole("heading", { name: "Discovery Sources" }).closest("section");
+  expect(within(discoveryPanel).getByText("Brand Exposure").parentElement).toHaveTextContent("—");
+  expect(getV2Overview).toHaveBeenCalledTimes(1);
+  expect(getDiscoverySources).toHaveBeenCalledTimes(1);
+  expect(getExposureSummary).toHaveBeenCalledTimes(1);
+});
+
+test("marks reconciled current totals unavailable when effective classes do not add up", async () => {
+  getV2Overview.mockResolvedValue({
+    ...overview,
+    counts: { organizational: 9, known: 4, shadow: 3, candidate: 2, external: 1 },
+  });
+  getDiscoverySources.mockResolvedValue({ "Pentest Tool": 10, "SAN Expansion": 5, "Brand Expansion": 2 });
+  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 14 });
+  render(<App />);
+
+  const coveragePanel = (await screen.findByRole("heading", { name: "Asset Coverage" })).closest("section");
+  expect(await within(coveragePanel).findByText("Organizational assets")).toBeInTheDocument();
+  expect(within(coveragePanel).getAllByText("Unavailable")).toHaveLength(2);
+  expect(within(coveragePanel).getByText("Known")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("Shadow")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("Needs Verification")).toBeInTheDocument();
+  expect(within(coveragePanel).getByText("External")).toBeInTheDocument();
 });
 
 test("shows no-authoritative-scan state without fabricating values", async () => {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getV2BrandAssets, getV2Overview, getV2Scans } from "../services/api";
+import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getV2Overview, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
@@ -48,7 +48,7 @@ function allTimeDiscoveryCount(value) {
     : null;
 }
 
-function DiscoverySourcesCard({ value, status }) {
+function DiscoverySourcesPanel({ value, status }) {
   let content;
   if (status === "loading") {
     content = <span className="discovery-source-state">Loading…</span>;
@@ -67,7 +67,7 @@ function DiscoverySourcesCard({ value, status }) {
     );
   }
 
-  return <MetricCard label="Discovery Sources" value={content} support="All-time domain counts" accent="#4655a6" />;
+  return <Panel title="Discovery Sources" meta="All-time domain counts" className="overview-discovery-sources-panel">{content}</Panel>;
 }
 
 function countValue(value) {
@@ -112,6 +112,42 @@ function OwnershipComposition({ counts }) {
   );
 }
 
+function CoverageItem({ label, value, href, scope, className = "" }) {
+  const Element = href ? "a" : "div";
+  return (
+    <Element
+      className={`asset-coverage-item${href ? " asset-coverage-item-link" : ""} ${className}`.trim()}
+      href={href}
+      aria-label={href ? `Open ${label} (${value == null ? "unavailable" : value})` : undefined}
+    >
+      <span className="asset-coverage-label">{scope && <small>{scope}</small>}{label}</span>
+      <strong>{value == null ? "Unavailable" : value.toLocaleString()}</strong>
+    </Element>
+  );
+}
+
+function AssetCoveragePanel({ allTimeDomains, currentScanAssets, organizationalCount, counts }) {
+  return (
+    <Panel title="Asset Coverage" className="asset-coverage-panel">
+      <div className="asset-coverage-scopes">
+        <div className="asset-coverage-headline">
+          <CoverageItem label="All-time domains" scope="Historical" value={allTimeDomains} className="asset-coverage-historical" />
+          <CoverageItem label="Current scan assets" scope="Current authoritative scan" value={currentScanAssets} href="#/assets" className="asset-coverage-current" />
+        </div>
+        <CoverageItem label="Organizational assets" value={organizationalCount} href="#/assets" className="asset-coverage-organizational" />
+        <div className="asset-coverage-classes" aria-label="Current authoritative scan asset classes">
+          <CoverageItem label="Known" value={counts.known} href="#/assets?asset_class=KNOWN&limit=25" />
+          <CoverageItem label="Shadow" value={counts.shadow} href="#/shadow" />
+          <CoverageItem label="Needs Verification" value={counts.candidate} href="#/assets?asset_class=CANDIDATE&limit=25" />
+          {(counts.external == null || counts.external > 0) && (
+            <CoverageItem label="External" value={counts.external} href="#/brand?ownership=EXTERNAL" />
+          )}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
 function relativeCompletion(value) {
   if (!value) return "completion time unavailable";
   const completed = new Date(value);
@@ -123,22 +159,6 @@ function relativeCompletion(value) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `completed ${hours}h ago`;
   return `completed ${Math.floor(hours / 24)}d ago`;
-}
-
-async function loadDiscoverySummary() {
-  const [candidate, external] = await Promise.all([
-    getV2BrandAssets({ page: 1, limit: 1, asset_class: "CANDIDATE" }),
-    getV2BrandAssets({ page: 1, limit: 1, asset_class: "EXTERNAL" }),
-  ]);
-  if (!candidate || candidate.scan_id == null || candidate.scan_id !== external?.scan_id) {
-    throw new Error("Discovery counts did not share one authoritative scan");
-  }
-  const candidateCount = Number(candidate.count);
-  const externalCount = Number(external.count);
-  if (!Number.isInteger(candidateCount) || candidateCount < 0 || !Number.isInteger(externalCount) || externalCount < 0) {
-    throw new Error("Discovery counts were not valid unique-domain totals");
-  }
-  return { scan_id: candidate.scan_id, candidate: candidateCount, external: externalCount };
 }
 
 export default function OverviewPage() {
@@ -159,15 +179,16 @@ export default function OverviewPage() {
       optionalRequest(getAssetGrowth),
       optionalRequest(getHttpStatus),
       optionalRequest(getCertExpiry),
-      optionalRequest(loadDiscoverySummary),
       optionalRequest(getNamingAssetExposure),
       optionalRequest(getDiscoverySources),
       optionalRequest(getExposureSummary),
     ])
-      .then(([result, scans, assetGrowth, httpStatus, certificateExpiry, discoverySummary, namingExposure, discoverySources, exposureSummary]) => {
+      .then(([result, scans, assetGrowth, httpStatus, certificateExpiry, namingExposure, discoverySources, exposureSummary]) => {
         if (active) {
-          const scopedDiscoverySummary = discoverySummary.value?.scan_id === result.current_scan_id
-            ? discoverySummary
+          const candidateCount = countValue(result.counts?.candidate);
+          const externalCount = countValue(result.counts?.external);
+          const scopedDiscoverySummary = result.current_scan_id != null && candidateCount != null && externalCount != null
+            ? { value: { scan_id: result.current_scan_id, candidate: candidateCount, external: externalCount }, status: "ready" }
             : { value: null, status: "error" };
           setData({
             ...result,
@@ -218,9 +239,6 @@ export default function OverviewPage() {
   const currentScanAssets = organizationalCount != null && counts.candidate != null && counts.external != null
     ? organizationalCount + counts.candidate + counts.external
     : null;
-  const currentScanSupport = counts.external == null || counts.external > 0
-    ? "Organizational + Needs Verification + External"
-    : "Organizational + Needs Verification";
   const currentScanIpCount = data.exposureSummaryStatus === "ready"
     && data.exposureSummary?.scan_id === data.current_scan_id
     ? countValue(data.exposureSummary.resolving_domains)
@@ -248,16 +266,19 @@ export default function OverviewPage() {
         <strong>{relativeCompletion(completedAt)}</strong>
         <span aria-hidden="true">View scans →</span>
       </a>
-      <section className="kpi-strip" aria-label="Overview metrics">
-        <MetricCard label="Organizational assets" value={organizationalCount ?? "—"} support="Known + Shadow" accent="#4655a6" href="#/assets" />
-        <MetricCard label="High risk" value={highRisk} support="Canonical priority" accent={RISK_COLORS.High} href="#/risk" />
-        <MetricCard label="Shadow assets" value={counts.shadow ?? "—"} support="Confirmed, outside inventory" accent="#7e91a8" href="#/shadow" />
-        <MetricCard label="New assets" value={data.changes?.new_assets ?? 0} support="Since previous successful scan" accent="#327d80" href="#/changes?view=new" />
-        <MetricCard label="Current scan assets" value={currentScanAssets ?? "—"} support={currentScanSupport} accent="#546579" href="#/assets" />
-        <MetricCard label="Needs Verification" value={counts.candidate ?? "—"} support="Ownership not established" accent="#9a79d6" href="#/assets?asset_class=CANDIDATE&limit=25" />
-        <MetricCard label="All-time domains" value={allTimeDomains ?? "Unavailable"} support="Historical discovery inventory" accent="#327d80" />
-        <MetricCard label="Assets with IP Addresses" value={currentScanIpCount ?? "Unavailable"} support="Current scan" accent="#2f7d5b" href="#/assets?has_ip=true" />
-        <DiscoverySourcesCard value={data.discoverySources} status={data.discoverySourcesStatus} />
+      <section className="overview-coverage-grid" aria-label="Overview metrics">
+        <AssetCoveragePanel
+          allTimeDomains={allTimeDomains}
+          currentScanAssets={currentScanAssets}
+          organizationalCount={organizationalCount}
+          counts={counts}
+        />
+        <DiscoverySourcesPanel value={data.discoverySources} status={data.discoverySourcesStatus} />
+        <div className="overview-secondary-kpis">
+          <MetricCard label="High Risk" value={highRisk} support="Canonical priority" accent={RISK_COLORS.High} href="#/risk" />
+          <MetricCard label="New Assets" value={data.changes?.new_assets ?? 0} support="Since previous successful scan" accent="#327d80" href="#/changes?view=new" />
+          <MetricCard label="Assets with IP Addresses" value={currentScanIpCount ?? "Unavailable"} support="Current scan" accent="#2f7d5b" href="#/assets?has_ip=true" />
+        </div>
       </section>
 
       <AssetGrowthPanel value={data.assetGrowth} status={data.assetGrowthStatus} />

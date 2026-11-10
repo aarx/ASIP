@@ -97,6 +97,30 @@
 
 .overview-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
 .kpi-strip { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.overview-coverage-grid { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+.asset-coverage-panel { grid-column: span 8; min-width: 0; }
+.overview-discovery-sources-panel { grid-column: span 4; min-width: 0; }
+.overview-secondary-kpis { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+.overview-secondary-kpis > .metric-card { min-width: 0; }
+.asset-coverage-scopes { display: grid; gap: 13px; }
+.asset-coverage-headline { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.asset-coverage-item { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; color: inherit; text-decoration: none; }
+.asset-coverage-item > span { color: var(--asip-text-secondary); font-size: 11px; line-height: 1.35; }
+.asset-coverage-label { display: grid; gap: 3px; }
+.asset-coverage-label small { color: var(--asip-text-muted); font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.asset-coverage-item > strong { flex: 0 0 auto; color: var(--asip-text-primary); font-family: var(--asip-font-mono); font-size: 17px; font-weight: 700; }
+.asset-coverage-historical, .asset-coverage-current { min-height: 46px; padding: 8px 10px; border: 1px solid var(--asip-border); border-radius: 5px; }
+.asset-coverage-item-link:hover > span, .asset-coverage-item-link:focus-visible > span { color: var(--asip-accent-bright); }
+.asset-coverage-item-link:focus-visible { border-radius: 4px; outline: 2px solid var(--asip-accent); outline-offset: 2px; }
+.asset-coverage-organizational { padding: 9px 10px; border-top: 1px solid var(--asip-border); border-bottom: 1px solid var(--asip-border); }
+.asset-coverage-organizational > span { color: var(--asip-text-primary); font-weight: 700; }
+.asset-coverage-organizational > strong { font-size: 21px; }
+.asset-coverage-classes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; }
+.asset-coverage-classes .asset-coverage-item { min-height: 28px; }
+.overview-discovery-sources-panel .panel-body { padding-top: 13px; }
+.overview-discovery-sources-panel .discovery-source-kpi-list { display: grid; gap: 10px; }
+.overview-discovery-sources-panel .discovery-source-kpi-row span { font-size: 10px; }
+.overview-discovery-sources-panel .discovery-source-kpi-row strong { font-size: 15px; }
 
 .metric-card { position: relative; min-height: 124px; overflow: hidden; border: 1px solid var(--asip-border); border-radius: var(--asip-radius); background: linear-gradient(145deg, rgba(20, 34, 54, .96), rgba(14, 26, 43, .96)); box-shadow: var(--asip-shadow); }
 .metric-card-link { color: inherit; text-decoration: none; transition: border-color 120ms ease, transform 120ms ease; }
@@ -621,6 +645,9 @@
 
 @media (max-width: 1024px) {
   .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .asset-coverage-panel, .overview-discovery-sources-panel { grid-column: 1 / -1; }
+  .asset-coverage-panel .panel-body { padding-bottom: 15px; }
+  .overview-secondary-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 900px) {
@@ -635,6 +662,7 @@
   .nav-symbol { width: auto; }
   .sidebar-admin { padding-inline: 10px; }
   .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .asset-coverage-classes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .certificate-health-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .discovery-validation-signals { grid-template-columns: 1fr; }
   .brand-discovery-signals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -664,6 +692,8 @@
   .overview-subpage-context strong { margin-left: 0; }
   .overview-subpage-context span:last-child { width: 100%; }
   .kpi-strip { grid-template-columns: 1fr; }
+  .overview-secondary-kpis { grid-template-columns: 1fr; }
+  .asset-coverage-headline, .asset-coverage-classes { grid-template-columns: 1fr; }
   .attention-table th:nth-child(4), .attention-table td:nth-child(4) { display: none; }
   .filter-primary-row, .filter-secondary-row, .detail-grid { grid-template-columns: 1fr; }
   .brand-discovery-signals { grid-template-columns: 1fr; }
