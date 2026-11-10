@@ -229,6 +229,52 @@
 .naming-exposure-signal span { color: var(--asip-text-secondary); font-family: var(--asip-font-mono); font-size: 10px; }
 .naming-exposure-signal strong { color: var(--asip-text-primary); font-family: var(--asip-font-mono); font-size: 18px; }
 .naming-exposure-note { margin: 12px 0 0; color: var(--asip-text-muted); font-size: 10px; line-height: 1.45; }
+.dns-security-page { display: grid; gap: 16px; min-width: 0; }
+.dns-summary-panel, .dns-findings-panel { min-width: 0; }
+.dns-summary-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.dns-summary-metric { display: grid; gap: 6px; min-width: 0; padding: 11px 12px; border: 1px solid var(--asip-border); border-radius: 5px; background: rgba(7, 15, 27, .2); }
+.dns-summary-metric span, .dns-status-strip small, .dns-evidence-summary small, .dns-evidence-grid small { color: var(--asip-text-muted); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.dns-summary-metric strong { color: var(--asip-text-primary); font-family: var(--asip-font-mono); font-size: 21px; }
+.dns-status-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--asip-border); }
+.dns-status-strip span { display: grid; gap: 4px; min-width: 0; }
+.dns-status-strip strong { color: var(--asip-text-secondary); font-family: var(--asip-font-mono); font-size: 11px; overflow-wrap: anywhere; }
+.dns-assessment-callout { display: flex; flex-wrap: wrap; gap: 5px 12px; align-items: baseline; margin-top: 14px; padding: 11px 12px; border-left: 3px solid var(--asip-accent); background: rgba(61, 196, 255, .05); color: var(--asip-text-secondary); font-size: 11px; line-height: 1.4; }
+.dns-assessment-callout strong { color: var(--asip-text-primary); font-size: 12px; }
+.dns-assessment-not-assessed { border-left-color: #d49a3a; background: rgba(212, 154, 58, .08); }
+.dns-assessment-attention { border-left-color: #d66d77; background: rgba(214, 109, 119, .08); }
+.dns-filter-panel { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; align-items: end; margin-bottom: 16px; }
+.dns-filter-control, .dns-page-size { display: grid; gap: 5px; min-width: 0; }
+.dns-filter-control > span, .dns-page-size { color: var(--asip-text-muted); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.dns-filter-control select, .dns-page-size select { width: 100%; min-height: 36px; padding: 0 9px; border: 1px solid var(--asip-border); border-radius: 4px; background: var(--asip-surface); color: var(--asip-text-secondary); font: inherit; }
+.dns-filter-control select:focus-visible, .dns-page-size select:focus-visible, .dns-domain-button:focus-visible, .dns-primary-action:focus-visible, .dns-secondary-action:focus-visible, .dns-inline-action:focus-visible { outline: 2px solid var(--asip-accent); outline-offset: 2px; }
+.dns-filter-actions { display: flex; gap: 8px; align-items: center; }
+.dns-primary-action, .dns-secondary-action, .dns-inline-action { min-height: 34px; padding: 0 11px; border: 1px solid var(--asip-border); border-radius: 4px; background: transparent; color: var(--asip-text-secondary); cursor: pointer; font: inherit; font-size: 10px; }
+.dns-primary-action { border-color: rgba(61, 196, 255, .45); background: rgba(61, 196, 255, .1); color: var(--asip-text-primary); }
+.dns-primary-action:hover, .dns-secondary-action:hover:not(:disabled), .dns-inline-action:hover { border-color: var(--asip-accent); color: var(--asip-text-primary); }
+.dns-secondary-action:disabled { cursor: not-allowed; opacity: .45; }
+.dns-table-wrap { min-width: 0; }
+.dns-findings-table { min-width: 900px; }
+.dns-findings-table th, .dns-findings-table td { vertical-align: top; }
+.dns-domain-button { padding: 0; border: 0; background: none; color: var(--asip-accent-bright); cursor: pointer; font: inherit; font-family: var(--asip-font-mono); text-align: left; }
+.dns-domain-button:hover { text-decoration: underline; }
+.dns-finding-row-expanded td { background: rgba(61, 196, 255, .04); }
+.dns-finding-row-expanded + tr td { padding: 0; border-top: 0; }
+.dns-evidence-details { padding: 14px; border: 1px solid rgba(61, 196, 255, .18); border-radius: 4px; background: rgba(7, 15, 27, .22); }
+.dns-evidence-summary { display: grid; grid-template-columns: 2fr repeat(3, minmax(100px, 1fr)); gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--asip-border); }
+.dns-evidence-summary span, .dns-evidence-grid div { display: grid; gap: 4px; min-width: 0; }
+.dns-evidence-summary strong, .dns-evidence-grid strong { color: var(--asip-text-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.dns-evidence-list { display: grid; gap: 7px; padding-top: 12px; }
+.dns-evidence-list details { border: 1px solid rgba(115, 142, 170, .16); border-radius: 4px; }
+.dns-evidence-list summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 9px 10px; color: var(--asip-text-secondary); cursor: pointer; font-size: 11px; }
+.dns-evidence-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; padding: 0 10px 11px; }
+.dns-evidence-wide { grid-column: 1 / -1; }
+.dns-detail-state, .dns-detail-empty, .dns-table-state { padding: 18px 10px; color: var(--asip-text-muted); font-size: 11px; }
+.dns-detail-state { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.dns-detail-state strong { color: var(--asip-text-secondary); }
+.dns-pagination { margin-top: 12px; }
+.dns-pagination > div { align-items: center; }
+.dns-page-size { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+.dns-page-size select { width: auto; min-height: 32px; }
 
 .state-card { min-height: 320px; display: grid; place-items: center; padding: 38px; border: 1px solid var(--asip-border); border-radius: var(--asip-radius); background: rgba(16, 29, 47, .8); text-align: center; }
 .state-card-compact { min-height: 0; place-items: start; padding: 16px 18px; text-align: left; }
@@ -655,6 +701,7 @@
   .asset-coverage-panel .panel-body { padding-bottom: 15px; }
   .overview-secondary-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .overview-chart-row { grid-template-columns: 1fr; }
+  .dns-filter-panel { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 900px) {
@@ -672,6 +719,9 @@
   .asset-coverage-classes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .certificate-health-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .brand-discovery-signals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dns-summary-metrics, .dns-status-strip, .dns-evidence-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dns-filter-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dns-evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .naming-exposure-signals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .supporting-intelligence-grid { grid-template-columns: 1fr; }
   .change-panel, .attention-panel, .risk-panel, .ownership-panel, .intelligence-panel { grid-column: 1 / -1; }
@@ -703,6 +753,11 @@
   .attention-table th:nth-child(4), .attention-table td:nth-child(4) { display: none; }
   .filter-primary-row, .filter-secondary-row, .detail-grid { grid-template-columns: 1fr; }
   .brand-discovery-signals { grid-template-columns: 1fr; }
+  .dns-summary-metrics, .dns-status-strip, .dns-filter-panel, .dns-evidence-summary, .dns-evidence-grid { grid-template-columns: 1fr; }
+  .dns-evidence-wide { grid-column: auto; }
+  .dns-filter-actions { grid-column: 1 / -1; }
+  .dns-pagination { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .dns-pagination > div { flex-wrap: wrap; }
   .filter-metric-row { grid-template-columns: 1fr; }
   .detail-panel-wide { grid-column: auto; }
   .identity-heading { flex-direction: column; }
