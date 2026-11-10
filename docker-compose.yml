@@ -42,7 +42,7 @@ services:
   backend:
     # Production backend releases are built from committed source and promoted
     # by updating this exact image reference. Do not add an implicit build here.
-    image: asip-backend:275f46cf6931cea87c67e64b54017c7f759122f8
+    image: asip-backend:891d63c352e1c5a481baffbee9f8ed2152199def
     pull_policy: never
     container_name: asm_backend
 
