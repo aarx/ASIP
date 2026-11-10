@@ -126,11 +126,12 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(within(coveragePanel).getByText("External")).toBeInTheDocument();
   expect(within(coveragePanel).getByText("2")).toBeInTheDocument();
   expect(coveragePanel.querySelector(".asset-coverage-current")).toHaveAttribute("aria-label", "Open Current scan assets (23)");
-  expect(coveragePanel.querySelector(".asset-coverage-organizational")).toHaveAttribute("aria-label", "Open Organizational assets (18)");
+  expect(coveragePanel.querySelector(".asset-coverage-organizational")).not.toHaveAttribute("href");
+  expect(coveragePanel.querySelector(".asset-coverage-organizational")).toHaveTextContent("Organizational assets");
   expect(coveragePanel.querySelector('a[href="#/assets?asset_class=KNOWN&limit=25"]')).toBeInTheDocument();
   expect(coveragePanel.querySelector('a[href="#/shadow"]')).toBeInTheDocument();
   expect(coveragePanel.querySelector('a[href="#/assets?asset_class=CANDIDATE&limit=25"]')).toBeInTheDocument();
-  expect(coveragePanel.querySelector('a[href="#/brand?ownership=EXTERNAL"]')).toBeInTheDocument();
+  expect(coveragePanel.querySelector('a[href="#/brand?asset_class=EXTERNAL"]')).toBeInTheDocument();
   expect(within(overviewMetrics).getByRole("link", { name: /High Risk/ })).toHaveAttribute("href", "#/risk");
   expect(within(overviewMetrics).getByRole("link", { name: /New Assets/ })).toHaveAttribute("href", "#/changes?view=new");
   expect(within(overviewMetrics).getByRole("link", { name: /Assets with IP Addresses/ })).toHaveAttribute("href", "#/assets?has_ip=true");
@@ -180,7 +181,7 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getAllByRole("link", { name: /Open Known/ }).some((link) => link.getAttribute("href") === "#/assets?asset_class=KNOWN&limit=25")).toBe(true);
   expect(screen.getByRole("link", { name: "Open Shadow assets" })).toHaveAttribute("href", "#/shadow");
   expect(screen.getAllByRole("link", { name: /Open Needs Verification/ }).some((link) => link.getAttribute("href") === "#/assets?asset_class=CANDIDATE&limit=25")).toBe(true);
-  expect(screen.getByRole("link", { name: "Open External assets" })).toHaveAttribute("href", "#/brand?ownership=EXTERNAL");
+  expect(screen.getByRole("link", { name: "Open External assets" })).toHaveAttribute("href", "#/brand?asset_class=EXTERNAL");
   const overviewContent = document.querySelector(".page-content-overview");
   expect(within(overviewContent).queryByText("Needs attention")).not.toBeInTheDocument();
   expect(within(overviewContent).queryByText("Risk distribution")).not.toBeInTheDocument();

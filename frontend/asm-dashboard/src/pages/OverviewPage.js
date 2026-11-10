@@ -79,7 +79,7 @@ function OwnershipComposition({ counts }) {
     ["Known", counts.known, "#/assets?asset_class=KNOWN&limit=25"],
     ["Shadow", counts.shadow, "#/shadow"],
     ["Needs Verification", counts.candidate, "#/assets?asset_class=CANDIDATE&limit=25"],
-    ["External", counts.external, "#/brand?ownership=EXTERNAL"],
+    ["External", counts.external, "#/brand?asset_class=EXTERNAL"],
   ];
   const max = Math.max(...values.map(([, value]) => value), 1);
 
@@ -134,13 +134,13 @@ function AssetCoveragePanel({ allTimeDomains, currentScanAssets, organizationalC
           <CoverageItem label="All-time domains" scope="Historical" value={allTimeDomains} className="asset-coverage-historical" />
           <CoverageItem label="Current scan assets" scope="Current authoritative scan" value={currentScanAssets} href="#/assets" className="asset-coverage-current" />
         </div>
-        <CoverageItem label="Organizational assets" value={organizationalCount} href="#/assets" className="asset-coverage-organizational" />
+        <CoverageItem label="Organizational assets" value={organizationalCount} className="asset-coverage-organizational" />
         <div className="asset-coverage-classes" aria-label="Current authoritative scan asset classes">
           <CoverageItem label="Known" value={counts.known} href="#/assets?asset_class=KNOWN&limit=25" />
           <CoverageItem label="Shadow" value={counts.shadow} href="#/shadow" />
           <CoverageItem label="Needs Verification" value={counts.candidate} href="#/assets?asset_class=CANDIDATE&limit=25" />
           {(counts.external == null || counts.external > 0) && (
-            <CoverageItem label="External" value={counts.external} href="#/brand?ownership=EXTERNAL" />
+            <CoverageItem label="External" value={counts.external} href="#/brand?asset_class=EXTERNAL" />
           )}
         </div>
       </div>

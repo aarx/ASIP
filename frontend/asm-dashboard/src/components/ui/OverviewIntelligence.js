@@ -261,7 +261,7 @@ export function DiscoveryValidationPanel({ value, status, scanId }) {
             <strong>{summary.candidate}</strong>
             <small>Review ownership</small>
           </a>
-          <a className="discovery-validation-signal" href="#/brand?ownership=EXTERNAL" aria-label={`Open Brand Exposure External assets (${summary.external})`}>
+          <a className="discovery-validation-signal" href="#/brand?asset_class=EXTERNAL" aria-label={`Open Brand Exposure External assets (${summary.external})`}>
             <span>External assets</span>
             <strong>{summary.external}</strong>
             <small>Outside confirmed surface</small>

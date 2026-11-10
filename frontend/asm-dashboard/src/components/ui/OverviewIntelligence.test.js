@@ -58,7 +58,7 @@ test("renders current unique-domain discovery totals with exact Brand Exposure l
   );
   expect(within(panel).getByRole("link", { name: "Open Brand Exposure External assets (2)" })).toHaveAttribute(
     "href",
-    "#/brand?ownership=EXTERNAL"
+    "#/brand?asset_class=EXTERNAL"
   );
   expect(within(panel).getByText(/count unique domains/i)).toBeInTheDocument();
   expect(within(panel).getByText(/Historical discovery-only records are excluded/i)).toBeInTheDocument();
