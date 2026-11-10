@@ -171,7 +171,7 @@ class DnsSecurityTests(unittest.TestCase):
         resolver, created = self.resolver([FakeAddress("203.0.113.4")])
         result = resolver.query("host.example", "A", authorize=mock.Mock(side_effect=RuntimeError("db")))
         self.assertEqual(result.outcome, "INCONCLUSIVE")
-        self.assertEqual(result.evidence["error_category"], "AUTHORIZATION_DENIED")
+        self.assertEqual(result.evidence["error_category"], "AUTHORIZATION_ERROR")
         self.assertEqual(created, [])
 
     def test_disabled_operation_blocks_resolver_even_with_allow_callback(self):
@@ -229,6 +229,16 @@ class DnsSecurityTests(unittest.TestCase):
         self.assertTrue(result.evidence["truncated"])
         self.assertLessEqual(created[0].lifetime, 3.0)
         self.assertEqual(created[0].retry_servfail, False)
+
+    def test_conclusive_scan_local_cache_rechecks_authorization(self):
+        resolver, created = self.resolver([FakeAddress("192.0.2.8")])
+        authorize = mock.Mock(return_value=True)
+        first = resolver.query("host.example", "A", authorize=authorize)
+        second = resolver.query("host.example", "A", authorize=authorize)
+        self.assertEqual(first.answers, second.answers)
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0].queries, [("host.example", "A", {"search": False})])
+        self.assertEqual(authorize.call_count, 2)
 
     def test_invalid_names_types_and_ip_literals_never_query(self):
         resolver, created = self.resolver([FakeAddress("192.0.2.1")])

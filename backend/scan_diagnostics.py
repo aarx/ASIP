@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 
 CONTRACT_VERSION = 1
-MAX_STAGE_ATTEMPTS = 32  # 16 pipeline stages, at most two attempts each.
+MAX_STAGE_ATTEMPTS = 34  # 16 base stages + optional DNS Security, at most two attempts each.
 MAX_SUMMARY_FIELDS = 32
 MAX_SUMMARY_JSON_BYTES = 2048
 MAX_STAGE_NAME_LENGTH = 80
@@ -42,12 +42,14 @@ WORKER_SUMMARY_FIELDS = {
     "completed_observations", "persisted_results", "http_no_response",
     "failed_incomplete", "unresolved_redirects", "maximum_observed_concurrency",
     "configured_workers", "workers", "elapsed_seconds", "interrupted", "failed",
+    "completed", "checks_persisted", "policy_stops", "disabled",
 }
 
 SUMMARY_MARKERS = (
     "ASIP_WORKER_SUMMARY ",
     "san_stage ",
     "http_stage_summary ",
+    "dns_security_stage ",
 )
 
 

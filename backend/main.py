@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict
 import logging
 import os
 from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import csv
 import io
 import json
@@ -27,7 +27,7 @@ from ownership import (
     reporting_asset_class_sql,
 )
 from ownership_ingest import apply_ownership
-from authorization_policy import active_scan_authorization_sql
+from authorization_policy import active_scan_authorization_sql, default_operation_enabled
 from php_lifecycle import evaluate_php_lifecycle
 from php_cve_intelligence import (
     PHP_CVE_ADVISORIES,
@@ -3282,6 +3282,275 @@ def frontend_v2_asset_assistant(domain_name: str, action: str):
         "source": "ShadowRecon deterministic evidence + Gemma",
         "model": os.getenv("LLM_MODEL", "gemma3:4b"),
     }
+
+
+DNS_SECURITY_CHECK_CATEGORIES = frozenset({
+    "dns_a_resolution", "dns_aaaa_resolution", "cname_health",
+    "mx_observation", "mx_target", "spf_configuration", "dmarc_configuration",
+})
+DNS_SECURITY_OUTCOMES = frozenset({
+    "CONFIRMED_ISSUE", "POTENTIAL_EXPOSURE", "WARNING", "INFORMATIONAL",
+    "CLEAR", "NOT_CHECKED", "INCONCLUSIVE",
+})
+DNS_SECURITY_SEVERITIES = frozenset({"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"})
+DNS_SECURITY_CONFIDENCE = frozenset({"HIGH", "MEDIUM", "LOW", "UNKNOWN"})
+
+
+def _dns_security_schema_unavailable(exc):
+    return getattr(exc, "pgcode", None) in {"42P01", "42703"}
+
+
+def _dns_security_unavailable(scan_id):
+    return JSONResponse(status_code=503, content={
+        "scan_id": scan_id,
+        "availability_state": "SCHEMA_UNAVAILABLE",
+        "detail": "DNS Security storage is not installed",
+    })
+
+
+def _dns_security_scan(cur, scan_id=None):
+    """Resolve only successful scans for historical, read-only reporting."""
+    if scan_id is None:
+        scan_id = get_latest_authoritative_scan_id(cur)
+    if scan_id is None:
+        raise HTTPException(status_code=404, detail="No successful scan exists")
+    cur.execute("SELECT status, stage_diagnostics FROM scans WHERE id = %s", (scan_id,))
+    row = cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    if row[0] != "SUCCEEDED":
+        raise HTTPException(status_code=409, detail="DNS Security reporting requires a successful scan")
+    return scan_id, row[1]
+
+
+def _dns_security_eligible_cte():
+    classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
+    return f"""
+        WITH eligible AS (
+            SELECT DISTINCT sr.domain_id, ({classification}) AS asset_class
+              FROM scan_results sr
+              JOIN domains d ON d.id = sr.domain_id
+             WHERE sr.scan_id = %s
+               AND d.scannable IS TRUE
+               AND ({classification}) IN ('KNOWN', 'SHADOW')
+        )
+    """
+
+
+def _dns_security_execution(scan_diagnostics):
+    if isinstance(scan_diagnostics, str):
+        try:
+            scan_diagnostics = json.loads(scan_diagnostics)
+        except (TypeError, ValueError):
+            scan_diagnostics = None
+    attempts = scan_diagnostics.get("attempts", []) if isinstance(scan_diagnostics, dict) else []
+    dns_attempts = [item for item in attempts if item.get("stage") == "DNS Security"]
+    if dns_attempts:
+        attempt = dns_attempts[-1]
+        return attempt.get("status", "UNKNOWN"), attempt.get("worker_summary")
+    if default_operation_enabled("DNS_SECURITY"):
+        return "NOT_EXECUTED", None
+    return "DISABLED", None
+
+
+def _dns_filter_value(value, allowed, name):
+    if value is None:
+        return None
+    raw = value.strip()
+    normalized = raw.upper()
+    if normalized in allowed:
+        return normalized
+    normalized = raw.lower()
+    if normalized in allowed:
+        return normalized
+    raise HTTPException(status_code=400, detail=f"Invalid {name}")
+
+
+@app.get("/v2/dns-security/summary")
+def dns_security_summary(scan_id: int = None):
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        scan_id, diagnostics = _dns_security_scan(cur, scan_id)
+        eligible_cte = _dns_security_eligible_cte()
+        cur.execute(eligible_cte + """
+            SELECT COUNT(*), COUNT(DISTINCT e.domain_id) FILTER (WHERE c.domain_id IS NOT NULL),
+                   COUNT(c.id),
+                   COUNT(DISTINCT c.domain_id) FILTER (
+                       WHERE c.outcome IN ('CONFIRMED_ISSUE','POTENTIAL_EXPOSURE','WARNING')
+                   )
+              FROM eligible e
+              LEFT JOIN dns_security_checks c
+                ON c.scan_id = %s AND c.domain_id = e.domain_id
+        """, (scan_id, scan_id))
+        eligible, checked, check_count, affected = cur.fetchone()
+
+        def grouped(column):
+            cur.execute(eligible_cte + f"""
+                SELECT c.{column}, COUNT(*)
+                  FROM dns_security_checks c
+                  JOIN eligible e ON e.domain_id = c.domain_id
+                 WHERE c.scan_id = %s
+                 GROUP BY c.{column}
+                 ORDER BY c.{column}
+            """, (scan_id, scan_id))
+            return {str(key): count for key, count in cur.fetchall()}
+
+        by_outcome = grouped("outcome")
+        by_severity = grouped("severity")
+        by_category = grouped("check_key")
+        execution_state, worker_summary = _dns_security_execution(diagnostics)
+        return {
+            "scan_id": scan_id,
+            "availability_state": "AVAILABLE",
+            "execution_state": execution_state,
+            "operation_enabled_currently": default_operation_enabled("DNS_SECURITY"),
+            "eligible_assets": eligible,
+            "checked_assets": checked,
+            "unchecked_assets": max(0, eligible - checked),
+            "affected_assets": affected,
+            "dns_finding_records": sum(by_outcome.get(key, 0) for key in (
+                "CONFIRMED_ISSUE", "POTENTIAL_EXPOSURE", "WARNING",
+            )),
+            "checks_executed": check_count,
+            "counts_by_outcome": by_outcome,
+            "counts_by_severity": by_severity,
+            "counts_by_category": by_category,
+            "worker_summary": worker_summary,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        if _dns_security_schema_unavailable(exc):
+            return _dns_security_unavailable(scan_id)
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v2/dns-security/findings")
+def dns_security_findings(
+    scan_id: int = None, category: str = None, outcome: str = None,
+    severity: str = None, confidence: str = None, asset_class: str = None,
+    page: int = 1, limit: int = 50,
+):
+    if page < 1 or limit < 1:
+        raise HTTPException(status_code=400, detail="page and limit must be positive")
+    limit = min(limit, 200)
+    category_value = _dns_filter_value(category, DNS_SECURITY_CHECK_CATEGORIES, "category")
+    outcome_value = _dns_filter_value(outcome, DNS_SECURITY_OUTCOMES, "outcome")
+    severity_value = _dns_filter_value(severity, DNS_SECURITY_SEVERITIES, "severity")
+    confidence_value = _dns_filter_value(confidence, DNS_SECURITY_CONFIDENCE, "confidence")
+    class_value = _dns_filter_value(asset_class, {"KNOWN", "SHADOW"}, "asset_class")
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        scan_id, _diagnostics = _dns_security_scan(cur, scan_id)
+        classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
+        filters = [
+            "c.scan_id = %s", "sr.scan_id = c.scan_id",
+            "d.scannable IS TRUE", f"({classification}) IN ('KNOWN','SHADOW')",
+        ]
+        params = [scan_id]
+        for column, value in (("c.check_key", category_value), ("c.outcome", outcome_value),
+                              ("c.severity", severity_value), ("c.confidence", confidence_value),
+                              (f"({classification})", class_value)):
+            if value is not None:
+                filters.append(f"{column} = %s")
+                params.append(value.lower() if column == "c.check_key" else value)
+        where = " AND ".join(filters)
+        cur.execute(f"""
+            SELECT COUNT(*)
+              FROM dns_security_checks c
+              JOIN scan_results sr ON sr.scan_id = c.scan_id AND sr.domain_id = c.domain_id
+              JOIN domains d ON d.id = c.domain_id
+             WHERE {where}
+        """, tuple(params))
+        total = cur.fetchone()[0]
+        cur.execute(f"""
+            SELECT c.id, c.domain_id, d.domain, ({classification}) AS asset_class,
+                   c.check_key, c.outcome, c.severity, c.confidence, c.record_type,
+                   c.target_identity, c.evidence, c.remediation, c.checked_at
+              FROM dns_security_checks c
+              JOIN scan_results sr ON sr.scan_id = c.scan_id AND sr.domain_id = c.domain_id
+              JOIN domains d ON d.id = c.domain_id
+             WHERE {where}
+             ORDER BY c.checked_at DESC, d.domain ASC, c.check_key ASC,
+                      c.target_identity ASC, c.record_type ASC, c.id ASC
+             LIMIT %s OFFSET %s
+        """, tuple(params + [limit, (page - 1) * limit]))
+        rows = cur.fetchall()
+        return {
+            "scan_id": scan_id, "availability_state": "AVAILABLE",
+            "page": page, "limit": limit, "total": total,
+            "findings": [{
+                "check_id": row[0], "domain_id": row[1], "domain": row[2],
+                "asset_class": row[3], "category": row[4], "outcome": row[5],
+                "severity": row[6], "confidence": row[7], "record_type": row[8],
+                "target": row[9], "evidence": row[10], "remediation": row[11],
+                "checked_at": row[12],
+            } for row in rows],
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        if _dns_security_schema_unavailable(exc):
+            return _dns_security_unavailable(scan_id)
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v2/dns-security/domains/{domain_id}")
+def dns_security_domain_evidence(domain_id: int, scan_id: int = None):
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        scan_id, _diagnostics = _dns_security_scan(cur, scan_id)
+        classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
+        cur.execute(f"""
+            SELECT d.id, d.domain, ({classification}) AS asset_class
+              FROM scan_results sr
+              JOIN domains d ON d.id = sr.domain_id
+             WHERE sr.scan_id = %s AND d.id = %s
+               AND d.scannable IS TRUE
+               AND ({classification}) IN ('KNOWN','SHADOW')
+             LIMIT 1
+        """, (scan_id, domain_id))
+        asset = cur.fetchone()
+        if asset is None:
+            raise HTTPException(status_code=404, detail="Organizational scan asset not found")
+        cur.execute("""
+            SELECT check_key, outcome, severity, confidence, record_type,
+                   target_identity, evidence, remediation, checked_at
+              FROM dns_security_checks
+             WHERE scan_id = %s AND domain_id = %s
+             ORDER BY checked_at DESC, check_key ASC, target_identity ASC,
+                      record_type ASC, id ASC
+        """, (scan_id, domain_id))
+        checks = [{
+            "category": row[0], "outcome": row[1], "severity": row[2],
+            "confidence": row[3], "record_type": row[4], "target": row[5],
+            "evidence": row[6], "remediation": row[7], "checked_at": row[8],
+            "verification_status": row[1],
+        } for row in cur.fetchall()]
+        return {
+            "scan_id": scan_id, "domain_id": asset[0], "domain": asset[1],
+            "asset_class": asset[2], "availability_state": "AVAILABLE",
+            "execution_state": "CHECKED" if checks else "UNCHECKED",
+            "checks": checks,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        if _dns_security_schema_unavailable(exc):
+            return _dns_security_unavailable(scan_id)
+        raise
+    finally:
+        conn.close()
 
 
 @app.get("/v2/scans")

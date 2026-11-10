@@ -8,6 +8,7 @@ import sys
 import threading
 import uuid
 from db import get_conn
+from authorization_policy import default_operation_enabled
 from worker_outcome import RETRYABLE_INCOMPLETE_EXIT_CODE
 from scan_diagnostics import (
     extract_worker_summary,
@@ -650,6 +651,15 @@ def run_pipeline():
             # FINAL
             ("Risk Scoring", f"python -u risk_worker.py {scan_id}")
         ]
+
+        # DNS Security is an opt-in assessment stage.  It is intentionally
+        # absent from the normal pipeline unless the central operation policy
+        # explicitly enables it.  The worker still rechecks policy per query.
+        if default_operation_enabled("DNS_SECURITY"):
+            dns_stage = ("DNS Security", f"python -u dns_security_worker.py {scan_id}")
+            insertion = next(i for i, item in enumerate(pipeline)
+                             if item[0] == "HTTP/TLS Observation")
+            pipeline.insert(insertion, dns_stage)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = f"logs/{timestamp}_scan_{scan_id}.log"

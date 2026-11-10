@@ -149,6 +149,7 @@ class BoundedDnsResolver:
         self.resolver_factory = resolver_factory or dns.resolver.Resolver
         self.timeout = max(0.1, min(float(timeout), MAX_TIMEOUT_SECONDS))
         self.lifetime = max(self.timeout, min(float(lifetime), MAX_TIMEOUT_SECONDS))
+        self._scan_local_cache = {}
 
     def query(self, requested_name, record_type, *, authorize: Callable[[], object]):
         rrtype = str(record_type or "").strip().upper()
@@ -163,15 +164,31 @@ class BoundedDnsResolver:
         if not default_operation_enabled(DNS_SECURITY_OPERATION):
             return ResolverOutcome(qname, rrtype, "INCONCLUSIVE", (), _now(),
                                    {"error_category": "OPERATION_DISABLED"})
+        authorization_error = False
         try:
             allowed = authorize()
         except Exception:
             allowed = False
+            authorization_error = True
         if isinstance(allowed, tuple):
+            authorization_error = bool(
+                len(allowed) > 1 and "check failed" in str(allowed[1]).lower()
+            )
             allowed = bool(allowed[0]) if allowed else False
         if not allowed:
             return ResolverOutcome(qname, rrtype, "INCONCLUSIVE", (), _now(),
-                                   {"error_category": "AUTHORIZATION_DENIED"})
+                                   {"error_category": (
+                                       "AUTHORIZATION_ERROR" if authorization_error
+                                       else "AUTHORIZATION_DENIED"
+                                   )})
+
+        # Reuse conclusive answers only within this resolver instance (one
+        # assessed parent). Authorization above still runs for every logical
+        # query, including cache hits.
+        cache_key = (qname, rrtype)
+        cached = self._scan_local_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         queried_at = _now()
         try:
@@ -188,8 +205,10 @@ class BoundedDnsResolver:
                     values.append(value)
                 if len(values) >= MAX_ANSWERS:
                     break
-            return ResolverOutcome(qname, rrtype, "ANSWER", tuple(values), queried_at,
-                                   {"truncated": len(values) == MAX_ANSWERS})
+            result = ResolverOutcome(qname, rrtype, "ANSWER", tuple(values), queried_at,
+                                     {"truncated": len(values) == MAX_ANSWERS})
+            self._scan_local_cache[cache_key] = result
+            return result
         except dns.resolver.NXDOMAIN:
             outcome, category = "NXDOMAIN", "NAME_DOES_NOT_EXIST"
         except dns.resolver.NoAnswer:
@@ -203,8 +222,11 @@ class BoundedDnsResolver:
             outcome, category = "TIMEOUT", "RESOLVER_TIMEOUT"
         except Exception as exc:
             outcome, category = "INCONCLUSIVE", type(exc).__name__[:64]
-        return ResolverOutcome(qname, rrtype, outcome, (), queried_at,
-                               {"error_category": category})
+        result = ResolverOutcome(qname, rrtype, outcome, (), queried_at,
+                                 {"error_category": category})
+        if outcome in {"NODATA", "NXDOMAIN"}:
+            self._scan_local_cache[cache_key] = result
+        return result
 
 
 def recheck_dns_security_authorization(cur, *, scan_id, domain_id=None, domain_name=None):
@@ -602,10 +624,12 @@ def persist_dns_security_check(cur, *, scan_id, domain_id, check):
     if remediation is not None and len(str(remediation)) > 1000:
         raise ValueError("DNS remediation exceeds the bounded size")
 
-    authorized, _reason = recheck_dns_security_authorization(
+    authorized, reason = recheck_dns_security_authorization(
         cur, scan_id=scan_id, domain_id=domain_id,
     )
     if not authorized:
+        if reason == "authorization check failed":
+            raise RuntimeError("DNS Security persistence authorization failed")
         return False
     cur.execute("""
         INSERT INTO dns_security_checks(
