@@ -223,6 +223,16 @@ class DnsSecurityWorkerTests(unittest.TestCase):
         acquire.assert_not_called()
         run_pipeline.assert_not_called()
 
+    def test_temporary_enablement_without_targets_is_rejected_before_scan(self):
+        with mock.patch.object(orchestration, "acquire_orchestration_lock") as acquire, \
+             mock.patch.object(orchestration, "run_pipeline") as run_pipeline, \
+             mock.patch.object(orchestration.signal, "signal"):
+            with self.assertRaises(SystemExit) as raised:
+                orchestration.main(["--enable-dns-security"])
+        self.assertEqual(raised.exception.code, 2)
+        acquire.assert_not_called()
+        run_pipeline.assert_not_called()
+
     def test_existing_central_operation_grant_allows_target_restriction(self):
         fake_lock = object()
         with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "DNS_SECURITY"}), \

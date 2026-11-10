@@ -801,6 +801,11 @@ def main(argv=None):
         )
     except ValueError as exc:
         parser.error(str(exc))
+    if args.enable_dns_security and dns_security_target_ids is None:
+        parser.error(
+            "--enable-dns-security requires --dns-security-target-ids "
+            "with 1 to 3 unique domain IDs"
+        )
     if (dns_security_target_ids is not None
             and not args.enable_dns_security
             and not default_operation_enabled("DNS_SECURITY")):
