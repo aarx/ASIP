@@ -105,8 +105,9 @@ class DnsSecurityWorkerTests(unittest.TestCase):
 
     def test_orchestration_registers_dns_stage_only_under_operation_gate(self):
         source = (BACKEND / "orchestration.py").read_text(encoding="utf-8")
-        self.assertIn('if default_operation_enabled("DNS_SECURITY") or dns_security_target_ids:', source)
+        self.assertIn('if default_operation_enabled("DNS_SECURITY"):', source)
         self.assertIn('--dns-security-target-ids', source)
+        self.assertIn('--enable-dns-security', source)
         self.assertIn('dns_security_target_ids', source)
         self.assertIn('dns_stage = (\n                "DNS Security",', source)
         self.assertIn('" --run-scoped" if dns_security_target_ids else ""', source)
@@ -140,14 +141,14 @@ class DnsSecurityWorkerTests(unittest.TestCase):
         self.assertEqual(cursor.sql[0][1], (91,))
         self.assertIn("s.dns_security_target_ids", selection_sql)
 
-    def test_run_scoped_stage_is_bounded_to_persisted_target_ids_when_global_gate_is_off(self):
+    def test_run_scoped_stage_is_bounded_to_persisted_target_ids_when_operation_is_enabled(self):
         cursor = WorkerCursor(
             [(4, "known.example")], scan_row=("RUNNING", [4, 5, 6])
         )
         selection_conn = WorkerConnection(cursor)
         target_conn = WorkerConnection(WorkerCursor())
         connections = iter((selection_conn, target_conn))
-        with mock.patch.object(dns_security_worker, "default_operation_enabled", return_value=False), \
+        with mock.patch.object(dns_security_worker, "default_operation_enabled", return_value=True), \
              mock.patch.object(dns_security_worker, "get_conn", side_effect=lambda: next(connections)), \
              mock.patch.object(dns_security_worker, "dns_security_query_authorizer", return_value=lambda _name: True), \
              mock.patch.object(dns_security_worker, "persist_dns_security_check", return_value=True) as persist, \
@@ -172,7 +173,7 @@ class DnsSecurityWorkerTests(unittest.TestCase):
     def test_run_scoped_flag_without_persisted_allowlist_performs_no_queries(self):
         cursor = WorkerCursor(scan_row=("RUNNING", None))
         conn = WorkerConnection(cursor)
-        with mock.patch.object(dns_security_worker, "default_operation_enabled", return_value=False), \
+        with mock.patch.object(dns_security_worker, "default_operation_enabled", return_value=True), \
              mock.patch.object(dns_security_worker, "get_conn", return_value=conn), \
              mock.patch.object(dns_security_worker, "assess_dns_domain") as assess, \
              mock.patch.object(dns_security_worker, "_emit") as emit:
@@ -182,6 +183,56 @@ class DnsSecurityWorkerTests(unittest.TestCase):
         assess.assert_not_called()
         self.assertTrue(conn.closed)
         self.assertTrue(emit.call_args.args[0]["disabled"])
+
+    def test_target_allowlist_without_operation_grant_never_opens_database(self):
+        with mock.patch.object(dns_security_worker, "default_operation_enabled", return_value=False), \
+             mock.patch.object(dns_security_worker, "get_conn") as get_conn, \
+             mock.patch.object(dns_security_worker, "_emit") as emit:
+            self.assertEqual(
+                dns_security_worker.run_dns_security_stage(
+                    91, run_scoped=True, resolver_factory=lambda: _EmptyResolver()
+                ),
+                0,
+            )
+        get_conn.assert_not_called()
+        self.assertTrue(emit.call_args.args[0]["disabled"])
+
+    def test_process_scoped_enablement_reaches_run_and_is_restored(self):
+        observed = []
+        fake_lock = object()
+        with mock.patch.dict(
+                os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "HTTP_TLS_OBSERVATION"}), \
+             mock.patch.object(orchestration, "acquire_orchestration_lock", return_value=fake_lock), \
+             mock.patch.object(orchestration, "release_orchestration_lock"), \
+             mock.patch.object(orchestration, "recover_orphaned_scans"), \
+             mock.patch.object(orchestration, "run_pipeline", side_effect=lambda ids: observed.append((ids, os.environ.get("ASIP_DEFAULT_SCAN_OPERATIONS")))), \
+             mock.patch.object(orchestration.signal, "signal"):
+            orchestration.main([
+                "--enable-dns-security", "--dns-security-target-ids", "4,5,6"
+            ])
+            self.assertEqual(observed, [((4, 5, 6), "DNS_SECURITY,HTTP_TLS_OBSERVATION")])
+            self.assertEqual(os.environ.get("ASIP_DEFAULT_SCAN_OPERATIONS"), "HTTP_TLS_OBSERVATION")
+
+    def test_target_ids_alone_are_rejected_before_scan_creation(self):
+        with mock.patch.object(orchestration, "acquire_orchestration_lock") as acquire, \
+             mock.patch.object(orchestration, "run_pipeline") as run_pipeline, \
+             mock.patch.object(orchestration.signal, "signal"):
+            with self.assertRaises(SystemExit) as raised:
+                orchestration.main(["--dns-security-target-ids", "4"])
+        self.assertEqual(raised.exception.code, 2)
+        acquire.assert_not_called()
+        run_pipeline.assert_not_called()
+
+    def test_existing_central_operation_grant_allows_target_restriction(self):
+        fake_lock = object()
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "DNS_SECURITY"}), \
+             mock.patch.object(orchestration, "acquire_orchestration_lock", return_value=fake_lock), \
+             mock.patch.object(orchestration, "release_orchestration_lock"), \
+             mock.patch.object(orchestration, "recover_orphaned_scans"), \
+             mock.patch.object(orchestration, "run_pipeline") as run_pipeline, \
+             mock.patch.object(orchestration.signal, "signal"):
+            orchestration.main(["--dns-security-target-ids", "4,5"])
+        run_pipeline.assert_called_once_with((4, 5))
 
     def test_run_scoped_query_summary_is_persistable_and_bounded(self):
         summary = extract_worker_summary(

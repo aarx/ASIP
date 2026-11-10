@@ -246,16 +246,13 @@ def active_scan_authorization_sql(
 
     operation_gate = default_operation_policy_sql(level)
     if level == "DNS_SECURITY" and scan_alias:
-        # A normal scan can carry an explicit, bounded target allowlist for a
-        # single DNS Security stage. The allowlist is persisted on that scan
-        # row and remains subject to all ownership/scope predicates below.
-        # When present, it narrows the operation even if the global operation
-        # is enabled; otherwise the ordinary global allowlist applies.
+        # The scan-row list is a restriction, never an alternate grant. The
+        # process must still have DNS_SECURITY in the centralized operation
+        # policy for both selection and every subsequent query recheck.
         operation_gate = (
-            f"(({scan_alias}.dns_security_target_ids IS NOT NULL "
-            f"AND {domain_alias}.id = ANY({scan_alias}.dns_security_target_ids)) "
-            f"OR ({scan_alias}.dns_security_target_ids IS NULL "
-            f"AND {operation_gate}))"
+            f"({operation_gate} AND ("
+            f"{scan_alias}.dns_security_target_ids IS NULL "
+            f"OR {domain_alias}.id = ANY({scan_alias}.dns_security_target_ids)))"
         )
 
     base = (

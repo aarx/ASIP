@@ -121,25 +121,35 @@ class DnsSecurityTests(unittest.TestCase):
         sql = active_scan_authorization_sql(
             "d", DNS_SECURITY_OPERATION, scan_alias="scan"
         )
-        self.assertIn("scan.dns_security_target_ids IS NOT NULL", sql)
+        self.assertIn("scan.dns_security_target_ids IS NULL", sql)
         self.assertIn("d.id = ANY(scan.dns_security_target_ids)", sql)
-        self.assertIn("scan.dns_security_target_ids IS NULL AND FALSE", sql)
+        self.assertIn("(FALSE AND (scan.dns_security_target_ids IS NULL", sql)
         self.assertIn("d.ownership_status = 'CONFIRMED'", sql)
         self.assertIn("d.scannable IS TRUE", sql)
         self.assertIn("manually rejected", sql)
 
     def test_per_query_authorization_rechecks_run_target_membership(self):
         os.environ.pop("ASIP_DEFAULT_SCAN_OPERATIONS", None)
+        cursor = FakeCursor()
+        allowed, _reason = recheck_dns_security_authorization(
+            cursor, scan_id=17, domain_name="host.example"
+        )
+        self.assertFalse(allowed)
+        sql, params = cursor.executions[0]
+        self.assertIn("scan.dns_security_target_ids", sql)
+        self.assertIn("d.id = ANY(scan.dns_security_target_ids)", sql)
+        self.assertIn("FALSE AND (scan.dns_security_target_ids IS NULL", sql)
+        self.assertIn("scan.status = %s", sql)
+        self.assertEqual(params[-1], "RUNNING")
+
+    def test_enabled_process_and_run_target_allowlist_are_both_required(self):
+        os.environ["ASIP_DEFAULT_SCAN_OPERATIONS"] = "DNS_SECURITY"
         cursor = FakeCursor([(1,)])
         allowed, _reason = recheck_dns_security_authorization(
             cursor, scan_id=17, domain_name="host.example"
         )
         self.assertTrue(allowed)
-        sql, params = cursor.executions[0]
-        self.assertIn("scan.dns_security_target_ids", sql)
-        self.assertIn("d.id = ANY(scan.dns_security_target_ids)", sql)
-        self.assertIn("scan.status = %s", sql)
-        self.assertEqual(params[-1], "RUNNING")
+        self.assertIn("TRUE AND (scan.dns_security_target_ids IS NULL", cursor.executions[0][0])
 
     def test_run_scoped_query_budget_caps_network_attempts(self):
         calls = []

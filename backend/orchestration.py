@@ -10,6 +10,8 @@ import threading
 import uuid
 from db import get_conn
 from authorization_policy import (
+    DEFAULT_SCAN_OPERATIONS_ENV,
+    configured_scan_operations,
     default_operation_enabled,
     normalize_dns_security_target_ids,
 )
@@ -626,6 +628,11 @@ def run_pipeline(dns_security_target_ids=None):
     dns_security_target_ids = normalize_dns_security_target_ids(
         dns_security_target_ids
     )
+    if (dns_security_target_ids is not None
+            and not default_operation_enabled("DNS_SECURITY")):
+        raise ValueError(
+            "DNS Security target selection requires the centralized operation grant"
+        )
 
     pipeline_start = time.time()
 
@@ -687,10 +694,9 @@ def run_pipeline(dns_security_target_ids=None):
             ("Risk Scoring", f"python -u risk_worker.py {scan_id}")
         ]
 
-        # DNS Security is an opt-in assessment stage.  It is intentionally
-        # absent from the normal pipeline unless the central operation policy
-        # explicitly enables it.  The worker still rechecks policy per query.
-        if default_operation_enabled("DNS_SECURITY") or dns_security_target_ids:
+        # DNS Security is absent unless the centralized process operation
+        # policy enables it. A scan-row target list can only narrow selection.
+        if default_operation_enabled("DNS_SECURITY"):
             run_scope_argument = " --run-scoped" if dns_security_target_ids else ""
             dns_stage = (
                 "DNS Security",
@@ -782,6 +788,12 @@ def main(argv=None):
         help=("one-run DNS Security allowlist of 1 to 3 existing domain IDs; "
               "the normal scan pipeline still runs all its usual stages"),
     )
+    parser.add_argument(
+        "--enable-dns-security",
+        action="store_true",
+        help=("enable DNS_SECURITY in the centralized operation policy for "
+              "this regular scan process and its worker subprocesses only"),
+    )
     args = parser.parse_args([] if argv is None else argv)
     try:
         dns_security_target_ids = normalize_dns_security_target_ids(
@@ -789,6 +801,13 @@ def main(argv=None):
         )
     except ValueError as exc:
         parser.error(str(exc))
+    if (dns_security_target_ids is not None
+            and not args.enable_dns_security
+            and not default_operation_enabled("DNS_SECURITY")):
+        parser.error(
+            "--dns-security-target-ids only restricts DNS Security; "
+            "also pass --enable-dns-security for this scan process"
+        )
 
     previous_handlers = {}
     for signum in (signal.SIGTERM, signal.SIGINT):
@@ -804,10 +823,30 @@ def main(argv=None):
             )
             sys.exit(OVERLAP_SKIP_EXIT_CODE)
         recover_orphaned_scans(lock_conn)
-        if dns_security_target_ids is None:
-            run_pipeline()
-        else:
-            run_pipeline(dns_security_target_ids)
+        previous_operations = os.environ.get(DEFAULT_SCAN_OPERATIONS_ENV)
+        if args.enable_dns_security:
+            current_operations = configured_scan_operations(previous_operations)
+            if (previous_operations is not None
+                    and previous_operations.strip()
+                    and not current_operations):
+                parser.error(
+                    f"{DEFAULT_SCAN_OPERATIONS_ENV} is invalid; refusing "
+                    "to alter the operation policy for this scan"
+                )
+            os.environ[DEFAULT_SCAN_OPERATIONS_ENV] = ",".join(
+                sorted(current_operations | {"DNS_SECURITY"})
+            )
+        try:
+            if dns_security_target_ids is None:
+                run_pipeline()
+            else:
+                run_pipeline(dns_security_target_ids)
+        finally:
+            if args.enable_dns_security:
+                if previous_operations is None:
+                    os.environ.pop(DEFAULT_SCAN_OPERATIONS_ENV, None)
+                else:
+                    os.environ[DEFAULT_SCAN_OPERATIONS_ENV] = previous_operations
     finally:
         if lock_conn is not None:
             try:
