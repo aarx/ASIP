@@ -261,7 +261,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         policy_patch = mock.patch.dict(
             os.environ,
             {"ASIP_DEFAULT_SCAN_OPERATIONS": (
-                "HTTP_TLS_OBSERVATION,TECHNOLOGY_HTTP,PORT_SCAN,ADHOC_CHECK"
+                "HTTP_TLS_OBSERVATION,TECHNOLOGY_HTTP,PORT_SCAN,ADHOC_CHECK,ASN_METADATA"
             )},
         )
         policy_patch.start()
@@ -641,6 +641,60 @@ class PostgreSQLMembershipTests(unittest.TestCase):
                      ([arbitrary, manually_rejected, excluded],)),
             [(0,)],
         )
+
+    def test_takeover_cname_refresh_rechecks_passive_discovery_scope(self):
+        candidate = self.domain('candidate.example', 42)
+        arbitrary = self.domain('arbitrary.example', 42)
+        rejected = self.domain('rejected.example', 42)
+        excluded = self.domain('excluded.example', 42)
+        revoked = self.domain('revoked.example', 42)
+        self.sql("UPDATE domains SET ownership_status='CANDIDATE' WHERE id=%s", (candidate,))
+        self.sql("UPDATE scan_results SET seed='outside.test' WHERE domain_id=%s AND scan_id=42", (arbitrary,))
+        self.sql("UPDATE domains SET confidence_reasons=ARRAY['manually rejected'] WHERE id=%s", (rejected,))
+        self.authorize_scope(
+            scope_domain='example', testing_level='PORT_SCAN',
+            excluded_domains=['excluded.example'],
+        )
+        self.authorize_scope(
+            scope_domain='revoked.example', include_subdomains=False,
+            testing_level='HTTP_TLS_OBSERVATION', status='REVOKED',
+        )
+        for domain_id in (candidate, arbitrary, rejected, excluded, revoked):
+            self.sql(
+                "INSERT INTO domain_dns(domain_id,scan_id,record_type,value) VALUES (%s,42,'CNAME','target.github.io')",
+                (domain_id,),
+            )
+
+        live_cname = mock.Mock(return_value='target.github.io')
+        self.run_worker('takeover_worker.py', overrides={
+            'get_live_cname': live_cname,
+        })
+        self.assertEqual(
+            [call.args[0] for call in live_cname.call_args_list],
+            ['candidate.example'],
+        )
+
+    def test_asn_metadata_scope_migration_is_idempotent(self):
+        migration = (BACKEND / 'migrations' / '013_add_asn_metadata_operation.sql').read_text()
+        connection = self.connect()
+        try:
+            with connection:
+                with connection.cursor() as cur:
+                    cur.execute("SELECT count(*) FROM active_scan_scopes")
+                    before = cur.fetchone()[0]
+                    cur.execute(migration)
+                    cur.execute(migration)
+                    cur.execute("SELECT count(*) FROM active_scan_scopes")
+                    self.assertEqual(cur.fetchone()[0], before)
+                    cur.execute("""
+                        INSERT INTO active_scan_scopes(
+                            scope_domain,include_subdomains,testing_level,approved_by
+                        ) VALUES ('example',TRUE,'ASN_METADATA','test') RETURNING id
+                    """)
+                    scope_id = cur.fetchone()[0]
+                    cur.execute("DELETE FROM active_scan_scopes WHERE id=%s", (scope_id,))
+        finally:
+            connection.close()
 
     def _run_shared_san_children(self, completion_order, existing_child=False):
         parent_a = self.domain('parent-a.example', 42)

@@ -38,6 +38,14 @@ class DefaultScanningPolicyTests(unittest.TestCase):
         self.assertEqual(configured_scan_operations(), frozenset())
         os.environ["ASIP_DEFAULT_SCAN_OPERATIONS"] = "HTTP_TLS_OBSERVATION,MADE_UP"
         self.assertEqual(configured_scan_operations(), frozenset())
+
+    def test_asn_metadata_is_a_separate_explicit_operation(self):
+        os.environ["ASIP_DEFAULT_SCAN_OPERATIONS"] = "ASN_METADATA"
+        self.assertTrue(default_operation_enabled("ASN_METADATA"))
+        self.assertFalse(default_operation_enabled("DNS_SECURITY"))
+        self.assertIn(
+            "AND TRUE", active_scan_authorization_sql("d", "ASN_METADATA")
+        )
         self.assertFalse(default_operation_enabled("HTTP_TLS_OBSERVATION"))
 
     def test_operations_are_explicit_independent_and_reloaded(self):

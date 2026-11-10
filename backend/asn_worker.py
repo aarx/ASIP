@@ -2,7 +2,12 @@ import requests
 import logging
 import os
 import sys
+import ipaddress
 from db import get_conn, require_running_scan
+from authorization_policy import (
+    active_scan_authorization_sql,
+    passive_dns_discovery_sql,
+)
 
 scan_id = int(sys.argv[1])
 
@@ -20,7 +25,7 @@ logging.basicConfig(
 
 def get_domains(cur, scan_id):
 
-    cur.execute("""
+    cur.execute(f"""
     SELECT DISTINCT ON (d.id) d.id, d.domain, s.ip
     FROM domains d
     JOIN domain_states s
@@ -36,6 +41,8 @@ def get_domains(cur, scan_id):
     
     WHERE s.has_ip = TRUE
     AND da.domain_id IS NULL
+    AND {active_scan_authorization_sql('d', 'ASN_METADATA')}
+    AND {passive_dns_discovery_sql('d', 'sr')}
     ORDER BY d.id, s.scan_id DESC
     """, (scan_id, scan_id))
 
@@ -46,6 +53,10 @@ def get_domains(cur, scan_id):
 def enrich_asn(ip):
 
     try:
+        address = ipaddress.ip_address(str(ip).strip())
+        if not address.is_global:
+            return None
+        ip = str(address)
         r = requests.get(f"https://ipinfo.io/{ip}/json", timeout=5)
         if not 200 <= r.status_code < 300:
             print(f"ASN lookup failed for {ip} → HTTP {r.status_code}")
@@ -66,6 +77,27 @@ def enrich_asn(ip):
         return None
 
 
+def asn_target_authorized(cur, target_scan_id, domain_id, ip):
+    """Recheck the exact current-scan IP before external metadata use."""
+    cur.execute(f"""
+    SELECT EXISTS (
+        SELECT 1
+        FROM domains d
+        JOIN scan_results sr
+          ON sr.domain_id = d.id AND sr.scan_id = %s
+        JOIN domain_states s
+          ON s.domain_id = d.id AND s.scan_id = sr.scan_id
+        WHERE d.id = %s
+          AND s.has_ip IS TRUE
+          AND s.ip = %s
+          AND {active_scan_authorization_sql('d', 'ASN_METADATA')}
+          AND {passive_dns_discovery_sql('d', 'sr')}
+    )
+    """, (target_scan_id, domain_id, ip))
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
 def main():
 
     conn = get_conn()
@@ -76,11 +108,32 @@ def main():
 
     for domain_id, domain, ip in domains:
 
+        # Recheck the exact current-scan address immediately before sending
+        # it to the third-party metadata service. The operation grant is
+        # separate from HTTP/TLS and port-scanning authorization.
+        if not asn_target_authorized(cur, scan_id, domain_id, ip):
+            print(f"Skipping ASN metadata lookup outside authorized scope: {domain}")
+            continue
+
+        try:
+            address = ipaddress.ip_address(str(ip).strip())
+        except ValueError:
+            print(f"Skipping ASN metadata lookup for invalid address: {domain}")
+            continue
+        if not address.is_global:
+            print(f"Skipping ASN metadata lookup for non-public address: {domain}")
+            continue
+        ip = str(address)
+
         print("ASN lookup →", domain)
         print("Trying insert →", domain_id, ip)
 
         asn_result = enrich_asn(ip)
         if asn_result is None:
+            continue
+
+        if not asn_target_authorized(cur, scan_id, domain_id, ip):
+            print(f"Skipping ASN metadata persistence after authorization changed: {domain}")
             continue
 
         asn, org = asn_result

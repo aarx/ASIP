@@ -643,7 +643,7 @@ class FailClosedWriterTests(unittest.TestCase):
              "fetch_cert_expiry", (None, None, "no_cert"), "domain_cert"),
             ("port_scan_worker.py", (7, "port.example", "45.67.89.7"),
              "scan_ports", [(443, "https")], "domain_ports"),
-            ("asn_worker.py", (7, "asn.example", "192.0.2.7"),
+            ("asn_worker.py", (7, "asn.example", "8.8.8.8"),
              "enrich_asn", ("AS1", "example"), "domain_asn"),
         )
         for filename, row, observation, result, table in cases:
@@ -670,7 +670,12 @@ class FailClosedWriterTests(unittest.TestCase):
                         module.recheck_active_authorization = mock.Mock(
                             return_value=(True, "authorized")
                         )
-                    with mock.patch("builtins.print"):
+                    policy_env = (
+                        {"ASIP_DEFAULT_SCAN_OPERATIONS": "ASN_METADATA"}
+                        if filename == "asn_worker.py" else {}
+                    )
+                    with mock.patch.dict(os.environ, policy_env), \
+                            mock.patch("builtins.print"):
                         if status == "RUNNING":
                             module.main()
                         else:

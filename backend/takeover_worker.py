@@ -2,6 +2,7 @@ import requests
 import sys
 import dns.resolver
 from db import get_conn, require_running_scan
+from authorization_policy import passive_dns_discovery_sql
 
 scan_id = int(sys.argv[1])
 
@@ -128,6 +129,25 @@ def main():
     print("Domains to check:", len(rows))
 
     for domain_id, domain, cname in rows:
+
+        # This refresh is passive DNS discovery, not a DNS_SECURITY check.
+        # Reuse the seed-provenance policy and recheck membership, rejection,
+        # exclusions and revocation immediately before each resolver call.
+        require_running_scan(cur, scan_id)
+        cur.execute(f"""
+        SELECT EXISTS (
+            SELECT 1
+            FROM domains d
+            JOIN scan_results sr
+              ON sr.domain_id = d.id AND sr.scan_id = %s
+            WHERE d.id = %s
+              AND {passive_dns_discovery_sql('d', 'sr')}
+        )
+        """, (scan_id, domain_id))
+        authorized_row = cur.fetchone()
+        if not authorized_row or not authorized_row[0]:
+            print(f"Skipping CNAME refresh outside permitted discovery scope: {domain}")
+            continue
 
         live_cname = get_live_cname(domain)
 

@@ -622,7 +622,7 @@ class AsnTruthTests(unittest.TestCase):
                 side_effect=result if isinstance(result, Exception) else None,
                 return_value=None if isinstance(result, Exception) else result,
             ), mock.patch("builtins.print"):
-                self.assertIsNone(self.module.enrich_asn("192.0.2.1"))
+                self.assertIsNone(self.module.enrich_asn("8.8.8.8"))
 
     def test_valid_asn_and_valid_empty_organization(self):
         for payload, expected in (
@@ -632,38 +632,101 @@ class AsnTruthTests(unittest.TestCase):
             with self.subTest(payload=payload), mock.patch.object(
                 self.module.requests, "get", return_value=self.response(200, payload)
             ):
-                self.assertEqual(self.module.enrich_asn("192.0.2.1"), expected)
+                self.assertEqual(self.module.enrich_asn("8.8.8.8"), expected)
+
+    def test_non_global_and_malformed_addresses_are_not_shared(self):
+        for ip in ("192.0.2.1", "10.0.0.1", "not-an-ip"):
+            with self.subTest(ip=ip), mock.patch.object(self.module.requests, "get") as request:
+                self.assertIsNone(self.module.enrich_asn(ip))
+                request.assert_not_called()
+
+    def test_get_domains_requires_explicit_central_operation_grant(self):
+        cursor = RecordingCursor(fetchalls=[[]])
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.module.get_domains(cursor, 42)
+        query = cursor.executions[0][0]
+        self.assertIn("AND FALSE", query)
+        self.assertIn("ASN_METADATA", query)
+        self.assertIn("sr.seed", query)
+        self.assertIn("manually rejected", query)
 
     def test_failed_asn_observation_writes_no_row(self):
-        cursor = RecordingCursor(fetchalls=[[(1, "host.example", "192.0.2.1")]])
+        cursor = RecordingCursor(fetchalls=[[(1, "host.example", "8.8.8.8")]], fetchones=[(True,)])
         connection = FakeConnection(cursor)
         self.module.get_conn = lambda: connection
         self.module.enrich_asn = lambda ip: None
-        with mock.patch("builtins.print"):
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "ASN_METADATA"}), \
+                mock.patch("builtins.print"):
             self.module.main()
         self.assertEqual(writes_to(cursor, "domain_asn"), [])
 
     def test_valid_asn_is_persisted(self):
-        cursor = RecordingCursor(fetchalls=[[(1, "host.example", "192.0.2.1")]])
+        cursor = RecordingCursor(fetchalls=[[(1, "host.example", "8.8.8.8")]], fetchones=[(True,), (True,)])
         connection = FakeConnection(cursor)
         self.module.get_conn = lambda: connection
         self.module.enrich_asn = lambda ip: ("AS64500", "AS64500 Example")
-        with mock.patch("builtins.print"):
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "ASN_METADATA"}), \
+                mock.patch("builtins.print"):
             self.module.main()
         writes = writes_to(cursor, "domain_asn")
         self.assertEqual(len(writes), 1)
-        self.assertEqual(writes[0][1][:5], (1, 42, "192.0.2.1", "AS64500", "AS64500 Example"))
+        self.assertEqual(writes[0][1][:5], (1, 42, "8.8.8.8", "AS64500", "AS64500 Example"))
+        self.assertIn("s.ip = %s", cursor.executions[1][0])
+        self.assertIn("ASN_METADATA", cursor.executions[1][0])
+        self.assertEqual(cursor.executions[1][1], (42, 1, "8.8.8.8"))
+        self.assertEqual(cursor.executions[2][1], (42, 1, "8.8.8.8"))
 
     def test_valid_empty_organization_is_persisted_as_existing_negative(self):
-        cursor = RecordingCursor(fetchalls=[[(1, "host.example", "192.0.2.1")]])
+        cursor = RecordingCursor(fetchalls=[[(1, "host.example", "8.8.8.8")]], fetchones=[(True,), (True,)])
         connection = FakeConnection(cursor)
         self.module.get_conn = lambda: connection
         self.module.enrich_asn = lambda ip: ("", "")
-        with mock.patch("builtins.print"):
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "ASN_METADATA"}), \
+                mock.patch("builtins.print"):
             self.module.main()
         writes = writes_to(cursor, "domain_asn")
         self.assertEqual(len(writes), 1)
         self.assertEqual(writes[0][1][3:5], ("", ""))
+
+    def test_asn_policy_denial_prevents_external_request(self):
+        cursor = RecordingCursor(
+            fetchalls=[[(1, "host.example", "8.8.8.8")]], fetchones=[(False,)]
+        )
+        connection = FakeConnection(cursor)
+        self.module.get_conn = lambda: connection
+        self.module.enrich_asn = mock.Mock(return_value=("AS1", "AS1 Org"))
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "ASN_METADATA"}), \
+                mock.patch("builtins.print"):
+            self.module.main()
+        self.module.enrich_asn.assert_not_called()
+        self.assertEqual(writes_to(cursor, "domain_asn"), [])
+
+    def test_asn_policy_database_error_fails_closed(self):
+        cursor = RecordingCursor(fetchalls=[[(1, "host.example", "8.8.8.8")]])
+        cursor.fetchone = mock.Mock(side_effect=RuntimeError("policy DB unavailable"))
+        connection = FakeConnection(cursor)
+        self.module.get_conn = lambda: connection
+        self.module.enrich_asn = mock.Mock(return_value=("AS1", "AS1 Org"))
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "ASN_METADATA"}), \
+                mock.patch("builtins.print"):
+            with self.assertRaisesRegex(RuntimeError, "policy DB unavailable"):
+                self.module.main()
+        self.module.enrich_asn.assert_not_called()
+        self.assertEqual(writes_to(cursor, "domain_asn"), [])
+
+    def test_authorization_revoked_after_lookup_prevents_persistence(self):
+        cursor = RecordingCursor(
+            fetchalls=[[(1, "host.example", "8.8.8.8")]],
+            fetchones=[(True,), (False,)],
+        )
+        connection = FakeConnection(cursor)
+        self.module.get_conn = lambda: connection
+        self.module.enrich_asn = mock.Mock(return_value=("AS1", "AS1 Org"))
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": "ASN_METADATA"}), \
+                mock.patch("builtins.print"):
+            self.module.main()
+        self.module.enrich_asn.assert_called_once_with("8.8.8.8")
+        self.assertEqual(writes_to(cursor, "domain_asn"), [])
 
 
 class TakeoverTruthTests(unittest.TestCase):
@@ -694,7 +757,8 @@ class TakeoverTruthTests(unittest.TestCase):
 
     def run_main(self, observation, live_cname="target.github.io", override_check=True):
         cursor = RecordingCursor(
-            fetchalls=[[(1, "host.example", "target.github.io")]]
+            fetchalls=[[(1, "host.example", "target.github.io")]],
+            fetchones=[(True,)],
         )
         connection = FakeConnection(cursor)
         self.module.get_conn = lambda: connection
@@ -704,6 +768,34 @@ class TakeoverTruthTests(unittest.TestCase):
         with mock.patch("builtins.print"):
             self.module.main()
         return cursor
+
+    def test_cname_query_uses_current_seed_scoped_authorization(self):
+        cursor = self.run_main(None)
+        policy_query = cursor.executions[1][0]
+        self.assertIn("scan_results", policy_query)
+        self.assertIn("sr.scan_id = %s", policy_query)
+        self.assertIn("sr.seed", policy_query)
+        self.assertIn("manually rejected", policy_query)
+        self.assertIn("scope_block.status = 'REVOKED'", policy_query)
+        self.module.get_live_cname.assert_called_once_with("host.example")
+
+    def test_revoked_or_excluded_name_is_not_resolved(self):
+        cursor = RecordingCursor(
+            fetchalls=[[(1, "excluded.example", "target.github.io")]],
+            fetchones=[(False,)],
+        )
+        connection = FakeConnection(cursor)
+        self.module.get_conn = lambda: connection
+        self.module.get_live_cname = mock.Mock()
+        with mock.patch("builtins.print"):
+            self.module.main()
+        self.module.get_live_cname.assert_not_called()
+
+    def test_passive_cname_refresh_does_not_enable_http_verification(self):
+        self.module.TAKEOVER_HTTP_ENABLED = False
+        with mock.patch.object(self.module.requests, "get") as request:
+            self.assertIsNone(self.module.check_takeover("target.github.io"))
+        request.assert_not_called()
 
     def test_transport_failure_and_live_cname_failure_write_no_finding(self):
         self.assertEqual(writes_to(self.run_main(None), "domain_findings"), [])
