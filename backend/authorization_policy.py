@@ -16,6 +16,7 @@ SCOPE_TESTING_LEVELS = frozenset({
     "DNS_SECURITY",
 })
 DEFAULT_SCAN_OPERATIONS_ENV = "ASIP_DEFAULT_SCAN_OPERATIONS"
+MAX_DNS_SECURITY_RUN_TARGETS = 3
 
 _DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
@@ -177,6 +178,26 @@ def default_operation_enabled(testing_level, value=None):
     return level in SCOPE_TESTING_LEVELS and level in configured_scan_operations(value)
 
 
+def normalize_dns_security_target_ids(values):
+    """Validate the explicit target allowlist for one bounded normal scan."""
+    if values is None:
+        return None
+    if isinstance(values, str):
+        values = values.split(",")
+    try:
+        parsed = tuple(int(value) for value in values)
+    except (TypeError, ValueError):
+        raise ScopePolicyError("DNS Security target IDs must be positive integers")
+    if (not 1 <= len(parsed) <= MAX_DNS_SECURITY_RUN_TARGETS
+            or any(value <= 0 for value in parsed)
+            or len(set(parsed)) != len(parsed)):
+        raise ScopePolicyError(
+            f"DNS Security run target list must contain 1 to "
+            f"{MAX_DNS_SECURITY_RUN_TARGETS} unique positive IDs"
+        )
+    return parsed
+
+
 def is_authorized(
     *, ownership_status, scannable, validation_source,
     domain, testing_level, scopes=(), now=None, trusted_domains=None,
@@ -215,18 +236,34 @@ def explicit_t2_authorization_sql(domain_alias="d"):
     )
 
 
-def active_scan_authorization_sql(domain_alias="d", testing_level="TECHNOLOGY_HTTP"):
+def active_scan_authorization_sql(
+    domain_alias="d", testing_level="TECHNOLOGY_HTTP", *, scan_alias=None
+):
     """Return trusted, technically eligible, centrally permitted SQL."""
     level = str(testing_level or "").strip().upper()
     if level not in SCOPE_TESTING_LEVELS:
         raise ScopePolicyError("unsupported scope testing level")
+
+    operation_gate = default_operation_policy_sql(level)
+    if level == "DNS_SECURITY" and scan_alias:
+        # A normal scan can carry an explicit, bounded target allowlist for a
+        # single DNS Security stage. The allowlist is persisted on that scan
+        # row and remains subject to all ownership/scope predicates below.
+        # When present, it narrows the operation even if the global operation
+        # is enabled; otherwise the ordinary global allowlist applies.
+        operation_gate = (
+            f"(({scan_alias}.dns_security_target_ids IS NOT NULL "
+            f"AND {domain_alias}.id = ANY({scan_alias}.dns_security_target_ids)) "
+            f"OR ({scan_alias}.dns_security_target_ids IS NULL "
+            f"AND {operation_gate}))"
+        )
 
     base = (
         f"{domain_alias}.ownership_status = 'CONFIRMED' "
         f"AND {domain_alias}.scannable IS TRUE "
         f"AND {trusted_boundary_sql(f'{domain_alias}.domain')} "
         f"AND NOT COALESCE('manually rejected' = ANY({domain_alias}.confidence_reasons), FALSE) "
-        f"AND {default_operation_policy_sql(level)} "
+        f"AND {operation_gate} "
         f"AND NOT ({active_scope_exclusion_sql(domain_alias, level)}) "
     )
     return base
@@ -347,7 +384,10 @@ def recheck_active_authorization(
               ON scan.id = sr.scan_id
             WHERE {identity_sql}
               AND scan.status = %s
-              AND {active_scan_authorization_sql('d', testing_level)}
+              AND {active_scan_authorization_sql(
+                  'd', testing_level,
+                  scan_alias='scan' if str(testing_level).strip().upper() == 'DNS_SECURITY' else None,
+              )}
             LIMIT 1
             """,
             (scan_id, *identity_params, required_scan_status),

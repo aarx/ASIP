@@ -13,14 +13,15 @@ sys.path.insert(0, str(BACKEND))
 
 import dns_security_worker  # noqa: E402
 import main  # noqa: E402
+import orchestration  # noqa: E402
 from scan_diagnostics import extract_worker_summary  # noqa: E402
 
 
 class WorkerCursor:
-    def __init__(self, targets=()):
+    def __init__(self, targets=(), scan_row=("RUNNING", None)):
         self.targets = list(targets)
         self.sql = []
-        self.fetchone_values = [("RUNNING",)]
+        self.fetchone_values = [scan_row]
 
     def execute(self, query, params=None):
         self.sql.append((query, params))
@@ -47,8 +48,52 @@ class WorkerConnection:
     def close(self):
         self.closed = True
 
+    def commit(self):
+        pass
+
+
+class CreateScanCursor:
+    def __init__(self):
+        self.statement = None
+
+    def execute(self, query, params=None):
+        self.statement = (query, params)
+
+    def fetchone(self):
+        return (902,)
+
+
+class CreateScanConnection:
+    def __init__(self):
+        self.cursor_value = CreateScanCursor()
+        self.closed = False
+
+    def cursor(self):
+        return self.cursor_value
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
 
 class DnsSecurityWorkerTests(unittest.TestCase):
+    def test_normal_scan_persists_bounded_dns_target_ids_on_its_own_row(self):
+        conn = CreateScanConnection()
+        identity = {}
+        with mock.patch.object(orchestration, "get_conn", return_value=conn):
+            scan_id = orchestration.create_scan(identity, (4, 5, 6))
+        query, params = conn.cursor_value.statement
+        self.assertEqual(scan_id, 902)
+        self.assertIn("dns_security_target_ids", query)
+        self.assertEqual(params[1], [4, 5, 6])
+        self.assertEqual(identity["scan_id"], 902)
+        self.assertTrue(conn.closed)
+
     def test_disabled_stage_does_not_open_database_or_resolve(self):
         with mock.patch.object(dns_security_worker, "default_operation_enabled", return_value=False), \
              mock.patch.object(dns_security_worker, "get_conn") as get_conn, \
@@ -60,8 +105,11 @@ class DnsSecurityWorkerTests(unittest.TestCase):
 
     def test_orchestration_registers_dns_stage_only_under_operation_gate(self):
         source = (BACKEND / "orchestration.py").read_text(encoding="utf-8")
-        self.assertIn('if default_operation_enabled("DNS_SECURITY"):', source)
-        self.assertIn('dns_stage = ("DNS Security",', source)
+        self.assertIn('if default_operation_enabled("DNS_SECURITY") or dns_security_target_ids:', source)
+        self.assertIn('--dns-security-target-ids', source)
+        self.assertIn('dns_security_target_ids', source)
+        self.assertIn('dns_stage = (\n                "DNS Security",', source)
+        self.assertIn('" --run-scoped" if dns_security_target_ids else ""', source)
         self.assertIn('insertion = next(i for i, item in enumerate(pipeline)', source)
         self.assertIn('if item[0] == "HTTP/TLS Observation"', source)
 
@@ -89,6 +137,63 @@ class DnsSecurityWorkerTests(unittest.TestCase):
         self.assertTrue(target_conn.closed)
         self.assertEqual(emit.call_args.args[0]["completed"], 1)
         self.assertEqual(emit.call_args.args[0]["checks_persisted"], 6)
+        self.assertEqual(cursor.sql[0][1], (91,))
+        self.assertIn("s.dns_security_target_ids", selection_sql)
+
+    def test_run_scoped_stage_is_bounded_to_persisted_target_ids_when_global_gate_is_off(self):
+        cursor = WorkerCursor(
+            [(4, "known.example")], scan_row=("RUNNING", [4, 5, 6])
+        )
+        selection_conn = WorkerConnection(cursor)
+        target_conn = WorkerConnection(WorkerCursor())
+        connections = iter((selection_conn, target_conn))
+        with mock.patch.object(dns_security_worker, "default_operation_enabled", return_value=False), \
+             mock.patch.object(dns_security_worker, "get_conn", side_effect=lambda: next(connections)), \
+             mock.patch.object(dns_security_worker, "dns_security_query_authorizer", return_value=lambda _name: True), \
+             mock.patch.object(dns_security_worker, "persist_dns_security_check", return_value=True) as persist, \
+             mock.patch.object(dns_security_worker, "_emit") as emit:
+            result = dns_security_worker.run_dns_security_stage(
+                91, run_scoped=True, resolver_factory=lambda: _EmptyResolver()
+            )
+        self.assertEqual(result, 0)
+        selection_sql, params = cursor.sql[1]
+        self.assertEqual(params, (91, [4, 5, 6], [4, 5, 6]))
+        self.assertIn("d.id = ANY(%s::INTEGER[])", selection_sql)
+        self.assertIn("s.dns_security_target_ids", selection_sql)
+        self.assertIn("d.ownership_status = 'CONFIRMED'", selection_sql)
+        self.assertIn("d.scannable IS TRUE", selection_sql)
+        self.assertIn("'KNOWN', 'SHADOW'", selection_sql)
+        self.assertEqual(persist.call_count, 6)
+        summary = emit.call_args.args[0]
+        self.assertTrue(summary["run_scoped"])
+        self.assertEqual(summary["run_scope_target_count"], 3)
+        self.assertEqual(summary["query_attempts"], 6)
+
+    def test_run_scoped_flag_without_persisted_allowlist_performs_no_queries(self):
+        cursor = WorkerCursor(scan_row=("RUNNING", None))
+        conn = WorkerConnection(cursor)
+        with mock.patch.object(dns_security_worker, "default_operation_enabled", return_value=False), \
+             mock.patch.object(dns_security_worker, "get_conn", return_value=conn), \
+             mock.patch.object(dns_security_worker, "assess_dns_domain") as assess, \
+             mock.patch.object(dns_security_worker, "_emit") as emit:
+            self.assertEqual(
+                dns_security_worker.run_dns_security_stage(91, run_scoped=True), 0
+            )
+        assess.assert_not_called()
+        self.assertTrue(conn.closed)
+        self.assertTrue(emit.call_args.args[0]["disabled"])
+
+    def test_run_scoped_query_summary_is_persistable_and_bounded(self):
+        summary = extract_worker_summary(
+            'dns_security_stage {"run_scoped":true,"run_scope_target_count":3,'
+            '"query_attempts":60,"query_budget_exhausted":true}'
+        )
+        self.assertEqual(summary, {
+            "run_scoped": True,
+            "run_scope_target_count": 3,
+            "query_attempts": 60,
+            "query_budget_exhausted": True,
+        })
 
 
 class _EmptyResolver:

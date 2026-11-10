@@ -4,13 +4,20 @@ import json
 import logging
 import sys
 import time
+import argparse
 
 from asset_reporting import reporting_asset_class_sql
-from authorization_policy import active_scan_authorization_sql, default_operation_enabled
+from authorization_policy import (
+    active_scan_authorization_sql,
+    default_operation_enabled,
+    normalize_dns_security_target_ids,
+)
 from db import get_conn
 from dns_security import (
     BoundedDnsResolver,
+    DnsQueryBudget,
     DNS_SECURITY_OPERATION,
+    MAX_RUN_SCOPED_DNS_QUERIES,
     assess_dns_domain,
     dns_security_query_authorizer,
     persist_dns_security_check,
@@ -21,16 +28,19 @@ def _emit(summary):
     logging.info("dns_security_stage %s", json.dumps(summary, sort_keys=True, separators=(",", ":")))
 
 
-def run_dns_security_stage(scan_id, *, resolver_factory=None):
+def run_dns_security_stage(scan_id, *, run_scoped=False, resolver_factory=None):
     started = time.monotonic()
     summary = {
         "scan_id": int(scan_id), "selected": 0, "completed": 0,
         "checks_persisted": 0, "authorization_skips": 0,
         "policy_stops": 0, "disabled": False, "worker_errors": 0,
+        "run_scoped": False, "run_scope_target_count": 0,
+        "query_attempts": 0, "query_budget_exhausted": False,
         "elapsed_seconds": 0.0,
     }
     exit_code = 0
-    if not default_operation_enabled(DNS_SECURITY_OPERATION):
+    globally_enabled = default_operation_enabled(DNS_SECURITY_OPERATION)
+    if not globally_enabled and not run_scoped:
         summary["disabled"] = True
         summary["elapsed_seconds"] = round(time.monotonic() - started, 4)
         _emit(summary)
@@ -40,12 +50,31 @@ def run_dns_security_stage(scan_id, *, resolver_factory=None):
         conn = get_conn()
         try:
             cur = conn.cursor()
-            cur.execute("SELECT status FROM scans WHERE id = %s", (scan_id,))
+            cur.execute(
+                "SELECT status, dns_security_target_ids FROM scans WHERE id = %s",
+                (scan_id,),
+            )
             scan = cur.fetchone()
             if scan is None or scan[0] != "RUNNING":
                 raise RuntimeError("scan is not RUNNING")
+            target_ids = normalize_dns_security_target_ids(scan[1])
+            if not globally_enabled and target_ids is None:
+                summary["disabled"] = True
+                summary["policy_stops"] += 1
+                conn.rollback()
+                return 0
+            if run_scoped and target_ids is None:
+                summary["disabled"] = True
+                summary["policy_stops"] += 1
+                conn.rollback()
+                return 0
+            if target_ids is not None:
+                summary["run_scoped"] = True
+                summary["run_scope_target_count"] = len(target_ids)
             classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
-            authorization = active_scan_authorization_sql("d", DNS_SECURITY_OPERATION)
+            authorization = active_scan_authorization_sql(
+                "d", DNS_SECURITY_OPERATION, scan_alias="s"
+            )
             cur.execute(f"""
                 SELECT DISTINCT d.id, d.domain
                   FROM scan_results sr
@@ -55,17 +84,24 @@ def run_dns_security_stage(scan_id, *, resolver_factory=None):
                    AND s.status = 'RUNNING'
                    AND d.scannable IS TRUE
                    AND ({classification}) IN ('KNOWN', 'SHADOW')
+                   AND (%s::INTEGER[] IS NULL OR d.id = ANY(%s::INTEGER[]))
                    AND {authorization}
                  ORDER BY d.id
-            """, (scan_id,))
+            """, (scan_id, list(target_ids) if target_ids is not None else None,
+                  list(target_ids) if target_ids is not None else None))
             targets = cur.fetchall()
             summary["selected"] = len(targets)
             conn.rollback()
         finally:
             conn.close()
 
+        query_budget = (
+            DnsQueryBudget(MAX_RUN_SCOPED_DNS_QUERIES)
+            if target_ids is not None else None
+        )
         for domain_id, domain in targets:
-            if not default_operation_enabled(DNS_SECURITY_OPERATION):
+            if (not default_operation_enabled(DNS_SECURITY_OPERATION)
+                    and target_ids is None):
                 summary["disabled"] = True
                 summary["policy_stops"] += 1
                 break
@@ -75,9 +111,20 @@ def run_dns_security_stage(scan_id, *, resolver_factory=None):
                 worker_conn.autocommit = True
                 cur = worker_conn.cursor()
                 authorize = dns_security_query_authorizer(cur, scan_id)
-                report = assess_dns_domain(
-                    domain, BoundedDnsResolver(resolver_factory=resolver_factory), authorize,
+                resolver = BoundedDnsResolver(
+                    resolver_factory=resolver_factory,
+                    operation_enabled=lambda: (
+                        default_operation_enabled(DNS_SECURITY_OPERATION)
+                        or target_ids is not None
+                    ),
+                    query_budget=query_budget,
                 )
+                report = assess_dns_domain(
+                    domain, resolver, authorize,
+                )
+                summary["query_attempts"] += resolver.query_attempts
+                if query_budget is not None and query_budget.exhausted:
+                    summary["query_budget_exhausted"] = True
                 if any(item["evidence"].get("error_category") == "OPERATION_DISABLED"
                        for item in report["observations"]):
                     summary["disabled"] = True
@@ -94,7 +141,8 @@ def run_dns_security_stage(scan_id, *, resolver_factory=None):
                     summary["authorization_skips"] += 1
                 persisted = 0
                 for check in report["checks"]:
-                    if not default_operation_enabled(DNS_SECURITY_OPERATION):
+                    if (not default_operation_enabled(DNS_SECURITY_OPERATION)
+                            and target_ids is None):
                         summary["disabled"] = True
                         summary["policy_stops"] += 1
                         break
@@ -124,18 +172,18 @@ def run_dns_security_stage(scan_id, *, resolver_factory=None):
 
 
 def main(argv=None):
-    argv = list(sys.argv[1:] if argv is None else argv)
-    if len(argv) != 1:
-        logging.error("Usage: dns_security_worker.py <scan_id>")
-        return 2
+    parser = argparse.ArgumentParser(description="Run an authorized DNS Security scan stage")
+    parser.add_argument("scan_id", type=int)
+    parser.add_argument("--run-scoped", action="store_true")
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        scan_id = int(argv[0])
+        scan_id = args.scan_id
         if scan_id <= 0:
             raise ValueError
     except ValueError:
         logging.error("scan_id must be a positive integer")
         return 2
-    return run_dns_security_stage(scan_id)
+    return run_dns_security_stage(scan_id, run_scoped=args.run_scoped)
 
 
 if __name__ == "__main__":

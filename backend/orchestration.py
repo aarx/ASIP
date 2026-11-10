@@ -1,4 +1,5 @@
 import subprocess
+import argparse
 from datetime import datetime
 import time
 import logging
@@ -8,7 +9,10 @@ import sys
 import threading
 import uuid
 from db import get_conn
-from authorization_policy import default_operation_enabled
+from authorization_policy import (
+    default_operation_enabled,
+    normalize_dns_security_target_ids,
+)
 from worker_outcome import RETRYABLE_INCOMPLETE_EXIT_CODE
 from scan_diagnostics import (
     extract_worker_summary,
@@ -219,28 +223,53 @@ class RunnerHeartbeat:
 # -------------------------
 # CREATE SCAN
 # -------------------------
-def create_scan(scan_identity=None):
+def create_scan(scan_identity=None, dns_security_target_ids=None):
+    dns_security_target_ids = normalize_dns_security_target_ids(
+        dns_security_target_ids
+    )
     runner_token = str(uuid.uuid4())
     conn = get_conn()
     try:
         cur = conn.cursor()
-        cur.execute("""
-        INSERT INTO scans(
-            started_at, completed_at, status,
-            runner_token, heartbeat_at, failure_reason, stage_diagnostics
-        )
-        VALUES (
-            NOW(), NULL, 'RUNNING', %s, NOW(), NULL,
-            jsonb_build_object(
-                'version', 1,
-                'current_stage', NULL,
-                'attempts', '[]'::jsonb,
-                'scan_outcome', NULL,
-                'last_updated_at', NOW()
+        if dns_security_target_ids is None:
+            # Keep ordinary scans compatible with schemas before migration
+            # 012. Only an explicit run-scoped invocation needs this column.
+            cur.execute("""
+            INSERT INTO scans(
+                started_at, completed_at, status,
+                runner_token, heartbeat_at, failure_reason, stage_diagnostics
             )
-        )
-        RETURNING id
-        """, (runner_token,))
+            VALUES (
+                NOW(), NULL, 'RUNNING', %s, NOW(), NULL,
+                jsonb_build_object(
+                    'version', 1,
+                    'current_stage', NULL,
+                    'attempts', '[]'::jsonb,
+                    'scan_outcome', NULL,
+                    'last_updated_at', NOW()
+                )
+            )
+            RETURNING id
+            """, (runner_token,))
+        else:
+            cur.execute("""
+            INSERT INTO scans(
+                started_at, completed_at, status,
+                runner_token, heartbeat_at, failure_reason, stage_diagnostics,
+                dns_security_target_ids
+            )
+            VALUES (
+                NOW(), NULL, 'RUNNING', %s, NOW(), NULL,
+                jsonb_build_object(
+                    'version', 1,
+                    'current_stage', NULL,
+                    'attempts', '[]'::jsonb,
+                    'scan_outcome', NULL,
+                    'last_updated_at', NOW()
+                ), %s
+            )
+            RETURNING id
+            """, (runner_token, list(dns_security_target_ids)))
         scan_id = cur.fetchone()[0]
         if scan_identity is not None:
             # Retain the exact owned row before commit. If commit is interrupted
@@ -593,7 +622,10 @@ def mark_interrupted_scan_failed(scan_id, runner_token=None):
 # -------------------------
 # MAIN PIPELINE
 # -------------------------
-def run_pipeline():
+def run_pipeline(dns_security_target_ids=None):
+    dns_security_target_ids = normalize_dns_security_target_ids(
+        dns_security_target_ids
+    )
 
     pipeline_start = time.time()
 
@@ -610,7 +642,10 @@ def run_pipeline():
         mark_scan_terminal(scan_id, status, **kwargs)
 
     try:
-        scan_id = create_scan(scan_identity)
+        if dns_security_target_ids is None:
+            scan_id = create_scan(scan_identity)
+        else:
+            scan_id = create_scan(scan_identity, dns_security_target_ids)
     except KeyboardInterrupt:
         if scan_identity["scan_id"] is not None:
             mark_interrupted_scan_failed(scan_identity["scan_id"])
@@ -655,8 +690,12 @@ def run_pipeline():
         # DNS Security is an opt-in assessment stage.  It is intentionally
         # absent from the normal pipeline unless the central operation policy
         # explicitly enables it.  The worker still rechecks policy per query.
-        if default_operation_enabled("DNS_SECURITY"):
-            dns_stage = ("DNS Security", f"python -u dns_security_worker.py {scan_id}")
+        if default_operation_enabled("DNS_SECURITY") or dns_security_target_ids:
+            run_scope_argument = " --run-scoped" if dns_security_target_ids else ""
+            dns_stage = (
+                "DNS Security",
+                f"python -u dns_security_worker.py {scan_id}{run_scope_argument}",
+            )
             insertion = next(i for i, item in enumerate(pipeline)
                              if item[0] == "HTTP/TLS Observation")
             pipeline.insert(insertion, dns_stage)
@@ -736,7 +775,21 @@ def run_pipeline():
     logging.info("=" * 70)
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Run the regular ShadowRecon scan pipeline")
+    parser.add_argument(
+        "--dns-security-target-ids",
+        help=("one-run DNS Security allowlist of 1 to 3 existing domain IDs; "
+              "the normal scan pipeline still runs all its usual stages"),
+    )
+    args = parser.parse_args([] if argv is None else argv)
+    try:
+        dns_security_target_ids = normalize_dns_security_target_ids(
+            args.dns_security_target_ids
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+
     previous_handlers = {}
     for signum in (signal.SIGTERM, signal.SIGINT):
         previous_handlers[signum] = signal.getsignal(signum)
@@ -751,7 +804,10 @@ def main():
             )
             sys.exit(OVERLAP_SKIP_EXIT_CODE)
         recover_orphaned_scans(lock_conn)
-        run_pipeline()
+        if dns_security_target_ids is None:
+            run_pipeline()
+        else:
+            run_pipeline(dns_security_target_ids)
     finally:
         if lock_conn is not None:
             try:
@@ -769,4 +825,4 @@ def _handle_shutdown_signal(signum, _frame):
 
 # -------------------------
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

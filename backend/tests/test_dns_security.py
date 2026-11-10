@@ -18,10 +18,12 @@ from authorization_policy import (  # noqa: E402
     active_scan_authorization_sql,
     default_operation_enabled,
     is_authorized,
+    normalize_dns_security_target_ids,
 )
 from dns_security import (  # noqa: E402
     ASSESSMENT_OUTCOMES,
     BoundedDnsResolver,
+    DnsQueryBudget,
     DNS_SECURITY_OPERATION,
     MAX_ANSWERS,
     MAX_EVIDENCE_BYTES,
@@ -107,6 +109,59 @@ class DnsSecurityTests(unittest.TestCase):
         os.environ["ASIP_DEFAULT_SCAN_OPERATIONS"] = "DNS_SECURITY"
         self.assertTrue(default_operation_enabled(DNS_SECURITY_OPERATION))
         self.assertIn("AND TRUE", active_scan_authorization_sql("d", DNS_SECURITY_OPERATION))
+
+    def test_run_scoped_target_allowlist_is_bounded_and_unique(self):
+        self.assertEqual(normalize_dns_security_target_ids("7,8,9"), (7, 8, 9))
+        for value in ("7,8,9,10", "7,7", "0", "bad", ""):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                normalize_dns_security_target_ids(value)
+
+    def test_run_scoped_dns_authorization_stays_inside_central_policy(self):
+        os.environ.pop("ASIP_DEFAULT_SCAN_OPERATIONS", None)
+        sql = active_scan_authorization_sql(
+            "d", DNS_SECURITY_OPERATION, scan_alias="scan"
+        )
+        self.assertIn("scan.dns_security_target_ids IS NOT NULL", sql)
+        self.assertIn("d.id = ANY(scan.dns_security_target_ids)", sql)
+        self.assertIn("scan.dns_security_target_ids IS NULL AND FALSE", sql)
+        self.assertIn("d.ownership_status = 'CONFIRMED'", sql)
+        self.assertIn("d.scannable IS TRUE", sql)
+        self.assertIn("manually rejected", sql)
+
+    def test_per_query_authorization_rechecks_run_target_membership(self):
+        os.environ.pop("ASIP_DEFAULT_SCAN_OPERATIONS", None)
+        cursor = FakeCursor([(1,)])
+        allowed, _reason = recheck_dns_security_authorization(
+            cursor, scan_id=17, domain_name="host.example"
+        )
+        self.assertTrue(allowed)
+        sql, params = cursor.executions[0]
+        self.assertIn("scan.dns_security_target_ids", sql)
+        self.assertIn("d.id = ANY(scan.dns_security_target_ids)", sql)
+        self.assertIn("scan.status = %s", sql)
+        self.assertEqual(params[-1], "RUNNING")
+
+    def test_run_scoped_query_budget_caps_network_attempts(self):
+        calls = []
+
+        def factory():
+            resolver = FakeResolver([FakeAddress("203.0.113.9")])
+            calls.append(resolver)
+            return resolver
+
+        budget = DnsQueryBudget(1)
+        resolver = BoundedDnsResolver(
+            factory, operation_enabled=lambda: True, query_budget=budget
+        )
+        first = resolver.query("host.example", "A", authorize=lambda: True)
+        second = resolver.query("other.example", "A", authorize=lambda: True)
+        self.assertEqual(first.outcome, "ANSWER")
+        self.assertEqual(second.outcome, "INCONCLUSIVE")
+        self.assertEqual(second.evidence["error_category"], "QUERY_BUDGET_EXHAUSTED")
+        self.assertEqual(resolver.query_attempts, 1)
+        self.assertEqual(budget.attempted, 1)
+        self.assertTrue(budget.exhausted)
+        self.assertEqual(len(calls), 1)
 
     def test_authorization_recheck_uses_scan_membership_and_fails_closed(self):
         os.environ["ASIP_DEFAULT_SCAN_OPERATIONS"] = "DNS_SECURITY"

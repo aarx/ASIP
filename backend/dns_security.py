@@ -34,6 +34,7 @@ MAX_ANSWER_LENGTH = 4096
 MAX_EVIDENCE_BYTES = 8192
 MAX_CHAIN_HOPS = 5
 MAX_MX_TARGETS = 10
+MAX_RUN_SCOPED_DNS_QUERIES = 60
 _DMARC_LABEL = "_dmarc"
 _SAFE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,79}$")
 
@@ -105,6 +106,22 @@ class ResolverOutcome:
         return asdict(self)
 
 
+class DnsQueryBudget:
+    """Shared network-query counter for one bounded scan-run validation."""
+
+    def __init__(self, maximum=MAX_RUN_SCOPED_DNS_QUERIES):
+        self.maximum = max(0, min(int(maximum), MAX_RUN_SCOPED_DNS_QUERIES))
+        self.attempted = 0
+        self.exhausted = False
+
+    def consume(self):
+        if self.attempted >= self.maximum:
+            self.exhausted = True
+            return False
+        self.attempted += 1
+        return True
+
+
 def _text_answer(rdata, record_type):
     if record_type in {"A", "AAAA"}:
         address = ipaddress.ip_address(rdata.to_text())
@@ -145,10 +162,17 @@ def _nameserver_outcome(exc):
 class BoundedDnsResolver:
     """Resolver with one bounded call per request and an auth callback per query."""
 
-    def __init__(self, resolver_factory=None, timeout=1.0, lifetime=MAX_TIMEOUT_SECONDS):
+    def __init__(self, resolver_factory=None, timeout=1.0,
+                 lifetime=MAX_TIMEOUT_SECONDS, *, operation_enabled=None,
+                 query_budget=None):
         self.resolver_factory = resolver_factory or dns.resolver.Resolver
         self.timeout = max(0.1, min(float(timeout), MAX_TIMEOUT_SECONDS))
         self.lifetime = max(self.timeout, min(float(lifetime), MAX_TIMEOUT_SECONDS))
+        self.operation_enabled = operation_enabled or (
+            lambda: default_operation_enabled(DNS_SECURITY_OPERATION)
+        )
+        self.query_budget = query_budget
+        self.query_attempts = 0
         self._scan_local_cache = {}
 
     def query(self, requested_name, record_type, *, authorize: Callable[[], object]):
@@ -161,7 +185,11 @@ class BoundedDnsResolver:
         if rrtype not in SUPPORTED_RECORD_TYPES:
             return ResolverOutcome(qname, rrtype[:8], "INCONCLUSIVE", (), _now(),
                                    {"error_category": "UNSUPPORTED_RECORD_TYPE"})
-        if not default_operation_enabled(DNS_SECURITY_OPERATION):
+        try:
+            operation_enabled = bool(self.operation_enabled())
+        except Exception:
+            operation_enabled = False
+        if not operation_enabled:
             return ResolverOutcome(qname, rrtype, "INCONCLUSIVE", (), _now(),
                                    {"error_category": "OPERATION_DISABLED"})
         authorization_error = False
@@ -190,7 +218,12 @@ class BoundedDnsResolver:
         if cached is not None:
             return cached
 
+        if self.query_budget is not None and not self.query_budget.consume():
+            return ResolverOutcome(qname, rrtype, "INCONCLUSIVE", (), _now(),
+                                   {"error_category": "QUERY_BUDGET_EXHAUSTED"})
+
         queried_at = _now()
+        self.query_attempts += 1
         try:
             resolver = self.resolver_factory()
             resolver.timeout = self.timeout

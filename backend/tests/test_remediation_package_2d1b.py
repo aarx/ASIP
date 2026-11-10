@@ -466,7 +466,7 @@ class WriterWiringTests(unittest.TestCase):
     def test_orchestration_and_artifact_match_authorized_package_baselines(self):
         expected = {
             "orchestration.py": (
-                "a4ec1d06c0f8343fb9475fa59ffa8ef3ab1fa564e07ecda2aa04a621ebcda3fd"
+                "bec972d8b2532a66b26598bcd30628d4144d1b1f93b23a1065a5fe436bc1ca88"
             ),
             "recon_artifact.py": (
                 "82343444f896da273892d1f930078ba81dcf57129019deb6d98ed64828c1402e"

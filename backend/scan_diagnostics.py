@@ -43,6 +43,8 @@ WORKER_SUMMARY_FIELDS = {
     "failed_incomplete", "unresolved_redirects", "maximum_observed_concurrency",
     "configured_workers", "workers", "elapsed_seconds", "interrupted", "failed",
     "completed", "checks_persisted", "policy_stops", "disabled",
+    "run_scoped", "run_scope_target_count", "query_attempts",
+    "query_budget_exhausted",
 }
 
 SUMMARY_MARKERS = (
