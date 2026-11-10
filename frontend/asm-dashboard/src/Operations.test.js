@@ -2,7 +2,6 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
 import {
   getExposureSummary,
-  getDiscoverySources,
   getFindings,
   getHttpStatus,
   getSensitiveExposure,
@@ -30,7 +29,6 @@ jest.mock("./services/api", () => ({
   getFindings: jest.fn(),
   getSensitiveExposure: jest.fn(),
   getExposureSummary: jest.fn(),
-  getDiscoverySources: jest.fn(),
 }));
 jest.mock("recharts", () => {
   const actual = jest.requireActual("recharts");
@@ -52,7 +50,6 @@ const overview = {
 beforeEach(() => {
   [
     getExposureSummary,
-    getDiscoverySources,
     getFindings,
     getHttpStatus,
     getSensitiveExposure,
@@ -92,7 +89,6 @@ test("risk workspace presents exact metrics and separate review evidence", async
     scan_id: 42, total_domains: 10, resolving_domains: 8, http_responding_domains: 6,
   });
   getHttpStatus.mockResolvedValue({ "2xx": 4, "3xx": 2, "4xx": 1, "5xx": 0 });
-  getDiscoverySources.mockResolvedValue({ "Pentest Tool": 12, "SAN Expansion": 3, "Brand Expansion": 7 });
   getV2ReviewIndicators.mockResolvedValue({
     scan_id: 42,
     count: 2,
@@ -136,21 +132,16 @@ test("risk workspace presents exact metrics and separate review evidence", async
   expect(screen.getByRole("link", { name: "Risk Overview" })).toHaveAttribute("href", "#/risk");
   expect((await screen.findAllByText("critical.example.com"))[0]).toBeInTheDocument();
   const primaryKpis = screen.getByRole("region", { name: "Risk and exposure metrics" });
-  const discoveryCard = within(primaryKpis).getByText("Discovery Sources").closest(".metric-card");
-  expect(screen.getAllByText("Discovery Sources")).toHaveLength(1);
-  expect(within(discoveryCard).getByText("All-time domain counts")).toBeInTheDocument();
   expect([...primaryKpis.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
-    "High risk", "Assets with risk scores", "Discovery Sources", "HTTP responding",
+    "High risk", "Assets with risk scores", "HTTP responding",
   ]);
-  expect(within(discoveryCard).getByText("Pentest Tools").parentElement).toHaveTextContent("12");
-  expect(within(discoveryCard).getByText("SAN Exposure").parentElement).toHaveTextContent("3");
-  expect(within(discoveryCard).getByText("Brand Exposure").parentElement).toHaveTextContent("7");
   const actionableKpis = screen.getByRole("region", { name: "Actionable evidence" });
   expect([...actionableKpis.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
-    "Findings", "Sensitive port exposure", "Review Indicators", "Assets with IP addresses",
+    "Findings", "Sensitive port exposure", "Review Indicators",
   ]);
+  expect(screen.queryByText("Discovery Sources")).not.toBeInTheDocument();
   expect(screen.queryByText("Risk distribution")).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /Assets with IP addresses/ })).toHaveAttribute("href", "#/assets?has_ip=true");
+  expect(screen.queryByRole("link", { name: /Assets with IP addresses/ })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /HTTP responding/ })).toHaveAttribute("href", "#/assets?http_live=true");
   expect(screen.queryByRole("link", { name: "High 1" })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "2xx 4" })).toHaveAttribute("href", "#/assets?http_status_group=2xx");

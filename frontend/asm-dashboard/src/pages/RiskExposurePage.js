@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   getExposureSummary,
-  getDiscoverySources,
   getFindings,
   getHttpStatus,
   getSensitiveExposure,
@@ -22,12 +21,6 @@ const SECONDARY_VIEWS = [
   ["review-indicators", "Needs review"],
   ["findings", "Findings"],
   ["sensitive-ports", "Sensitive ports"],
-];
-
-const DISCOVERY_SOURCE_GROUPS = [
-  { label: "Pentest Tools", keys: ["Pentest Tool", "Pentest Tools"] },
-  { label: "SAN Exposure", keys: ["SAN Expansion", "SAN Exposure"] },
-  { label: "Brand Exposure", keys: ["Brand Expansion", "Brand Exposure"] },
 ];
 
 function reasons(reasonsList) {
@@ -75,39 +68,6 @@ function httpStatusGroups(statuses) {
     .map((group) => ({ group, count: statuses[group] }));
 }
 
-function discoverySourceCount(value, keys) {
-  if (!value || typeof value !== "object") return null;
-  const key = keys.find((candidate) => Object.prototype.hasOwnProperty.call(value, candidate));
-  if (!key) return null;
-  const count = Number(value[key]);
-  return Number.isFinite(count) && count >= 0 ? count : null;
-}
-
-function DiscoverySourcesCard({ value, status }) {
-  let content;
-  if (status === "loading") {
-    content = <span className="discovery-source-state">Loading…</span>;
-  } else if (status === "error" || !value) {
-    content = <span className="discovery-source-state">Unavailable</span>;
-  } else {
-    content = (
-      <div className="discovery-source-kpi-list" aria-label="All-time grouped discovery source domain counts">
-        {DISCOVERY_SOURCE_GROUPS.map((group) => {
-          const count = discoverySourceCount(value, group.keys);
-          return (
-            <div className="discovery-source-kpi-row" key={group.label}>
-              <span>{group.label}</span>
-              <strong>{count == null ? "—" : count}</strong>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-
-  return <MetricCard label="Discovery Sources" value={content} support="All-time domain counts" accent="#4655a6" />;
-}
-
 export default function RiskExposurePage({ query }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
@@ -129,9 +89,6 @@ export default function RiskExposurePage({ query }) {
     const httpStatusRequest = typeof getHttpStatus === "function"
       ? Promise.resolve(getHttpStatus()).catch(() => null)
       : Promise.resolve(null);
-    const discoverySourcesRequest = typeof getDiscoverySources === "function"
-      ? Promise.resolve(getDiscoverySources()).then((value) => ({ value, status: "ready" })).catch(() => ({ value: null, status: "error" }))
-      : Promise.resolve({ value: null, status: "error" });
     Promise.all([
       getV2Overview(),
       getFindings(),
@@ -139,10 +96,9 @@ export default function RiskExposurePage({ query }) {
       getExposureSummary(),
       Promise.resolve(getV2ReviewIndicators()).catch(() => ({ error: true, count: 0, indicators: [] })),
       httpStatusRequest,
-      discoverySourcesRequest,
-    ]).then(([overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, discoverySources]) => {
+    ]).then(([overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses]) => {
       if (active) {
-        setData({ overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, discoverySources: discoverySources.value, discoverySourcesStatus: discoverySources.status });
+        setData({ overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses });
         setStatus("ready");
       }
     }).catch(() => { if (active) setStatus("error"); });
@@ -206,7 +162,7 @@ export default function RiskExposurePage({ query }) {
   if (status === "error") return <ErrorState title="Risk workspace unavailable" copy="One or more current risk or exposure contracts could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
   if (data.overview.current_scan_id == null) return <EmptyState />;
 
-  const { overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, discoverySources, discoverySourcesStatus } = data;
+  const { overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses } = data;
   const totalPriorityPages = Math.max(Math.ceil((priorityData?.count || 0) / PRIORITY_LIMIT), 1);
   const groups = httpStatusGroups(httpStatuses);
 
@@ -215,7 +171,6 @@ export default function RiskExposurePage({ query }) {
       <section className="operations-kpis" aria-label="Risk and exposure metrics">
         <MetricCard label="High risk" value={overview.risk_distribution?.High ?? 0} support="Current scan" accent={RISK_COLORS.High} href="#/assets?priority=High" />
         <MetricCard label="Assets with risk scores" value={priorityData?.count ?? "—"} support="Current scan" accent="#a96f1f" />
-        <DiscoverySourcesCard value={discoverySources} status={discoverySourcesStatus} />
         <MetricCard label="HTTP responding" value={exposure.http_responding_domains ?? "—"} support="Current scan" accent="#2f7d5b" href="#/assets?http_live=true" />
       </section>
 
@@ -223,7 +178,6 @@ export default function RiskExposurePage({ query }) {
         <MetricCard label="Findings" value={findings.length} support="Deterministic observations" accent="#b43d4a" href="#/risk?section=findings" />
         <MetricCard label="Sensitive port exposure" value={sensitivePorts.length} support="Configured sensitive ports" accent="#a96f1f" href="#/risk?section=sensitive-ports" />
         <MetricCard label="Review Indicators" value={reviewIndicators.count ?? "—"} support="Review only · not findings" accent="#9a79d6" href="#/risk?section=review-indicators" />
-        <MetricCard label="Assets with IP addresses" value={exposure.resolving_domains ?? "—"} support="Current scan" accent="#327d80" href="#/assets?has_ip=true" />
       </section>
 
       {groups.length > 0 && (

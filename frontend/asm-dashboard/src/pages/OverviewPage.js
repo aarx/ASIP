@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getAssetGrowth, getCertExpiry, getHttpStatus, getNamingAssetExposure, getV2BrandAssets, getV2Overview, getV2Scans } from "../services/api";
+import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getV2BrandAssets, getV2Overview, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
@@ -19,6 +19,60 @@ const OWNERSHIP_COLORS = {
   "Needs Verification": "#9a79d6",
   External: "#546579",
 };
+
+const DISCOVERY_SOURCE_GROUPS = [
+  { label: "Pentest Tools", keys: ["Pentest Tool", "Pentest Tools"] },
+  { label: "SAN Exposure", keys: ["SAN Expansion", "SAN Exposure"] },
+  { label: "Brand Exposure", keys: ["Brand Expansion", "Brand Exposure"] },
+];
+
+function discoverySourceCount(value, keys) {
+  if (!value || typeof value !== "object") return null;
+  const key = keys.find((candidate) => Object.prototype.hasOwnProperty.call(value, candidate));
+  if (!key) return null;
+  const count = Number(value[key]);
+  return Number.isInteger(count) && count >= 0 ? count : null;
+}
+
+function discoverySourceGroups(value) {
+  return DISCOVERY_SOURCE_GROUPS.map((group) => ({
+    ...group,
+    count: discoverySourceCount(value, group.keys),
+  }));
+}
+
+function allTimeDiscoveryCount(value) {
+  const groups = discoverySourceGroups(value);
+  return groups.every((group) => group.count != null)
+    ? groups.reduce((total, group) => total + group.count, 0)
+    : null;
+}
+
+function DiscoverySourcesCard({ value, status }) {
+  let content;
+  if (status === "loading") {
+    content = <span className="discovery-source-state">Loading…</span>;
+  } else if (status === "error" || !value) {
+    content = <span className="discovery-source-state">Unavailable</span>;
+  } else {
+    content = (
+      <div className="discovery-source-kpi-list" aria-label="All-time grouped discovery source domain counts">
+        {discoverySourceGroups(value).map((group) => (
+          <div className="discovery-source-kpi-row" key={group.label}>
+            <span>{group.label}</span>
+            <strong>{group.count == null ? "—" : group.count}</strong>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return <MetricCard label="Discovery Sources" value={content} support="All-time domain counts" accent="#4655a6" />;
+}
+
+function countValue(value) {
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}
 
 function OwnershipComposition({ counts }) {
   const values = [
@@ -107,8 +161,10 @@ export default function OverviewPage() {
       optionalRequest(getCertExpiry),
       optionalRequest(loadDiscoverySummary),
       optionalRequest(getNamingAssetExposure),
+      optionalRequest(getDiscoverySources),
+      optionalRequest(getExposureSummary),
     ])
-      .then(([result, scans, assetGrowth, httpStatus, certificateExpiry, discoverySummary, namingExposure]) => {
+      .then(([result, scans, assetGrowth, httpStatus, certificateExpiry, discoverySummary, namingExposure, discoverySources, exposureSummary]) => {
         if (active) {
           const scopedDiscoverySummary = discoverySummary.value?.scan_id === result.current_scan_id
             ? discoverySummary
@@ -128,6 +184,10 @@ export default function OverviewPage() {
             brandDiscoveryStatus: result.brand_discovery ? "ready" : "error",
             namingExposure: namingExposure.value,
             namingExposureStatus: namingExposure.status,
+            discoverySources: discoverySources.value,
+            discoverySourcesStatus: discoverySources.status,
+            exposureSummary: exposureSummary.value,
+            exposureSummaryStatus: exposureSummary.status,
           });
           setStatus("ready");
         }
@@ -143,12 +203,31 @@ export default function OverviewPage() {
   if (!data || data.current_scan_id == null) return <EmptyState />;
 
   const counts = {
-    organizational: data.counts?.organizational ?? 0,
-    known: data.counts?.known ?? 0,
-    shadow: data.counts?.shadow ?? 0,
-    candidate: data.counts?.candidate ?? 0,
-    external: data.counts?.external ?? 0,
+    organizational: countValue(data.counts?.organizational),
+    known: countValue(data.counts?.known),
+    shadow: countValue(data.counts?.shadow),
+    candidate: countValue(data.counts?.candidate),
+    external: countValue(data.counts?.external),
   };
+  const organizationalCount = counts.organizational != null
+    && counts.known != null
+    && counts.shadow != null
+    && counts.organizational === counts.known + counts.shadow
+    ? counts.organizational
+    : null;
+  const currentScanAssets = organizationalCount != null && counts.candidate != null && counts.external != null
+    ? organizationalCount + counts.candidate + counts.external
+    : null;
+  const currentScanSupport = counts.external == null || counts.external > 0
+    ? "Organizational + Needs Verification + External"
+    : "Organizational + Needs Verification";
+  const currentScanIpCount = data.exposureSummaryStatus === "ready"
+    && data.exposureSummary?.scan_id === data.current_scan_id
+    ? countValue(data.exposureSummary.resolving_domains)
+    : null;
+  const allTimeDomains = data.discoverySourcesStatus === "ready"
+    ? allTimeDiscoveryCount(data.discoverySources)
+    : null;
   const highRisk = data.risk_distribution?.High ?? 0;
   const scanContext = data.previous_scan_id == null
     ? `scan ${data.current_scan_id} · no prior baseline`
@@ -170,10 +249,15 @@ export default function OverviewPage() {
         <span aria-hidden="true">View scans →</span>
       </a>
       <section className="kpi-strip" aria-label="Overview metrics">
-        <MetricCard label="Organizational assets" value={counts.organizational} support="Current confirmed surface" accent="#4655a6" href="#/assets" />
+        <MetricCard label="Organizational assets" value={organizationalCount ?? "—"} support="Known + Shadow" accent="#4655a6" href="#/assets" />
         <MetricCard label="High risk" value={highRisk} support="Canonical priority" accent={RISK_COLORS.High} href="#/risk" />
-        <MetricCard label="Shadow assets" value={counts.shadow} support="Confirmed, outside inventory" accent="#7e91a8" href="#/shadow" />
+        <MetricCard label="Shadow assets" value={counts.shadow ?? "—"} support="Confirmed, outside inventory" accent="#7e91a8" href="#/shadow" />
         <MetricCard label="New assets" value={data.changes?.new_assets ?? 0} support="Since previous successful scan" accent="#327d80" href="#/changes?view=new" />
+        <MetricCard label="Current scan assets" value={currentScanAssets ?? "—"} support={currentScanSupport} accent="#546579" href="#/assets" />
+        <MetricCard label="Needs Verification" value={counts.candidate ?? "—"} support="Ownership not established" accent="#9a79d6" href="#/assets?asset_class=CANDIDATE&limit=25" />
+        <MetricCard label="All-time domains" value={allTimeDomains ?? "Unavailable"} support="Historical discovery inventory" accent="#327d80" />
+        <MetricCard label="Assets with IP Addresses" value={currentScanIpCount ?? "Unavailable"} support="Current scan" accent="#2f7d5b" href="#/assets?has_ip=true" />
+        <DiscoverySourcesCard value={data.discoverySources} status={data.discoverySourcesStatus} />
       </section>
 
       <AssetGrowthPanel value={data.assetGrowth} status={data.assetGrowthStatus} />

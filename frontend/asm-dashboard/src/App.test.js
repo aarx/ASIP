@@ -1,11 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { getAssetGrowth, getCertExpiry, getHttpStatus, getNamingAssetExposure, getV2Assets, getV2BrandAssets, getV2Overview, getV2Scans } from "./services/api";
+import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getV2Assets, getV2BrandAssets, getV2Overview, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
   getAssetGrowth: jest.fn(),
   getCertExpiry: jest.fn(),
+  getDiscoverySources: jest.fn(),
+  getExposureSummary: jest.fn(),
   getHttpStatus: jest.fn(),
   getV2Assets: jest.fn(),
   getV2AssetDetail: jest.fn(),
@@ -77,6 +79,8 @@ beforeEach(() => {
   getHttpStatus.mockReset();
   getNamingAssetExposure.mockReset();
   getCertExpiry.mockReset();
+  getDiscoverySources.mockReset();
+  getExposureSummary.mockReset();
 });
 
 test("renders the permanent shell and authoritative overview", async () => {
@@ -101,6 +105,8 @@ test("renders the permanent shell and authoritative overview", async () => {
     { keyword: "STAGE", count: 1 },
   ]);
   getCertExpiry.mockResolvedValue([]);
+  getDiscoverySources.mockResolvedValue({ "Pentest Tool": 617, "SAN Expansion": 427, "Brand Expansion": 1241 });
+  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 14, http_responding_domains: 9 });
   render(<App />);
 
   expect(screen.getByText("Loading authoritative state")).toBeInTheDocument();
@@ -112,7 +118,28 @@ test("renders the permanent shell and authoritative overview", async () => {
     "High risk",
     "Shadow assets",
     "New assets",
+    "Current scan assets",
+    "Needs Verification",
+    "All-time domains",
+    "Assets with IP Addresses",
+    "Discovery Sources",
   ]);
+  expect(within(kpiStrip).getByText("Known + Shadow")).toBeInTheDocument();
+  expect(within(kpiStrip).getByText("Organizational + Needs Verification + External")).toBeInTheDocument();
+  expect(within(kpiStrip).getByText("Ownership not established")).toBeInTheDocument();
+  expect(within(kpiStrip).getByText("Historical discovery inventory")).toBeInTheDocument();
+  expect(within(kpiStrip).getByText("All-time domain counts")).toBeInTheDocument();
+  expect(within(kpiStrip).getByText("2285")).toBeInTheDocument();
+  expect(within(kpiStrip).getByText("14")).toBeInTheDocument();
+  expect(within(kpiStrip).getByRole("link", { name: /Current scan assets/ })).toHaveAttribute("href", "#/assets");
+  expect(kpiStrip.querySelector('a[href="#/assets?asset_class=CANDIDATE&limit=25"]')).toBeInTheDocument();
+  expect(within(kpiStrip).getByRole("link", { name: /Assets with IP Addresses/ })).toHaveAttribute("href", "#/assets?has_ip=true");
+  const kpiAssetGrowthPanel = screen.getByText("Asset growth trend").closest("section");
+  expect(kpiStrip.compareDocumentPosition(kpiAssetGrowthPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const discoveryCard = within(kpiStrip).getByText("Discovery Sources").closest(".metric-card");
+  expect(within(discoveryCard).getByText("Pentest Tools").parentElement).toHaveTextContent("617");
+  expect(within(discoveryCard).getByText("SAN Exposure").parentElement).toHaveTextContent("427");
+  expect(within(discoveryCard).getByText("Brand Exposure").parentElement).toHaveTextContent("1241");
   expect(within(kpiStrip).queryByText("Brand perimeter")).not.toBeInTheDocument();
   expect(screen.getByText("scan 41 → 42")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
@@ -188,6 +215,24 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(within(overviewContent).getByText("HTTP status distribution")).toBeInTheDocument();
   expect(within(overviewContent).getByText("Naming exposure")).toBeInTheDocument();
   Date.now.mockRestore();
+});
+
+test("does not fabricate moved KPI totals when supporting contracts are incomplete", async () => {
+  getV2Overview.mockResolvedValue({
+    ...overview,
+    counts: { organizational: 6, known: 4, shadow: 2, candidate: 3, external: 0 },
+  });
+  getDiscoverySources.mockResolvedValue({ "Pentest Tool": 10, "SAN Expansion": 5 });
+  getExposureSummary.mockResolvedValue({ scan_id: 41, resolving_domains: 99 });
+  render(<App />);
+
+  expect(await screen.findByText("Current scan assets")).toBeInTheDocument();
+  const kpiStrip = screen.getByRole("region", { name: "Overview metrics" });
+  expect(within(kpiStrip).getByText("9")).toBeInTheDocument();
+  expect(within(kpiStrip).getByText("Organizational + Needs Verification", { exact: true })).toBeInTheDocument();
+  expect(within(kpiStrip).getAllByText("Unavailable")).toHaveLength(2);
+  const discoveryCard = within(kpiStrip).getByText("Discovery Sources").closest(".metric-card");
+  expect(within(discoveryCard).getByText("Brand Exposure").parentElement).toHaveTextContent("—");
 });
 
 test("shows no-authoritative-scan state without fabricating values", async () => {
