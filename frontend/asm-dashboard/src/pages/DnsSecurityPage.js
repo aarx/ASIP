@@ -105,14 +105,14 @@ function DnsSummary({ summary }) {
   }
 
   return (
-    <Panel title="DNS Security summary" meta={`SCAN #${summary.scan_id}`} className="dns-summary-panel">
-      <div className="dns-summary-metrics" aria-label="DNS Security summary metrics">
+    <Panel title="DNS assessment summary" meta={`SCAN #${summary.scan_id}`} className="dns-summary-panel">
+      <div className="dns-summary-metrics" aria-label="DNS assessment summary metrics">
         <SummaryMetric label="Eligible Assets" value={summary.eligible_assets} />
         <SummaryMetric label="Assessed Assets" value={summary.checked_assets} />
         <SummaryMetric label="Not Assessed" value={summary.unchecked_assets} />
         <SummaryMetric label="Affected Assets" value={summary.affected_assets} />
       </div>
-      <div className="dns-status-strip" aria-label="DNS Security status">
+      <div className="dns-status-strip" aria-label="DNS assessment status">
         <span><small>Availability</small><strong>{readableValue(summary.availability_state)}</strong></span>
         <span><small>Execution</small><strong>{readableValue(summary.execution_state)}</strong></span>
         <span><small>Operation currently</small><strong>{summary.operation_enabled_currently === true ? "Enabled" : summary.operation_enabled_currently === false ? "Disabled" : "Unavailable"}</strong></span>
@@ -291,7 +291,7 @@ export default function DnsSecurityPage({ query }) {
     <div className="dns-security-page">
       <DnsSummary summary={summary} />
 
-      <Panel title="DNS Security findings" meta={`SCAN #${summary.scan_id}`} className="dns-findings-panel">
+      <Panel title="DNS check results" meta={`SCAN #${summary.scan_id}`} className="dns-findings-panel">
         <form className="dns-filter-panel" onSubmit={applyFilters}>
           <FilterSelect label="Category" value={draft.category} options={CATEGORIES} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))} />
           <FilterSelect label="Outcome" value={draft.outcome} options={OUTCOMES.map((value) => [value, value])} onChange={(event) => setDraft((current) => ({ ...current, outcome: event.target.value }))} />
@@ -301,8 +301,8 @@ export default function DnsSecurityPage({ query }) {
           <div className="dns-filter-actions"><button type="submit" className="dns-primary-action">Apply</button><button type="button" className="dns-secondary-action" onClick={clearFilters} disabled={!hasFilters}>Clear</button></div>
         </form>
 
-        {findingsStatus === "loading" && <div className="dns-table-state" role="status">Loading DNS findings…</div>}
-        {(findingsStatus === "error" || findingsStatus === "unavailable") && <ErrorState title="DNS Security unavailable" copy="The findings request could not be loaded." onRetry={() => setFindingsRequestVersion((value) => value + 1)} />}
+        {findingsStatus === "loading" && <div className="dns-table-state" role="status">Loading DNS check results…</div>}
+        {(findingsStatus === "error" || findingsStatus === "unavailable") && <ErrorState title="DNS check results unavailable" copy="The DNS check results request could not be loaded." onRetry={() => setFindingsRequestVersion((value) => value + 1)} />}
         {findingsStatus === "ready" && (
           findings?.findings?.length ? (
             <div className="dense-table-wrap dns-table-wrap">

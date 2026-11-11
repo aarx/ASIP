@@ -337,7 +337,7 @@ export default function AdhocChecksPage() {
       {checkState === "error" && <ErrorState title="PHP RCE review unavailable" copy="The selected scan review could not be loaded. No values have been inferred." onRetry={retryCheck} />}
       {checkState === "ready" && !hasAuthorizedAssets && (
         <Panel title="No authorized assets in selected scan" className="adhoc-empty-panel">
-          <div className="adhoc-empty-copy"><strong>{scope?.scan_members ?? 0} scan members · 0 authorized assets</strong></div>
+          <div className="adhoc-empty-copy"><strong>{scope?.scan_members ?? "Unavailable"} scan members · 0 authorized assets</strong></div>
         </Panel>
       )}
       {checkState === "ready" && hasAuthorizedAssets && !hasEvaluatedAssets && (

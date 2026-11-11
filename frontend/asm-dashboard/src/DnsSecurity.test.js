@@ -70,6 +70,8 @@ test("renders the current scan summary without implying DNS is secure when nothi
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "DNS Security" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "DNS assessment summary" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "DNS check results" })).toBeInTheDocument();
   expect(screen.getAllByText("Not Assessed")).toHaveLength(3);
   expect(screen.getAllByText("570", { selector: ".dns-summary-metric strong" })).toHaveLength(2);
   expect(screen.getByText("No DNS checks have been executed for this scan.")).toBeInTheDocument();

@@ -18,11 +18,12 @@ import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncStat
 import { displayAssetClass, displayHttpStatus, isUsableHttpStatus } from "../utils/presentation";
 
 const PRIORITY_LIMIT = 25;
+const SENSITIVE_PORT_RESULT_LIMIT = 20;
 const SECONDARY_VIEWS = [
   ["review-indicators", "Needs review"],
   ["findings", "Findings"],
   ["sensitive-ports", "Sensitive ports"],
-  ["dns-security", "DNS Security"],
+  ["dns-security", "DNS assessments"],
 ];
 
 function reasons(reasonsList) {
@@ -61,7 +62,17 @@ function dnsCoverageState(summary) {
   }
   return summary.affected_assets > 0
     ? { title: "Affected assets recorded", copy: `${dnsCount(summary.affected_assets)} assets have actionable DNS outcomes.` }
-    : { title: "No actionable DNS outcomes recorded", copy: "Coverage is complete; outcome details remain available in DNS Security." };
+    : { title: "No actionable DNS outcomes recorded", copy: "Coverage is complete; DNS assessment details remain available." };
+}
+
+function sensitivePortSummary(rows) {
+  if (!rows.length) {
+    return { value: "—", support: "Assessment coverage unavailable", meta: "NOT RECORDED" };
+  }
+  if (rows.length >= SENSITIVE_PORT_RESULT_LIMIT) {
+    return { value: `${SENSITIVE_PORT_RESULT_LIMIT}+`, support: "Observed rows · result list capped at 20", meta: `${SENSITIVE_PORT_RESULT_LIMIT}+ OBSERVED` };
+  }
+  return { value: rows.length, support: "Observed current-scan rows", meta: `${rows.length} OBSERVED` };
 }
 
 function DnsSecurityCoverage({ summary, currentScanId }) {
@@ -219,6 +230,8 @@ export default function RiskExposurePage({ query }) {
   if (data.overview.current_scan_id == null) return <EmptyState />;
 
   const { overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, dnsSummary } = data;
+  const portRows = Array.isArray(sensitivePorts) ? sensitivePorts : [];
+  const portSummary = sensitivePortSummary(portRows);
   const totalPriorityPages = Math.max(Math.ceil((priorityData?.count || 0) / PRIORITY_LIMIT), 1);
   const groups = httpStatusGroups(httpStatuses);
 
@@ -232,7 +245,7 @@ export default function RiskExposurePage({ query }) {
 
       <section className="actionable-kpis" aria-label="Actionable evidence">
         <MetricCard label="Findings" value={findings.length} support="Deterministic observations" accent="#b43d4a" href="#/risk?section=findings" />
-        <MetricCard label="Sensitive port exposure" value={sensitivePorts.length} support="Configured sensitive ports" accent="#a96f1f" href="#/risk?section=sensitive-ports" />
+        <MetricCard label="Observed sensitive-port exposures" value={portSummary.value} support={portSummary.support} accent="#a96f1f" href="#/risk?section=sensitive-ports" />
         <MetricCard label="Review Indicators" value={reviewIndicators.count ?? "—"} support="Review only · not findings" accent="#9a79d6" href="#/risk?section=review-indicators" />
       </section>
 
@@ -352,10 +365,10 @@ export default function RiskExposurePage({ query }) {
 
         {secondaryView === "sensitive-ports" && (
           <div id="sensitive-ports" role="tabpanel" aria-labelledby="sensitive-ports-tab" tabIndex={0}>
-          <Panel title="Sensitive port exposure" subtitle="Configured sensitive ports observed" meta={`${sensitivePorts.length} ROWS`} className="operation-panel-full">
-            {sensitivePorts.length ? (
+          <Panel title="Sensitive port observations" subtitle="Observed rows; assessment coverage is unavailable" meta={portSummary.meta} className="operation-panel-full">
+            {portRows.length ? (
               <div className="compact-list">
-                {sensitivePorts.map((item, index) => (
+                {portRows.map((item, index) => (
                   <div className="port-exposure-row" key={`${item.domain}-${item.port}-${index}`}>
                     <span className="port-number">{item.port}</span>
                     <div><AssetLink domain={item.domain} returnTo="risk" /><p>{item.service || "Service unspecified"}</p></div>
@@ -363,7 +376,7 @@ export default function RiskExposurePage({ query }) {
                   </div>
                 ))}
               </div>
-            ) : <div className="detail-empty">No configured sensitive ports were observed in the current scan.</div>}
+            ) : <div className="detail-empty">No port observations recorded for this scan.</div>}
           </Panel>
           </div>
         )}

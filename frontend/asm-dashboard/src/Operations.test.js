@@ -140,7 +140,7 @@ test("risk workspace presents exact metrics and separate review evidence", async
   ]);
   const actionableKpis = screen.getByRole("region", { name: "Actionable evidence" });
   expect([...actionableKpis.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
-    "Findings", "Sensitive port exposure", "Review Indicators",
+    "Findings", "Observed sensitive-port exposures", "Review Indicators",
   ]);
   expect(screen.queryByText("Discovery Sources")).not.toBeInTheDocument();
   expect(screen.queryByText("Risk distribution")).not.toBeInTheDocument();
@@ -213,7 +213,7 @@ test("Risk Overview exposes DNS coverage without treating partial evidence as a 
 
   render(<App />);
 
-  expect(await screen.findByRole("tab", { name: "DNS Security" })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByRole("tab", { name: "DNS assessments" })).toHaveAttribute("aria-selected", "true");
   expect(screen.getByText("Partial coverage")).toBeInTheDocument();
   expect(screen.getByText("4 of 10 eligible assets assessed.")).toBeInTheDocument();
   expect(screen.queryByText("HISTORICAL SCAN #42")).not.toBeInTheDocument();
@@ -221,6 +221,45 @@ test("Risk Overview exposes DNS coverage without treating partial evidence as a 
   expect(screen.getByRole("link", { name: "Open DNS Security details →" })).toHaveAttribute("href", "#/risk/dns-security");
   expect(screen.queryByText(/confirmed vulnerability/i)).not.toBeInTheDocument();
   expect(getDnsSecuritySummary).toHaveBeenCalledTimes(1);
+});
+
+test("reports capped sensitive-port observations without presenting an exact total", async () => {
+  window.location.hash = "#/risk?view=sensitive-ports";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue(Array.from({ length: 20 }, (_, index) => ({
+    domain: `port-${index}.example.com`, port: 20 + index, risk: 3, service: "Observed service",
+  })));
+  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  getHttpStatus.mockResolvedValue(null);
+  getDnsSecuritySummary.mockResolvedValue(null);
+
+  render(<App />);
+
+  expect(await screen.findByText("20+ OBSERVED")).toBeInTheDocument();
+  expect(screen.getByText("Observed rows · result list capped at 20")).toBeInTheDocument();
+  expect(screen.getByText("20+")).toBeInTheDocument();
+  expect(screen.queryByText("20 ROWS")).not.toBeInTheDocument();
+});
+
+test("does not describe an empty sensitive-port result as a clean assessment", async () => {
+  window.location.hash = "#/risk?view=sensitive-ports";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue([]);
+  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  getHttpStatus.mockResolvedValue(null);
+  getDnsSecuritySummary.mockResolvedValue(null);
+
+  render(<App />);
+
+  expect(await screen.findByText("No port observations recorded for this scan.")).toBeInTheDocument();
+  expect(screen.getByText("Assessment coverage unavailable")).toBeInTheDocument();
+  expect(screen.queryByText(/clean assessment/i)).not.toBeInTheDocument();
 });
 
 test("Risk Overview labels DNS evidence from a non-authoritative scan as historical", async () => {
