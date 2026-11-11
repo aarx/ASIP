@@ -36,11 +36,18 @@ from php_cve_intelligence import (
     evaluate_php_cve_applicability,
 )
 from adhoc_campaigns import (
+    TERMINAL_CAMPAIGN_STATES,
     CampaignError,
     CampaignSchemaUnavailable,
     get_campaign,
     get_campaign_results,
     list_campaigns,
+)
+from scan_report import (
+    ScanReportNotFound,
+    ScanReportNotReady,
+    build_scan_report,
+    write_adhoc_campaign_csv,
 )
 
 os.makedirs("logs", exist_ok=True)
@@ -3663,6 +3670,88 @@ def frontend_v2_scan_detail(scan_id: int):
             diagnostics["last_updated_at"] if diagnostics else None
         ),
     }
+
+
+def _spooled_file_chunks(stream, chunk_size=64 * 1024):
+    try:
+        while True:
+            chunk = stream.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        stream.close()
+
+
+@app.get("/v2/scans/{scan_id}/export")
+def export_historical_scan(scan_id: int):
+    """Download scan-scoped evidence without substituting latest state."""
+    conn = get_conn()
+    try:
+        report = build_scan_report(conn, scan_id)
+    except ScanReportNotFound as exc:
+        raise HTTPException(status_code=404, detail="Scan not found") from exc
+    except ScanReportNotReady as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc) or "Scan is not finalized and successful",
+        ) from exc
+    finally:
+        conn.close()
+
+    return StreamingResponse(
+        _spooled_file_chunks(report),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="asip_scan_{scan_id}_report.zip"',
+        },
+    )
+
+
+@app.get("/v2/adhoc/campaigns/{campaign_id}/export")
+def export_adhoc_campaign(campaign_id: int):
+    """Download the persisted, finalized result of one ad hoc campaign."""
+    conn = get_conn()
+    try:
+        campaign = get_campaign(conn, campaign_id)
+        if campaign is None:
+            raise HTTPException(status_code=404, detail="Ad hoc campaign not found")
+        if campaign["status"] not in TERMINAL_CAMPAIGN_STATES:
+            raise HTTPException(status_code=409, detail="Ad hoc campaign is not finalized")
+
+        results = []
+        page = 1
+        total = None
+        while total is None or len(results) < total:
+            batch = get_campaign_results(conn, campaign_id, page=page, limit=200)
+            total = batch["count"]
+            results.extend(batch["results"])
+            if not batch["results"]:
+                break
+            page += 1
+
+        stream = io.StringIO(newline="")
+        write_adhoc_campaign_csv(stream, campaign, results)
+        payload = stream.getvalue()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        api_error = _adhoc_campaign_api_error(exc)
+        if api_error is not None:
+            raise api_error from exc
+        raise
+    finally:
+        conn.close()
+
+    return StreamingResponse(
+        iter([payload]),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="asip_adhoc_campaign_{campaign_id}_report.csv"'
+            ),
+        },
+    )
 
 
 def _adhoc_campaign_api_error(exc):

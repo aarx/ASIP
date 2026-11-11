@@ -1,0 +1,344 @@
+"""Scan-scoped CSV bundle generation for historical reports."""
+
+import csv
+import io
+import json
+import tempfile
+import zipfile
+
+from ownership import reporting_asset_class_sql
+from scan_diagnostics import api_diagnostics
+
+
+class ScanReportNotFound(LookupError):
+    pass
+
+
+class ScanReportNotReady(ValueError):
+    pass
+
+
+SCAN_REPORT_DATASETS = (
+    ("dns.csv", "DNS", """SELECT d.id, d.domain, x.record_type, x.value
+        FROM domain_dns x JOIN domains d ON d.id = x.domain_id
+       WHERE x.scan_id = %s AND EXISTS (
+           SELECT 1 FROM scan_results sr WHERE sr.scan_id = x.scan_id
+             AND sr.domain_id = x.domain_id)
+       ORDER BY d.domain, x.record_type, x.value""",
+     ("domain_id", "domain", "record_type", "value"), None),
+    ("http.csv", "HTTP observations", """SELECT d.id, d.domain, ds.ip, ds.has_ip,
+               ds.http_observation_status, ds.http_status, ds.http_live,
+               ds.http_reason, ds.final_url, ds.final_status, ds.title,
+               ds.reverse_dns
+        FROM domain_states ds JOIN domains d ON d.id = ds.domain_id
+       WHERE ds.scan_id = %s AND EXISTS (
+           SELECT 1 FROM scan_results sr WHERE sr.scan_id = ds.scan_id
+             AND sr.domain_id = ds.domain_id)
+       ORDER BY d.domain""",
+     ("domain_id", "domain", "ip", "has_ip", "http_observation_status",
+      "http_status", "http_live", "http_reason", "final_url", "final_status",
+      "title", "reverse_dns"), None),
+    ("tls.csv", "TLS certificate observations", """SELECT d.id, d.domain,
+               c.expiry_date, c.days_to_expiry, c.cert_status
+        FROM domain_cert c JOIN domains d ON d.id = c.domain_id
+       WHERE c.scan_id = %s AND EXISTS (
+           SELECT 1 FROM scan_results sr WHERE sr.scan_id = c.scan_id
+             AND sr.domain_id = c.domain_id)
+       ORDER BY d.domain, c.expiry_date NULLS LAST""",
+     ("domain_id", "domain", "expiry_date", "days_to_expiry", "cert_status"), None),
+    ("infrastructure.csv", "Provider and ASN observations", """SELECT d.id, d.domain,
+               'ASN' AS observation_type, a.asn AS value, a.ip, a.org AS detail
+        FROM domain_asn a JOIN domains d ON d.id = a.domain_id
+       WHERE a.scan_id = %s AND EXISTS (
+           SELECT 1 FROM scan_results sr WHERE sr.scan_id = a.scan_id
+             AND sr.domain_id = a.domain_id)
+        UNION ALL
+        SELECT d.id, d.domain, 'PROVIDER' AS observation_type,
+               p.provider AS value, NULL AS ip, NULL AS detail
+        FROM domain_provider p JOIN domains d ON d.id = p.domain_id
+       WHERE p.scan_id = %s AND EXISTS (
+           SELECT 1 FROM scan_results sr WHERE sr.scan_id = p.scan_id
+             AND sr.domain_id = p.domain_id)
+       ORDER BY domain, observation_type, value""",
+     ("domain_id", "domain", "observation_type", "value", "ip", "detail"), None),
+    ("technology-labels.csv", "Technology labels", """SELECT d.id, d.domain, t.tech
+        FROM domain_tech t JOIN domains d ON d.id = t.domain_id
+       WHERE t.scan_id = %s AND EXISTS (
+           SELECT 1 FROM scan_results sr WHERE sr.scan_id = t.scan_id
+             AND sr.domain_id = t.domain_id)
+       ORDER BY d.domain, t.tech""",
+     ("domain_id", "domain", "technology"), None),
+    ("ports.csv", "Port observations", """SELECT d.id, d.domain, p.port,
+               p.service, sp.risk AS sensitive_port_risk,
+               sp.description AS sensitive_port_description
+        FROM domain_ports p JOIN domains d ON d.id = p.domain_id
+        LEFT JOIN sensitive_ports sp ON sp.port = p.port
+       WHERE p.scan_id = %s AND EXISTS (
+           SELECT 1 FROM scan_results sr WHERE sr.scan_id = p.scan_id
+             AND sr.domain_id = p.domain_id)
+       ORDER BY d.domain, p.port""",
+     ("domain_id", "domain", "port", "service", "sensitive_port_risk",
+      "sensitive_port_description"), None),
+    ("findings.csv", "Security findings", """SELECT d.id, d.domain, f.finding,
+               f.severity, f.evidence
+        FROM domain_findings f JOIN domains d ON d.id = f.domain_id
+       WHERE f.scan_id = %s AND EXISTS (
+           SELECT 1 FROM scan_results sr WHERE sr.scan_id = f.scan_id
+             AND sr.domain_id = f.domain_id)
+       ORDER BY d.domain, f.severity, f.finding""",
+     ("domain_id", "domain", "finding", "severity", "evidence"), None),
+    ("risk.csv", "Persisted scan risk", """SELECT d.id, d.domain, r.risk_score,
+               r.reasons
+        FROM domain_risk r JOIN domains d ON d.id = r.domain_id
+       WHERE r.scan_id = %s AND EXISTS (
+           SELECT 1 FROM scan_results sr WHERE sr.scan_id = r.scan_id
+             AND sr.domain_id = r.domain_id)
+       ORDER BY d.domain""",
+     ("domain_id", "domain", "risk_score", "reasons"), None),
+    ("dns-security.csv", "DNS Security assessments", """SELECT d.id, d.domain,
+               x.check_key, x.target_identity, x.record_type, x.outcome,
+               x.severity, x.confidence, x.evidence, x.remediation, x.checked_at
+        FROM dns_security_checks x JOIN domains d ON d.id = x.domain_id
+       WHERE x.scan_id = %s AND EXISTS (
+           SELECT 1 FROM scan_results sr WHERE sr.scan_id = x.scan_id
+             AND sr.domain_id = x.domain_id)
+       ORDER BY d.domain, x.check_key, x.target_identity, x.record_type""",
+     ("domain_id", "domain", "check_key", "target", "record_type", "outcome",
+      "severity", "confidence", "evidence_json", "remediation", "checked_at"),
+     "public.dns_security_checks"),
+    ("technology-observations.csv", "Structured technology observations", """SELECT
+               d.id, d.domain, x.technology, x.version, x.confidence,
+               x.evidence_type, x.sanitized_evidence, x.observed_url,
+               x.detector_version, x.created_at
+        FROM domain_technology_observations x
+        JOIN domains d ON d.id = x.domain_id
+       WHERE x.scan_id = %s AND EXISTS (
+           SELECT 1 FROM scan_results sr WHERE sr.scan_id = x.scan_id
+             AND sr.domain_id = x.domain_id)
+       ORDER BY d.domain, x.technology, x.created_at""",
+     ("domain_id", "domain", "technology", "version", "confidence",
+      "evidence_type", "sanitized_evidence", "observed_url", "detector_version",
+      "created_at"), "public.domain_technology_observations"),
+)
+
+
+def _csv_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
+
+
+def _write_csv_member(archive, filename, headers, rows):
+    with archive.open(filename, "w") as raw:
+        text = io.TextIOWrapper(raw, encoding="utf-8", newline="")
+        writer = csv.writer(text, lineterminator="\r\n")
+        writer.writerow(headers)
+        count = 0
+        for row in rows:
+            writer.writerow([_csv_value(value) for value in row])
+            count += 1
+        text.flush()
+        text.detach()
+    return count
+
+
+def _query_rows(conn, query, params, cursor_name):
+    """Yield in bounded batches using a PostgreSQL server-side cursor."""
+    cur = conn.cursor(name=cursor_name)
+    cur.itersize = 500
+    try:
+        cur.execute(query, params)
+        while True:
+            batch = cur.fetchmany(500)
+            if not batch:
+                break
+            yield from batch
+    finally:
+        cur.close()
+
+
+def build_scan_report(conn, scan_id):
+    """Return a spooled ZIP report containing only one finalized scan's evidence."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT s.id, s.status, s.scan_time, s.started_at, s.completed_at,
+               s.seed, s.stage_diagnostics, COUNT(DISTINCT sr.domain_id)
+          FROM scans s
+          LEFT JOIN scan_results sr ON sr.scan_id = s.id
+         WHERE s.id = %s
+         GROUP BY s.id, s.status, s.scan_time, s.started_at,
+                  s.completed_at, s.seed, s.stage_diagnostics
+    """, (scan_id,))
+    scan = cur.fetchone()
+    cur.close()
+    if scan is None:
+        raise ScanReportNotFound()
+    if scan[1] != "SUCCEEDED" or scan[4] is None:
+        raise ScanReportNotReady()
+    if scan[7] == 0:
+        raise ScanReportNotReady("No historical scan membership is available")
+
+    diagnostics = api_diagnostics(scan[6], scan[1])
+    classification_sql = reporting_asset_class_sql("d.domain", "d.ownership_status")
+    spool = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
+    try:
+        coverage = [
+            ("scan membership", scan[7], "AVAILABLE", "Membership is scoped to this scan."),
+            ("domain states", 0, "UNKNOWN", "No rows are treated as unknown unless scan-scoped records exist."),
+        ]
+        with zipfile.ZipFile(spool, "w", compression=zipfile.ZIP_DEFLATED,
+                             allowZip64=True) as archive:
+            _write_csv_member(archive, "scan-summary.csv", (
+                "scan_id", "status", "scan_time", "started_at", "completed_at",
+                "seed", "asset_count", "stage_diagnostics_available", "scan_outcome_json",
+            ), [(
+                scan[0], scan[1], scan[2], scan[3], scan[4], scan[5], scan[7],
+                diagnostics is not None,
+                diagnostics.get("scan_outcome") if diagnostics else None,
+            )])
+
+            asset_query = f"""WITH membership AS (
+                    SELECT sr.domain_id,
+                           STRING_AGG(DISTINCT sr.seed, ';' ORDER BY sr.seed) AS seeds
+                      FROM scan_results sr WHERE sr.scan_id = %s
+                     GROUP BY sr.domain_id
+                )
+                SELECT m.domain_id, d.domain, m.seeds, d.is_known,
+                       d.ownership_status AS ownership_status_at_export,
+                       {classification_sql} AS effective_asset_class_at_export,
+                       (ds.domain_id IS NOT NULL) AS scan_state_record_available,
+                       ds.ip, ds.has_ip, ds.http_observation_status,
+                       ds.http_status, ds.http_live, ds.http_reason,
+                       ds.final_url, ds.final_status, ds.title, ds.reverse_dns,
+                       dr.risk_score AS persisted_scan_risk_score,
+                       dr.reasons AS persisted_scan_risk_reasons
+                  FROM membership m JOIN domains d ON d.id = m.domain_id
+                  LEFT JOIN domain_states ds
+                    ON ds.domain_id = m.domain_id AND ds.scan_id = %s
+                  LEFT JOIN domain_risk dr
+                    ON dr.domain_id = m.domain_id AND dr.scan_id = %s
+                 ORDER BY d.domain, d.id"""
+            asset_headers = (
+                "domain_id", "domain", "scan_seed_attributions", "is_known",
+                "ownership_status_at_export", "effective_asset_class_at_export",
+                "scan_state_record_available",
+                "scan_ip", "scan_has_ip", "scan_http_observation_status",
+                "scan_http_status", "scan_http_live", "scan_http_reason",
+                "scan_final_url", "scan_final_status", "scan_title", "scan_reverse_dns",
+                "persisted_scan_risk_score", "persisted_scan_risk_reasons",
+            )
+            assets_count = _write_csv_member(
+                archive, "assets.csv", asset_headers,
+                _query_rows(conn, asset_query, (scan_id, scan_id, scan_id),
+                            f"scan_report_assets_{scan_id}"),
+            )
+            cur = conn.cursor()
+            cur.execute("""SELECT COUNT(DISTINCT ds.domain_id)
+                FROM domain_states ds
+                WHERE ds.scan_id = %s AND EXISTS (
+                    SELECT 1 FROM scan_results sr
+                     WHERE sr.scan_id = ds.scan_id AND sr.domain_id = ds.domain_id)
+            """, (scan_id,))
+            state_count = cur.fetchone()[0]
+            cur.close()
+            coverage[1] = (
+                "domain states", state_count,
+                "AVAILABLE_WITH_ROWS" if state_count else "NO_PERSISTED_ROWS",
+                "Only domain_states rows for this scan are exported; missing rows remain blank.",
+            )
+
+            optional_tables = set()
+            probe = conn.cursor()
+            try:
+                probe.execute("SELECT to_regclass(%s), to_regclass(%s)",
+                              ("public.dns_security_checks",
+                               "public.domain_technology_observations"))
+                optional_tables.update(name for name, exists in zip(
+                    ("public.dns_security_checks", "public.domain_technology_observations"),
+                    probe.fetchone() or (None, None),
+                ) if exists is not None)
+            finally:
+                probe.close()
+
+            for index, (filename, label, query, headers, optional_table) in enumerate(
+                SCAN_REPORT_DATASETS
+            ):
+                if optional_table and optional_table not in optional_tables:
+                    _write_csv_member(archive, filename, headers, ())
+                    coverage.append((label, "", "SCHEMA_UNAVAILABLE",
+                                     "The optional evidence table is not installed."))
+                    continue
+                count = _write_csv_member(
+                    archive, filename, headers,
+                    _query_rows(
+                        conn, query,
+                        (scan_id, scan_id) if filename == "infrastructure.csv" else (scan_id,),
+                        f"scan_report_{scan_id}_{index}",
+                    ),
+                )
+                state = "AVAILABLE_WITH_ROWS" if count else "NO_PERSISTED_ROWS"
+                note = ("Rows are scoped to this scan." if count else
+                        "No rows were persisted; this does not prove the operation completed or found nothing.")
+                coverage.append((label, count, state, note))
+
+            stage_rows = []
+            if diagnostics and isinstance(diagnostics.get("attempts"), list):
+                for attempt in diagnostics["attempts"]:
+                    worker_summary = attempt.get("worker_summary")
+                    stage_rows.append((
+                        attempt.get("stage"), attempt.get("order"), attempt.get("attempt"),
+                        attempt.get("status"), attempt.get("started_at"),
+                        attempt.get("completed_at"), attempt.get("duration_seconds"),
+                        attempt.get("error_category"), worker_summary,
+                    ))
+            _write_csv_member(archive, "stage-attempts.csv", (
+                "stage", "stage_order", "attempt", "status", "started_at",
+                "completed_at", "duration_seconds", "error_category", "worker_summary_json",
+            ), stage_rows)
+            _write_csv_member(archive, "coverage.csv", (
+                "evidence_category", "record_count", "availability", "interpretation",
+            ), coverage)
+        spool.seek(0)
+        return spool
+    except Exception:
+        spool.close()
+        raise
+
+
+ADHOC_CAMPAIGN_CSV_HEADERS = (
+    "campaign_id", "check_id", "source_scan_id", "campaign_status",
+    "assessment_date", "dataset_revision", "created_at", "started_at",
+    "completed_at", "campaign_failure_code", "domain",
+    "target_status", "target_skip_reason_code", "selected_at", "target_started_at",
+    "target_completed_at", "execution_status", "evidence_status", "evaluation_status",
+    "classification", "failure_code", "result_skip_reason_code", "observations_json",
+    "lifecycle_json", "cve_intelligence_json", "observed_at", "persisted_at",
+    "result_dataset_revision",
+)
+
+
+def write_adhoc_campaign_csv(stream, campaign, results):
+    writer = csv.writer(stream, lineterminator="\r\n")
+    writer.writerow(ADHOC_CAMPAIGN_CSV_HEADERS)
+    for result in results:
+        writer.writerow([
+            campaign.get("campaign_id"), campaign.get("check_id"),
+            campaign.get("source_scan_id"), campaign.get("status"),
+            campaign.get("assessment_date"), campaign.get("dataset_revision"),
+            campaign.get("created_at"), campaign.get("started_at"),
+            campaign.get("completed_at"), campaign.get("failure_code"),
+            result.get("domain"),
+            result.get("target_status"), result.get("skip_reason_code"),
+            result.get("selected_at"), result.get("started_at"),
+            result.get("completed_at"), result.get("execution_status"),
+            result.get("evidence_status"), result.get("evaluation_status"),
+            result.get("classification"), result.get("failure_code"),
+            result.get("result_skip_reason_code"), _csv_value(result.get("observations")),
+            _csv_value(result.get("lifecycle")), _csv_value(result.get("cve_intelligence")),
+            result.get("observed_at"), result.get("persisted_at"),
+            result.get("dataset_revision"),
+        ])
