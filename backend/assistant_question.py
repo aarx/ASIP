@@ -68,7 +68,8 @@ INTENT_PHRASES = {
     ),
     "scan_health": (
         "scan health", "scan complete", "scan completed", "scan stages",
-        "stages failed", "checks skipped", "scan failures",
+        "stages failed", "stages were skipped", "stages skipped",
+        "checks skipped", "scan failures",
     ),
     "scan_comparison": (
         "compare scans", "comparison between scans", "what changed between scans",
@@ -120,7 +121,7 @@ def _common_response(question, intent, answer, data=None, context=None,
 
 
 def _result_payload(question, intent, result, data=None, answer=None,
-                    extra_limitations=None):
+                    extra_limitations=None, context_override=None):
     if not isinstance(result, dict) and hasattr(result, "body"):
         try:
             result = json.loads(result.body)
@@ -137,7 +138,7 @@ def _result_payload(question, intent, result, data=None, answer=None,
         )
     payload = dict(result) if isinstance(result, dict) else {"results": result}
     response_answer = answer or payload.pop("answer", None) or "Stored ShadowRecon evidence is available."
-    context = payload.pop("context", {})
+    context = context_override if context_override is not None else payload.pop("context", {})
     coverage = payload.pop("coverage", {})
     limitations = list(payload.pop("limitations", []) or [])
     actions = list(payload.pop("next_actions", []) or [])
@@ -157,8 +158,15 @@ def _asset_action(question, intent, domain, handlers):
             next_actions=["Select a current-scan Known or Shadow asset and ask again."],
         )
     result = handlers["asset_assistant"](domain, ASSET_INTENTS[intent])
+    answer = result.get("response")
+    asset_class = result.get("context", {}).get("asset_class")
+    if asset_class not in ("KNOWN", "SHADOW") and isinstance(answer, str):
+        answer = answer.replace(
+            "This score prioritizes exposure indicators; it is not a confirmed vulnerability.",
+            "No organizational canonical risk score is presented for this classification.",
+        )
     return _result_payload(question, intent, result,
-                           answer=result.get("response"))
+                           answer=answer)
 
 
 def answer_question(question, domain, handlers):
@@ -210,6 +218,7 @@ def answer_question(question, domain, handlers):
                 question, intent, overview,
                 data={"risk_distribution": overview.get("risk_distribution", {}),
                       "next_priority_tier": None, "next_tier_assets": []},
+                context_override={"scan_id": None},
                 answer="No successful authoritative scan is available, so current risk priorities cannot be reported.",
                 extra_limitations=["No scan-backed risk assessment is available."],
             )
@@ -227,6 +236,7 @@ def answer_question(question, domain, handlers):
         data = {"risk_distribution": distribution, "next_priority_tier": next_tier,
                 "next_tier_assets": assets}
         return _result_payload(question, intent, overview, data=data, answer=answer,
+                               context_override={"scan_id": overview.get("current_scan_id")},
                                extra_limitations=["Elevated, Review, and Low priorities are not relabeled as High."])
 
     if intent == "shadow_assets":

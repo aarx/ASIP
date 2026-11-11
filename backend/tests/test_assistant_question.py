@@ -99,7 +99,7 @@ class AssistantQuestionRoutingTests(unittest.TestCase):
             "Are there DNS Security concerns?": "dns_security",
             "Which certificates need attention?": "certificates",
             "Show technology versions": "technologies",
-            "Which scan stages failed?": "scan_health",
+            "Which stages were skipped?": "scan_health",
             "What changed between scans 18 and 19?": "scan_comparison",
         }
         for question, expected in cases.items():
@@ -141,7 +141,20 @@ class AssistantQuestionRoutingTests(unittest.TestCase):
         self.assertIn("No assets are classified High", result["answer"])
         self.assertEqual(result["data"]["next_priority_tier"], "Elevated")
         self.assertEqual(result["data"]["next_tier_assets"][0]["priority"], "Elevated")
+        self.assertEqual(result["context"]["scan_id"], 19)
         self.assertIn("not relabeled as High", result["limitations"][0])
+
+    def test_candidate_response_does_not_claim_a_canonical_score(self):
+        candidate_assistant = mock.Mock(return_value={
+            "response": "4abc.com is CANDIDATE. No organizational canonical risk score applies. "
+                        "This score prioritizes exposure indicators; it is not a confirmed vulnerability.",
+            "context": {"scan_id": 19, "asset_class": "CANDIDATE"},
+            "coverage": {}, "limitations": [], "next_actions": [],
+        })
+        result = answer_question("Why is this asset risky?", "4abc.com",
+                                 handlers(asset_assistant=candidate_assistant))
+        self.assertNotIn("This score prioritizes", result["answer"])
+        self.assertIn("No organizational canonical risk score", result["answer"])
 
     def test_new_shadow_question_does_not_claim_temporal_discovery(self):
         result = answer_question("Show newly discovered Shadow assets", None, handlers())
