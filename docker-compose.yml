@@ -20,7 +20,7 @@ services:
       retries: 12
 
   mcp:
-    image: asip-mcp:8ac610c183fa436c4c30ebb944ce39264bb6aaca
+    image: asip-mcp:7522aaafe06f67a3c3985e695d0dde59703babe4
     build: ./backend
     container_name: asm_mcp
     restart: unless-stopped
@@ -43,7 +43,7 @@ services:
   backend:
     # Production backend releases are built from committed source and promoted
     # by updating this exact image reference. Do not add an implicit build here.
-    image: asip-backend:8ac610c183fa436c4c30ebb944ce39264bb6aaca
+    image: asip-backend:7522aaafe06f67a3c3985e695d0dde59703babe4
     pull_policy: never
     container_name: asm_backend
 
