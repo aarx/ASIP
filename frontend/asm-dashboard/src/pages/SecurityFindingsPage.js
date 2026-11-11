@@ -204,8 +204,7 @@ export default function SecurityFindingsPage({ query = "" }) {
 
   return (
     <div className="operations-grid security-findings-workspace">
-      <section className="findings-page-heading operation-panel-full">
-        <div><span className="page-eyebrow">Risk & Exposure</span><h1>Security Findings</h1><p>Source-recorded observations and exposure signals for analyst review.</p></div>
+      <section className="findings-page-heading operation-panel-full" aria-label="Security findings scan context">
         <span className="scan-context">{summaryReady ? `CURRENT SCAN #${summary.scan_id}` : "SCAN UNAVAILABLE"}</span>
       </section>
 
