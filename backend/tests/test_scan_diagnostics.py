@@ -289,6 +289,53 @@ class ScanDiagnosticsPostgreSQLTests(unittest.TestCase):
         self.assertEqual(attempt["duration_seconds"], 1.25)
         self.assertEqual(attempt["worker_summary"], summary)
 
+    def test_port_scan_destination_observations_are_bounded_and_sanitized(self):
+        raw = {
+            "selected": 2,
+            "completed": 2,
+            "no_sensitive_ports": 1,
+            "nmap_destination_observations": [
+                {"domain_id": 9, "status": "complete", "destination_ip": "8.8.8.8"},
+                {"domain_id": 10, "status": "skipped", "destination_ip": None},
+                {"domain_id": 11, "status": "complete", "destination_ip": "not-an-ip"},
+                {"domain_id": 12, "status": "complete", "destination_ip": "8.8.4.4", "domain": "secret.example"},
+            ],
+            "raw_logs": "do not persist",
+        }
+        summary = scan_diagnostics.extract_worker_summary(
+            "ASIP_WORKER_SUMMARY " + json.dumps(raw)
+        )
+        self.assertEqual(summary["nmap_destination_observations"], [
+            {"domain_id": 9, "status": "complete", "destination_ip": "8.8.8.8"},
+            {"domain_id": 10, "status": "skipped"},
+            {"domain_id": 12, "status": "complete", "destination_ip": "8.8.4.4"},
+        ])
+        self.assertNotIn("raw_logs", summary)
+        self.assertNotIn("secret.example", json.dumps(summary))
+        too_many = {
+            "selected": 20,
+            "nmap_destination_observations": [
+                {"domain_id": i, "status": "complete", "destination_ip": "8.8.8.8"}
+                for i in range(1, 25)
+            ],
+        }
+        bounded = scan_diagnostics.sanitize_worker_summary(too_many)
+        self.assertEqual(len(bounded["nmap_destination_observations"]),
+                         scan_diagnostics.MAX_DESTINATION_OBSERVATIONS)
+        long_addresses = {
+            "selected": 16,
+            "nmap_destination_observations": [
+                {"domain_id": i, "status": "complete", "destination_ip": "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"}
+                for i in range(1, 17)
+            ],
+        }
+        bounded_ipv6 = scan_diagnostics.sanitize_worker_summary(long_addresses)
+        self.assertIsNotNone(bounded_ipv6)
+        self.assertLessEqual(
+            len(json.dumps(bounded_ipv6, separators=(",", ":"))),
+            scan_diagnostics.MAX_SUMMARY_JSON_BYTES,
+        )
+
     def test_retry_keeps_failed_attempt_then_success(self):
         self.assertTrue(self._start("Recon", 0, 1))
         self.assertTrue(self._finish("FAILED", "Recon", 0, 1, "RETRYABLE_INCOMPLETE"))

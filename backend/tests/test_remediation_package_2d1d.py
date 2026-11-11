@@ -1175,7 +1175,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
             },
         )
         scanned.assert_called_once()
-        self.assertEqual(scanned.call_args.args[0], "45.67.89.2")
+        self.assertEqual(scanned.call_args.args[0], "port.example")
         self.assertIsNotNone(scanned.call_args.kwargs.get("cancel_event"))
 
     def test_default_policy_allows_trusted_technology_and_port_network_work(self):
@@ -1203,7 +1203,7 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         )
         self.assertCountEqual(
             [call.args[0] for call in scanned.call_args_list],
-            ["45.67.89.2", "45.67.89.3"],
+            ["tech.example", "port.example"],
         )
 
     def test_denied_target_does_not_block_later_authorized_target(self):

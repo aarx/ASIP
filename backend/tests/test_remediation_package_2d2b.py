@@ -99,8 +99,8 @@ class AuthorizationPolicyTests(unittest.TestCase):
         sql, params = cursor.executions[0]
         norm = normalized(sql)
         self.assertIn("SCAN_RESULTS SR", norm)
-        self.assertIn("SR.DOMAIN_ID = S.DOMAIN_ID", norm)
-        self.assertIn("SR.SCAN_ID = S.SCAN_ID", norm)
+        self.assertIn("SR.DOMAIN_ID = D.ID", norm)
+        self.assertIn("SR.SCAN_ID = %S", norm)
         self.assertIn("D.SCANNABLE IS TRUE", norm)
         self.assertIn("FROM SEED_DOMAINS", norm)
         self.assertIn("FROM KNOWN_DOMAINS", norm)
@@ -111,7 +111,7 @@ class AuthorizationPolicyTests(unittest.TestCase):
         self.assertIn("EXCLUDED_DOMAINS", norm)
         self.assertNotIn("SCOPE_ALLOW", norm)
         self.assertNotIn("VALIDATION_SOURCE = 'MANUAL'", norm)
-        self.assertEqual(params, (42, 42))
+        self.assertEqual(params, (42,))
 
     def test_manual_approval_is_the_only_t2_authorizing_shape(self):
         def eligible(scannable, validation_source, ownership="CONFIRMED",

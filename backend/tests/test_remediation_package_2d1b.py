@@ -655,7 +655,7 @@ class FailClosedWriterTests(unittest.TestCase):
                     if filename == "port_scan_worker.py" and status == "RUNNING":
                         cursor.fetchone = mock.Mock(
                             side_effect=[
-                                (status,), (status,), (row[2], True), (status,)
+                                (status,), (status,), (row[1], "KNOWN", row[2]), (status,)
                             ]
                         )
                     connection = FakeConnection(cursor)

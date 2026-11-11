@@ -80,6 +80,9 @@ class FakeConnection:
     def commit(self):
         self.commits += 1
 
+    def rollback(self):
+        pass
+
     def close(self):
         self.closed = True
 
@@ -322,13 +325,13 @@ class PortTruthTests(unittest.TestCase):
                 returncode=0,
             ),
         ):
-            self.assertEqual(self.module.scan_ports("8.8.8.8"), [(443, "https")])
+            self.assertEqual(self.module.scan_ports("host.example"), [(443, "https")])
 
         with mock.patch.object(
             self.module.subprocess, "Popen",
             return_value=mock.Mock(communicate=mock.Mock(return_value=("", "")), returncode=0),
         ):
-            self.assertEqual(self.module.scan_ports("8.8.8.8"), [])
+            self.assertEqual(self.module.scan_ports("host.example"), [])
 
     def test_nonzero_stdout_is_rejected(self):
         with mock.patch.object(
@@ -338,23 +341,23 @@ class PortTruthTests(unittest.TestCase):
                 returncode=2,
             ),
         ), self.assertRaises(self.module.PortScanError):
-            self.module.scan_ports("8.8.8.8")
+            self.module.scan_ports("host.example")
 
     def test_timeout_and_launch_failure_write_no_ports(self):
         for error in (subprocess.TimeoutExpired("nmap", 60), FileNotFoundError()):
             with self.subTest(error=type(error).__name__), mock.patch.object(
                 self.module.subprocess, "Popen", side_effect=error
             ), self.assertRaises(self.module.PortScanError):
-                self.module.scan_ports("8.8.8.8")
+                self.module.scan_ports("host.example")
 
     def test_zero_port_result_produces_no_port_row(self):
         cursor = RecordingCursor(
             fetchalls=[[(1, "host.example", "8.8.8.8")]],
-            fetchones=[("8.8.8.8", True)],
+            fetchones=[("host.example", "KNOWN", "8.8.8.8")],
         )
         connection = FakeConnection(cursor)
         self.module.get_conn = lambda: connection
-        self.module.scan_ports = lambda destination_ip, cancel_event=None: []
+        self.module.scan_ports = lambda hostname, cancel_event=None: []
         with mock.patch("builtins.print"):
             self.module.main()
         self.assertEqual(writes_to(cursor, "domain_ports"), [])

@@ -1,10 +1,12 @@
 """Bounded, runner-owned scan stage diagnostics.
 
-Diagnostics are intentionally aggregate-only. They are not scan evidence and
-must never contain raw logs, target names, response data, or credentials.
+Diagnostics are not scan evidence. They contain aggregate counters and, for
+the bounded Nmap summary only, up to 16 domain-ID/destination-IP observations.
+They never contain domain names, raw logs, response payloads, or credentials.
 """
 
 import json
+import ipaddress
 import math
 from datetime import datetime, timezone
 
@@ -15,6 +17,7 @@ MAX_SUMMARY_FIELDS = 32
 MAX_SUMMARY_JSON_BYTES = 2048
 MAX_STAGE_NAME_LENGTH = 80
 MAX_COUNTER_VALUE = 1_000_000_000_000
+MAX_DESTINATION_OBSERVATIONS = 16
 
 STAGE_OUTCOMES = {"RUNNING", "SUCCEEDED", "FAILED", "TIMED_OUT", "CANCELLED"}
 ERROR_CATEGORIES = {
@@ -27,8 +30,8 @@ ERROR_CATEGORIES = {
     "SCAN_FAILED",
 }
 
-# Only numeric counters/flags from the existing SAN and HTTP JSON summaries
-# may cross into persistent diagnostics. Unknown fields are discarded.
+# Only allowlisted summary fields may cross into persistent diagnostics.
+# Unknown fields and unbounded per-target details are discarded.
 WORKER_SUMMARY_FIELDS = {
     "selected", "selected_parent_targets", "completed_parent_targets",
     "successful_tls_retrievals", "no_permitted_destinations", "tls_timeouts",
@@ -45,7 +48,11 @@ WORKER_SUMMARY_FIELDS = {
     "completed", "checks_persisted", "policy_stops", "disabled",
     "run_scoped", "run_scope_target_count", "query_attempts",
     "query_budget_exhausted",
+    "open_port_targets", "no_sensitive_ports", "unavailable_targets",
+    "failed_targets", "nmap_destination_observations_truncated",
+    "nmap_destination_observations",
 }
+WORKER_SUMMARY_LIST_FIELDS = {"nmap_destination_observations"}
 
 SUMMARY_MARKERS = (
     "ASIP_WORKER_SUMMARY ",
@@ -72,7 +79,40 @@ def sanitize_worker_summary(value):
     for key, item in value.items():
         if key not in WORKER_SUMMARY_FIELDS or len(result) >= MAX_SUMMARY_FIELDS:
             continue
-        if isinstance(item, bool):
+        if key in WORKER_SUMMARY_LIST_FIELDS:
+            if not isinstance(item, list):
+                continue
+            observations = []
+            for observation in item[:MAX_DESTINATION_OBSERVATIONS]:
+                if not isinstance(observation, dict):
+                    continue
+                domain_id = observation.get("domain_id")
+                destination_ip = observation.get("destination_ip")
+                status = observation.get("status")
+                if (isinstance(domain_id, bool) or not isinstance(domain_id, int)
+                        or domain_id <= 0
+                        or status not in {
+                            "complete", "no_sensitive_ports", "unavailable",
+                            "skipped", "failed", "cancelled",
+                        }):
+                    continue
+                safe_observation = {
+                    "domain_id": domain_id,
+                    "status": status,
+                }
+                if destination_ip is not None:
+                    if not isinstance(destination_ip, str):
+                        continue
+                    try:
+                        safe_observation["destination_ip"] = str(
+                            ipaddress.ip_address(destination_ip)
+                        )
+                    except ValueError:
+                        continue
+                observations.append(safe_observation)
+            if observations:
+                result[key] = observations
+        elif isinstance(item, bool):
             result[key] = item
         elif isinstance(item, int) and 0 <= item <= MAX_COUNTER_VALUE:
             result[key] = item
