@@ -51,6 +51,11 @@ from scan_report import (
     build_scan_report,
     write_adhoc_campaign_csv,
 )
+from security_findings import (
+    base_query_params as _security_findings_base_params,
+    normalize_security_record as _normalize_security_finding,
+    normalized_findings_cte as _security_findings_cte,
+)
 
 os.makedirs("logs", exist_ok=True)
 
@@ -1822,6 +1827,227 @@ def cert_expiry():
         }
         for r in rows
     ]
+
+
+_SECURITY_FINDING_CATEGORIES = {"FINDING", "NEEDS_VERIFICATION", "EXPOSURE_SIGNAL"}
+_SECURITY_FINDING_SOURCES = {
+    "domain_findings", "dns_security_checks", "domain_cert", "domain_ports",
+    "redirect_review", "naming_indicator", "shadow_asset",
+}
+
+
+def _security_findings_where(category=None, asset_class=None, source=None, view="attention"):
+    if category is not None and category not in _SECURITY_FINDING_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Invalid category")
+    if asset_class is not None and asset_class not in {"KNOWN", "SHADOW"}:
+        raise HTTPException(status_code=400, detail="Invalid asset_class")
+    if source is not None and source not in _SECURITY_FINDING_SOURCES:
+        raise HTTPException(status_code=400, detail="Invalid source")
+    if view not in {"attention", "signals", "all"}:
+        raise HTTPException(status_code=400, detail="Invalid view")
+    filters = []
+    params = []
+    if view == "attention":
+        filters.append("category IN ('FINDING', 'NEEDS_VERIFICATION')")
+    elif view == "signals":
+        filters.append("category = 'EXPOSURE_SIGNAL'")
+    if category is not None:
+        filters.append("category = %s")
+        params.append(category)
+    if asset_class is not None:
+        filters.append("asset_class = %s")
+        params.append(asset_class)
+    if source is not None:
+        filters.append("source = %s")
+        params.append(source)
+    return (" WHERE " + " AND ".join(filters)) if filters else "", params
+
+
+@app.get("/v2/security-findings")
+def security_findings(
+    page: int = 1,
+    limit: int = 50,
+    category: str = None,
+    asset_class: str = None,
+    source: str = None,
+    view: str = "attention",
+):
+    """Read-only normalized current-scan evidence; coverage is not a finding."""
+    if page < 1 or limit < 1:
+        raise HTTPException(status_code=400, detail="page and limit must be positive")
+    limit = min(limit, 200)
+    category = category.strip().upper() if category else None
+    asset_class = asset_class.strip().upper() if asset_class else None
+    source = source.strip().lower() if source else None
+    view = view.strip().lower()
+    where, filter_params = _security_findings_where(category, asset_class, source, view)
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        scan_id = get_latest_authoritative_scan_id(cur)
+        if scan_id is None:
+            return {
+                "scan_id": None, "availability_state": "UNAVAILABLE",
+                "page": page, "limit": limit, "total": 0, "view": view,
+                "findings": [], "limitations": ["No successful authoritative scan is available."],
+            }
+        cte = _security_findings_cte(
+            reporting_asset_class_sql("d.domain", "d.ownership_status")
+        )
+        params = _security_findings_base_params(scan_id)
+        cur.execute(cte + f" SELECT COUNT(*) FROM records {where}", tuple(params + filter_params))
+        total = cur.fetchone()[0]
+        cur.execute(
+            cte + f"""
+                SELECT finding_id, source, source_record_id, scan_id, domain_id,
+                       asset_domain, asset_class, category, title, finding_type,
+                       severity, source_outcome, confidence, verification_state,
+                       evidence, recommended_action, observed_at, provider, limitations
+                  FROM records {where}
+                 ORDER BY CASE category WHEN 'FINDING' THEN 1
+                                        WHEN 'NEEDS_VERIFICATION' THEN 2 ELSE 3 END,
+                          observed_at DESC NULLS LAST, source, asset_domain, finding_id
+                 LIMIT %s OFFSET %s
+            """,
+            tuple(params + filter_params + [limit, (page - 1) * limit]),
+        )
+        findings_rows = cur.fetchall()
+        return {
+            "scan_id": scan_id,
+            "availability_state": "AVAILABLE",
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "view": view,
+            "findings": [_normalize_security_finding(row) for row in findings_rows],
+            "limitations": [
+                "Assessment coverage is reported separately and is not counted as findings.",
+                "Read-model identities are scan-local; they do not imply cross-scan lifecycle continuity.",
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        if _dns_security_schema_unavailable(exc):
+            return JSONResponse(status_code=503, content={
+                "scan_id": locals().get("scan_id"),
+                "availability_state": "SCHEMA_UNAVAILABLE",
+                "detail": "Required persisted evidence schema is unavailable",
+            })
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v2/security-findings/summary")
+def security_findings_summary():
+    """Counts normalized evidence separately from assessment coverage."""
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        scan_id = get_latest_authoritative_scan_id(cur)
+        if scan_id is None:
+            return {
+                "scan_id": None, "availability_state": "UNAVAILABLE",
+                "total_records": 0, "affected_assets": 0,
+                "counts_by_category": {}, "counts_by_source": {},
+                "coverage": {"dns_security": "UNAVAILABLE", "sensitive_ports": "UNKNOWN"},
+            }
+        cte = _security_findings_cte(
+            reporting_asset_class_sql("d.domain", "d.ownership_status")
+        )
+        base_params = _security_findings_base_params(scan_id)
+        cur.execute(cte + """
+            SELECT GROUPING(category, source) AS grouping_level,
+                   category, source, COUNT(*), COUNT(DISTINCT domain_id)
+              FROM records
+             GROUP BY GROUPING SETS ((category), (source), ())
+             ORDER BY grouping_level, category NULLS LAST, source NULLS LAST
+        """, tuple(base_params))
+        grouped = cur.fetchall()
+        by_category = {}
+        by_source = {}
+        total = affected_assets = 0
+        for grouping_level, category_value, source_value, record_count, asset_count in grouped:
+            if grouping_level == 3:
+                total, affected_assets = record_count, asset_count
+            elif category_value is not None:
+                by_category[category_value] = {
+                    "records": record_count, "distinct_assets": asset_count,
+                }
+            elif source_value is not None:
+                by_source[source_value] = {
+                    "records": record_count, "distinct_assets": asset_count,
+                }
+        cur.execute("""
+            SELECT COUNT(DISTINCT dc.domain_id)
+              FROM domain_cert dc
+              JOIN scan_results sr ON sr.scan_id = dc.scan_id AND sr.domain_id = dc.domain_id
+              JOIN domains d ON d.id = dc.domain_id
+             WHERE dc.scan_id = %s
+               AND (""" + reporting_asset_class_sql("d.domain", "d.ownership_status") + ") IN ('KNOWN','SHADOW')", (scan_id,))
+        certificate_observations = cur.fetchone()[0]
+        cur.execute("""
+            SELECT COUNT(*), COUNT(DISTINCT dp.domain_id)
+              FROM domain_ports dp
+              JOIN scan_results sr ON sr.scan_id = dp.scan_id AND sr.domain_id = dp.domain_id
+              JOIN domains d ON d.id = dp.domain_id
+              JOIN sensitive_ports sp ON sp.port = dp.port
+             WHERE dp.scan_id = %s
+               AND (""" + reporting_asset_class_sql("d.domain", "d.ownership_status") + ") IN ('KNOWN','SHADOW')", (scan_id,))
+        sensitive_observations, sensitive_assets = cur.fetchone()
+        dns_coverage = dns_security_summary(scan_id)
+        if isinstance(dns_coverage, Response):
+            try:
+                dns_coverage = json.loads(dns_coverage.body.decode("utf-8"))
+            except (AttributeError, UnicodeDecodeError, ValueError):
+                dns_coverage = {"availability_state": "UNKNOWN"}
+        return {
+            "scan_id": scan_id,
+            "availability_state": "AVAILABLE",
+            "total_records": total,
+            "affected_assets": affected_assets,
+            "counts_by_category": by_category,
+            "counts_by_source": by_source,
+            "coverage": {
+                "dns_security": {
+                    "availability_state": dns_coverage.get("availability_state"),
+                    "eligible_assets": dns_coverage.get("eligible_assets"),
+                    "assessed_assets": dns_coverage.get("checked_assets"),
+                    "unassessed_assets": dns_coverage.get("unchecked_assets"),
+                    "execution_state": dns_coverage.get("execution_state"),
+                },
+                "certificates": {
+                    "observed_assets": certificate_observations,
+                    "absence_semantics": "No certificate row does not establish TLS safety.",
+                },
+                "sensitive_ports": {
+                    "positive_observations": sensitive_observations,
+                    "assets_with_positive_observation": sensitive_assets,
+                    "assessed_assets": None,
+                    "assessment_state": "UNKNOWN",
+                },
+            },
+            "limitations": [
+                "Distinct affected assets may appear in multiple categories or sources.",
+                "Zero positive observations do not establish successful negative assessment.",
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        if _dns_security_schema_unavailable(exc):
+            return JSONResponse(status_code=503, content={
+                "scan_id": locals().get("scan_id"),
+                "availability_state": "SCHEMA_UNAVAILABLE",
+                "detail": "Required persisted evidence schema is unavailable",
+            })
+        raise
+    finally:
+        conn.close()
     
 @app.get("/shadow-summary")
 def shadow_summary():
