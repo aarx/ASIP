@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { getV2Overview, getV2ScanDetail, getV2Scans } from "../services/api";
+import { exportV2ScanReport, getV2Overview, getV2ScanDetail, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
+import { downloadBlobResponse, downloadErrorKind } from "../utils/download";
 
 function timestamp(value) {
   if (!value) return "—";
@@ -22,6 +23,15 @@ function duration(value) {
 
 function detailValue(value) {
   return value === null || value === undefined || value === "" ? "Unavailable" : value;
+}
+
+function reportFeedback(status) {
+  if (status === "loading") return { text: "Downloading…", role: "status" };
+  if (status === "ready") return { text: "Download started", role: "status" };
+  if (status === "not-found") return { text: "Scan report not found.", role: "alert" };
+  if (status === "unavailable") return { text: "Report unavailable for this scan.", role: "alert" };
+  if (status === "error") return { text: "Report download failed.", role: "alert" };
+  return null;
 }
 
 const STAGE_STATUSES = new Set(["RUNNING", "SUCCEEDED", "FAILED", "TIMED_OUT", "CANCELLED"]);
@@ -274,6 +284,7 @@ export default function ScanCentrePage() {
   const [expandedScanId, setExpandedScanId] = useState(null);
   const [details, setDetails] = useState({});
   const [detailStatuses, setDetailStatuses] = useState({});
+  const [reportDownloads, setReportDownloads] = useState({});
 
   useEffect(() => {
     let active = true;
@@ -305,6 +316,18 @@ export default function ScanCentrePage() {
     if (!details[scanId] && detailStatuses[scanId] !== "loading") loadDetail(scanId);
   };
 
+  const downloadReport = async (scanId) => {
+    if (reportDownloads[scanId]?.status === "loading") return;
+    setReportDownloads((current) => ({ ...current, [scanId]: { status: "loading" } }));
+    try {
+      const response = await exportV2ScanReport(scanId);
+      downloadBlobResponse(response, `asip_scan_${scanId}_report.zip`);
+      setReportDownloads((current) => ({ ...current, [scanId]: { status: "ready" } }));
+    } catch (error) {
+      setReportDownloads((current) => ({ ...current, [scanId]: { status: downloadErrorKind(error) } }));
+    }
+  };
+
   if (status === "loading") return <LoadingState title="Loading scan history" copy="Retrieving lifecycle state and authoritative scan markers." />;
   if (status === "error") return <ErrorState title="Scan Centre unavailable" copy="Scan lifecycle history could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
   if (!data.scans.scans.length) return <EmptyState title="No scan history" copy="No scans have been recorded." />;
@@ -322,7 +345,7 @@ export default function ScanCentrePage() {
       <Panel title="Scan history" subtitle="Lifecycle is explicit; only SUCCEEDED scans may be authoritative" meta={`${scans.scans.length} MOST RECENT`} className="scan-history-panel">
         <div className="dense-table-wrap">
           <table className="dense-table scan-table">
-            <thead><tr><th>Scan</th><th>Lifecycle</th><th>Authority</th><th>Started</th><th>Completed</th><th>Duration</th><th>Assets</th><th>Seed</th></tr></thead>
+            <thead><tr><th>Scan</th><th>Lifecycle</th><th>Authority</th><th>Started</th><th>Completed</th><th>Duration</th><th>Assets</th><th>Seed</th><th>Report</th></tr></thead>
             <tbody>{scans.scans.map((scan) => {
               const isExpanded = expandedScanId === scan.scan_id;
               return (
@@ -351,11 +374,30 @@ export default function ScanCentrePage() {
                     <td>{timestamp(scan.completed_at)}</td>
                     <td><span className="technical-value">{duration(scan.duration_seconds)}</span></td>
                     <td><span className="risk-score">{detailValue(scan.asset_count)}</span></td>
-                    <td><span className="technical-value">{scan.seed || "—"}</span></td>
+                      <td><span className="technical-value">{scan.seed || "—"}</span></td>
+                      <td>
+                        {scan.status === "SUCCEEDED" ? (
+                          <>
+                            <button
+                              type="button"
+                              className="download-report-button"
+                              aria-label={`Download report for scan ${scan.scan_id}`}
+                              disabled={reportDownloads[scan.scan_id]?.status === "loading"}
+                              onClick={() => downloadReport(scan.scan_id)}
+                            >
+                              {reportDownloads[scan.scan_id]?.status === "loading" ? "Downloading…" : "Download Report"}
+                            </button>
+                            {(() => {
+                              const feedback = reportFeedback(reportDownloads[scan.scan_id]?.status);
+                              return feedback ? <span className="download-feedback" role={feedback.role}>{feedback.text}</span> : null;
+                            })()}
+                          </>
+                        ) : <span className="not-applicable">—</span>}
+                      </td>
                   </tr>
                   {isExpanded && (
                     <tr className="scan-detail-row">
-                      <td colSpan="8" id={`scan-detail-${scan.scan_id}`}>
+                      <td colSpan="9" id={`scan-detail-${scan.scan_id}`}>
                         <ScanDetail
                           detail={details[scan.scan_id]}
                           status={detailStatuses[scan.scan_id] || "loading"}

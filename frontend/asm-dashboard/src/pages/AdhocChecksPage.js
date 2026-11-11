@@ -1,11 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Button } from "@mui/material";
-import { getPhpRceCheck, getV2Scans } from "../services/api";
+import { exportV2AdhocCampaign, getPhpRceCheck, getV2AdhocCampaigns, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
+import StatusBadge from "../components/ui/StatusBadge";
+import { downloadBlobResponse, downloadErrorKind } from "../utils/download";
 
 const RESULT_LIMIT = 25;
+const TERMINAL_CAMPAIGN_STATES = new Set(["CANCELLED", "SUCCEEDED", "PARTIAL", "FAILED"]);
 const FILTERS = [
   ["classification", "Classification", [
     "Potential CVE",
@@ -63,6 +66,15 @@ function versions(observations) {
 
 function candidateLabel(candidate) {
   return displayStatus(candidate.applicability_status);
+}
+
+function campaignFeedback(status) {
+  if (status === "loading") return { text: "Downloading…", role: "status" };
+  if (status === "ready") return { text: "Download started", role: "status" };
+  if (status === "not-found") return { text: "Campaign report not found.", role: "alert" };
+  if (status === "unavailable") return { text: "Report unavailable for this campaign.", role: "alert" };
+  if (status === "error") return { text: "Report download failed.", role: "alert" };
+  return null;
 }
 
 function DetailValue({ label, value }) {
@@ -224,6 +236,9 @@ export default function AdhocChecksPage() {
   const [checkState, setCheckState] = useState("idle");
   const [checkData, setCheckData] = useState(null);
   const [checkRequestVersion, setCheckRequestVersion] = useState(0);
+  const [campaignData, setCampaignData] = useState(null);
+  const [campaignStatus, setCampaignStatus] = useState("loading");
+  const [campaignDownloads, setCampaignDownloads] = useState({});
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({ classification: "", lifecycle: "", cve_status: "" });
 
@@ -242,6 +257,17 @@ export default function AdhocChecksPage() {
       .catch(() => { if (active) setScanState("error"); });
     return () => { active = false; };
   }, [scanRequestVersion]);
+
+  useEffect(() => {
+    let active = true;
+    setCampaignStatus("loading");
+    getV2AdhocCampaigns({ page: 1, limit: 50 })
+      .then((result) => {
+        if (active) { setCampaignData(result); setCampaignStatus("ready"); }
+      })
+      .catch(() => { if (active) setCampaignStatus("error"); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (selectedScanId == null) return undefined;
@@ -275,6 +301,18 @@ export default function AdhocChecksPage() {
     setPage(1);
   };
   const retryCheck = () => setCheckRequestVersion((value) => value + 1);
+
+  const downloadCampaign = async (campaignId) => {
+    if (campaignDownloads[campaignId]?.status === "loading") return;
+    setCampaignDownloads((current) => ({ ...current, [campaignId]: { status: "loading" } }));
+    try {
+      const response = await exportV2AdhocCampaign(campaignId);
+      downloadBlobResponse(response, `asip_adhoc_campaign_${campaignId}_report.csv`);
+      setCampaignDownloads((current) => ({ ...current, [campaignId]: { status: "ready" } }));
+    } catch (error) {
+      setCampaignDownloads((current) => ({ ...current, [campaignId]: { status: downloadErrorKind(error) } }));
+    }
+  };
 
   if (scanState === "loading") return <LoadingState title="Loading Adhoc Checks" copy="Retrieving successful scan history before loading the PHP review." />;
   if (scanState === "error") return <ErrorState title="Adhoc Checks unavailable" copy="Successful scan history could not be loaded. No review population has been inferred." onRetry={() => setScanRequestVersion((value) => value + 1)} />;
@@ -362,6 +400,45 @@ export default function AdhocChecksPage() {
             <Button size="small" variant="outlined" disabled={page >= totalPages} onClick={() => setPage((value) => value + 1)}>Next</Button>
           </div>
         </div>
+      )}
+
+      {campaignStatus === "ready" && campaignData?.count > 0 && (
+        <Panel title="Ad hoc campaign history" subtitle="Persisted campaign results" meta={`${campaignData.count} CAMPAIGNS`} className="adhoc-campaign-history-panel">
+          <div className="dense-table-wrap">
+            <table className="dense-table adhoc-campaign-table">
+              <thead><tr><th>Campaign</th><th>Check</th><th>Status</th><th>Source scan</th><th>Completed</th><th>Report</th></tr></thead>
+              <tbody>{campaignData.campaigns.map((campaign) => {
+                const reportState = campaignDownloads[campaign.campaign_id]?.status;
+                const feedback = campaignFeedback(reportState);
+                return (
+                  <tr key={campaign.campaign_id}>
+                    <td><span className="technical-value">#{campaign.campaign_id}</span></td>
+                    <td><span className="technical-value">{campaign.check_id || "Unavailable"}</span></td>
+                    <td><StatusBadge value={campaign.status} /></td>
+                    <td><span className="technical-value">{campaign.source_scan_id == null ? "Unavailable" : `#${campaign.source_scan_id}`}</span></td>
+                    <td>{timestamp(campaign.completed_at)}</td>
+                    <td>
+                      {TERMINAL_CAMPAIGN_STATES.has(campaign.status) ? (
+                        <>
+                          <button
+                            type="button"
+                            className="download-report-button"
+                            aria-label={`Download report for campaign ${campaign.campaign_id}`}
+                            disabled={reportState === "loading"}
+                            onClick={() => downloadCampaign(campaign.campaign_id)}
+                          >
+                            {reportState === "loading" ? "Downloading…" : "Download Report"}
+                          </button>
+                          {feedback && <span className="download-feedback" role={feedback.role}>{feedback.text}</span>}
+                        </>
+                      ) : <span className="not-applicable">Not finalized</span>}
+                    </td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+          </div>
+        </Panel>
       )}
     </div>
   );

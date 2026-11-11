@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { getPhpRceCheck, getV2Scans } from "./services/api";
+import { exportV2AdhocCampaign, getPhpRceCheck, getV2AdhocCampaigns, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -9,6 +9,8 @@ jest.mock("./services/api", () => ({
   getV2AssetDetail: jest.fn(),
   updateV2AssetOwnership: jest.fn(),
   getV2Scans: jest.fn(),
+  getV2AdhocCampaigns: jest.fn(),
+  exportV2AdhocCampaign: jest.fn(),
   getPhpRceCheck: jest.fn(),
   getV2BrandAssets: jest.fn(),
   getV2ReviewIndicators: jest.fn(),
@@ -137,8 +139,11 @@ const historicalReview = {
 beforeEach(() => {
   window.location.hash = "#/adhoc/php-rce";
   getV2Scans.mockReset();
+  getV2AdhocCampaigns.mockReset();
+  exportV2AdhocCampaign.mockReset();
   getPhpRceCheck.mockReset();
   getV2Scans.mockResolvedValue(scanHistory);
+  getV2AdhocCampaigns.mockResolvedValue({ page: 1, limit: 50, count: 0, campaigns: [] });
   getPhpRceCheck.mockResolvedValue(emptyReview);
 });
 
@@ -149,6 +154,60 @@ test("adds Adhoc Checks navigation and loads the PHP RCE review route", async ()
   expect(await screen.findByText("PHP Remote Code Execution")).toBeInTheDocument();
   await waitFor(() => expect(getPhpRceCheck).toHaveBeenCalledWith({ scan_id: 16, page: 1, limit: 25 }));
   expect(screen.getByText("Targeted vulnerability review")).toBeInTheDocument();
+});
+
+test("does not add a campaign panel when no persisted campaigns exist", async () => {
+  render(<App />);
+
+  expect(await screen.findByText("PHP Remote Code Execution")).toBeInTheDocument();
+  await waitFor(() => expect(getV2AdhocCampaigns).toHaveBeenCalledWith({ page: 1, limit: 50 }));
+  expect(screen.queryByText("Ad hoc campaign history")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Download report for campaign/i })).not.toBeInTheDocument();
+});
+
+test("downloads a finalized campaign by campaign ID and preserves non-final status", async () => {
+  getV2AdhocCampaigns.mockResolvedValue({
+    page: 1,
+    limit: 50,
+    count: 2,
+    campaigns: [
+      { campaign_id: 7, check_id: "php-rce", source_scan_id: 15, status: "SUCCEEDED", completed_at: "2026-10-04T12:02:00Z" },
+      { campaign_id: 8, check_id: "php-rce", source_scan_id: 16, status: "RUNNING", completed_at: null },
+    ],
+  });
+  const payload = new Blob(["campaign,csv"], { type: "text/csv" });
+  exportV2AdhocCampaign.mockResolvedValue({
+    data: payload,
+    headers: { "content-disposition": 'attachment; filename="asip_adhoc_campaign_7_report.csv"' },
+  });
+  const createObjectURL = jest.fn(() => "blob:campaign-report");
+  Object.defineProperty(window.URL, "createObjectURL", { configurable: true, value: createObjectURL });
+  Object.defineProperty(window.URL, "revokeObjectURL", { configurable: true, value: jest.fn() });
+  const originalCreateElement = document.createElement.bind(document);
+  let downloadLink;
+  const createElement = jest.spyOn(document, "createElement").mockImplementation((tagName) => {
+    const element = originalCreateElement(tagName);
+    if (tagName === "a") downloadLink = element;
+    return element;
+  });
+  const anchorClick = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  render(<App />);
+
+  expect(await screen.findByText("Ad hoc campaign history")).toBeInTheDocument();
+  const finalizedRow = screen.getByText("#7").closest("tr");
+  const runningRow = screen.getByText("#8").closest("tr");
+  expect(within(finalizedRow).getByRole("button", { name: "Download report for campaign 7" })).toBeInTheDocument();
+  expect(within(runningRow).getByText("Not finalized")).toBeInTheDocument();
+  fireEvent.click(within(finalizedRow).getByRole("button", { name: "Download report for campaign 7" }));
+
+  expect(await screen.findByText("Download started")).toBeInTheDocument();
+  expect(exportV2AdhocCampaign).toHaveBeenCalledWith(7);
+  expect(exportV2AdhocCampaign).not.toHaveBeenCalledWith(15);
+  expect(downloadLink.download).toBe("asip_adhoc_campaign_7_report.csv");
+  expect(createObjectURL).toHaveBeenCalledWith(payload);
+  createElement.mockRestore();
+  anchorClick.mockRestore();
 });
 
 test("communicates an empty authorized scope without implying safety", async () => {

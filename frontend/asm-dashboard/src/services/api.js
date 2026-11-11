@@ -60,10 +60,25 @@ export const getV2ScanDetail = async (scanId) => {
   return res.data;
 };
 
+export const exportV2ScanReport = async (scanId) => axios.get(
+  `${API_URL}/v2/scans/${encodeURIComponent(scanId)}/export`,
+  { responseType: "blob" },
+);
+
 export const getPhpRceCheck = async (params) => {
   const res = await axios.get(`${API_URL}/v2/adhoc/checks/php-rce`, { params });
   return res.data;
 };
+
+export const getV2AdhocCampaigns = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/adhoc/campaigns`, { params });
+  return res.data;
+};
+
+export const exportV2AdhocCampaign = async (campaignId) => axios.get(
+  `${API_URL}/v2/adhoc/campaigns/${encodeURIComponent(campaignId)}/export`,
+  { responseType: "blob" },
+);
 
 export const getV2BrandAssets = async (params) => {
   const res = await axios.get(`${API_URL}/v2/brand-assets`, { params });

@@ -11,6 +11,7 @@ import {
   getV2ReviewIndicators,
   getV2ScanDetail,
   getV2Scans,
+  exportV2ScanReport,
 } from "./services/api";
 
 jest.mock("./services/api", () => ({
@@ -20,6 +21,7 @@ jest.mock("./services/api", () => ({
   updateV2AssetOwnership: jest.fn(),
   getV2ScanDetail: jest.fn(),
   getV2Scans: jest.fn(),
+  exportV2ScanReport: jest.fn(),
   getV2BrandAssets: jest.fn(),
   getV2ReviewIndicators: jest.fn(),
   getHttpStatus: jest.fn(),
@@ -61,6 +63,7 @@ beforeEach(() => {
     getV2ReviewIndicators,
     getV2ScanDetail,
     getV2Scans,
+    exportV2ScanReport,
   ].forEach((mockFunction) => mockFunction.mockReset());
 });
 
@@ -453,6 +456,85 @@ test("Scan Centre marks only successful authoritative scans as authoritative", a
   ["#43", "#40", "#39"].forEach((scanId) => {
     expect(within(within(historyTable).getByText(scanId).closest("tr")).getByText("Not authoritative")).toBeInTheDocument();
   });
+});
+
+test("downloads a historical scan report with the row scan ID and backend filename", async () => {
+  window.location.hash = "#/scans";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Scans.mockResolvedValue({
+    current_authoritative_scan_id: 16,
+    previous_authoritative_scan_id: 15,
+    scans: [
+      { scan_id: 16, status: "SUCCEEDED", completed_at: "done", asset_count: 2, is_current_authoritative: true, is_previous_authoritative: false },
+      { scan_id: 15, status: "SUCCEEDED", completed_at: "done", asset_count: 2, is_current_authoritative: false, is_previous_authoritative: true },
+      { scan_id: 14, status: "FAILED", completed_at: "failed", asset_count: 0, is_current_authoritative: false, is_previous_authoritative: false },
+    ],
+  });
+  const payload = new Blob(["zip"], { type: "application/zip" });
+  exportV2ScanReport.mockResolvedValue({
+    data: payload,
+    headers: { "content-disposition": 'attachment; filename="asip_scan_15_report.zip"' },
+  });
+  const createObjectURL = jest.fn(() => "blob:scan-report");
+  const revokeObjectURL = jest.fn();
+  Object.defineProperty(window.URL, "createObjectURL", { configurable: true, value: createObjectURL });
+  Object.defineProperty(window.URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+  const originalCreateElement = document.createElement.bind(document);
+  let downloadLink;
+  const createElement = jest.spyOn(document, "createElement").mockImplementation((tagName) => {
+    const element = originalCreateElement(tagName);
+    if (tagName === "a") downloadLink = element;
+    return element;
+  });
+  const anchorClick = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  render(<App />);
+
+  const historicalRow = (await screen.findByRole("button", { name: "Expand scan 15" })).closest("tr");
+  expect(within(historicalRow).getByRole("button", { name: "Download report for scan 15" })).toBeInTheDocument();
+  expect(within((await screen.findByRole("button", { name: "Expand scan 14" })).closest("tr")).queryByRole("button", { name: "Download report for scan 14" })).not.toBeInTheDocument();
+  fireEvent.click(within(historicalRow).getByRole("button", { name: "Download report for scan 15" }));
+
+  expect(await screen.findByText("Download started")).toBeInTheDocument();
+  expect(exportV2ScanReport).toHaveBeenCalledWith(15);
+  expect(downloadLink.download).toBe("asip_scan_15_report.zip");
+  expect(createObjectURL).toHaveBeenCalledWith(payload);
+  expect(revokeObjectURL).toHaveBeenCalledWith("blob:scan-report");
+  createElement.mockRestore();
+  anchorClick.mockRestore();
+});
+
+test("prevents duplicate scan report clicks and distinguishes 404 from 409", async () => {
+  window.location.hash = "#/scans";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Scans.mockResolvedValue({
+    current_authoritative_scan_id: null,
+    previous_authoritative_scan_id: null,
+    scans: [{ scan_id: 15, status: "SUCCEEDED", asset_count: 2, is_current_authoritative: false, is_previous_authoritative: false }],
+  });
+  let resolveDownload;
+  exportV2ScanReport.mockReturnValue(new Promise((resolve) => { resolveDownload = resolve; }));
+  const anchorClick = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  const { unmount } = render(<App />);
+  const button = await screen.findByRole("button", { name: "Download report for scan 15" });
+  fireEvent.click(button);
+  fireEvent.click(button);
+  expect(exportV2ScanReport).toHaveBeenCalledTimes(1);
+  expect(button).toBeDisabled();
+  resolveDownload({ data: new Blob(["zip"]), headers: {} });
+  expect(await screen.findByText("Download started")).toBeInTheDocument();
+  unmount();
+  anchorClick.mockRestore();
+
+  exportV2ScanReport.mockRejectedValueOnce({ response: { status: 409 } });
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Download report for scan 15" }));
+  expect(await screen.findByText("Report unavailable for this scan.")).toBeInTheDocument();
+
+  exportV2ScanReport.mockRejectedValueOnce({ response: { status: 404 } });
+  fireEvent.click(screen.getByRole("button", { name: "Download report for scan 15" }));
+  expect(await screen.findByText("Scan report not found.")).toBeInTheDocument();
 });
 
 test("Scan Centre loads persistent stage diagnostics on demand", async () => {
