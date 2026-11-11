@@ -341,6 +341,8 @@ class ApiContractTests(unittest.TestCase):
         cursor = RecordingCursor(fetchones=[(0,), (0,)])
         self.mcp.get_conn = lambda: FakeConnection(cursor)
         self.assertEqual(self.mcp.get_summary(), {
+            "answer": "No successful authoritative scan is available.",
+            "context": {"scan_id": None, "scan_time": None},
             "scan_id": None,
             "live_domains": 0,
             "shadow_assets": 0

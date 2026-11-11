@@ -296,7 +296,7 @@ class ApiAndWorkerRegressionTests(unittest.TestCase):
     def test_mcp_findings_uses_finding_column_and_preserves_issue_key(self):
         cursor = RecordingCursor(
             fetchones=[(42,)],
-            fetchalls=[[('asset.example', 'dangling_dns')]]
+            fetchalls=[[(1, 'asset.example', 'dangling_dns', 'MEDIUM', 'stored evidence', 'SHADOW')]]
         )
         connection = FakeConnection(cursor)
         self.mcp.get_conn = lambda: connection
@@ -305,15 +305,20 @@ class ApiAndWorkerRegressionTests(unittest.TestCase):
 
         self.assertEqual(result, [{
             "domain": "asset.example",
-            "issue": "dangling_dns"
+            "issue": "dangling_dns",
+            "severity": "MEDIUM",
+            "evidence": "stored evidence",
+            "scan_id": 42,
+            "asset_class": "SHADOW",
         }])
         self.assertIn("f.finding", cursor.executions[1][0])
         self.assertNotIn("f.issue", cursor.executions[1][0])
+        self.assertIn("'KNOWN', 'SHADOW'", cursor.executions[1][0])
 
     def test_ssl_guide_normalizes_to_existing_ssl_issue_guide(self):
         result = self.mcp.investigation_guide("ssl")
         self.assertEqual(result["finding"], "ssl_issue")
-        self.assertIn("Verify expiry date", result["steps"])
+        self.assertTrue(any("Verify expiry date" in step for step in result["steps"]))
 
     def test_empty_provider_org_maps_to_unknown(self):
         module = load_backend_module(

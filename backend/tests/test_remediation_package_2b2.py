@@ -88,6 +88,10 @@ class SnapshotCursor:
         self.executions.append((sql, params))
         normalized = self.normalize(sql)
 
+        if "select scan_time, status from scans" in normalized:
+            self.result = ("2026-11-10T03:00:00Z", "SUCCEEDED")
+            return
+
         if "from scans" in normalized:
             self.assert_authoritative_selector(normalized)
             successful = [
@@ -449,6 +453,10 @@ class McpCursor:
         self.executions.append((sql, params))
         normalized = self.normalize(sql)
 
+        if "select scan_time, status from scans" in normalized:
+            self.result = ("2026-11-10T03:00:00Z", "SUCCEEDED")
+            return
+
         if "from scans" in normalized:
             successful = [
                 scan_id for scan_id, status in self.statuses.items()
@@ -462,6 +470,17 @@ class McpCursor:
             assert "sr.scan_id = %s" in normalized
             assert params[0] == 31
             self.result = self.domain_row(params[1], params[0])
+            return
+
+        if any(table in normalized for table in (
+            "from domain_ports", "from domain_technology_observations",
+            "from domain_findings", "from domain_dns", "from dns_security_checks",
+        )):
+            self.result = []
+            return
+
+        if "from domain_cert" in normalized:
+            self.result = None
             return
 
         if "where dr.scan_id = %s" in normalized and "dr.risk_score >= 3" in normalized:
@@ -524,6 +543,8 @@ class McpCursor:
             domain["ownership_status"],
             state["ip"] if state else None,
             state["http_status"] if state else None,
+            state.get("http_observation_status", "RESPONDED" if state and state.get("http_status") is not None else "UNKNOWN") if state else None,
+            state.get("http_live") if state else None,
         )
 
     def high_risk_rows(self, scan_id):
@@ -830,18 +851,18 @@ class McpCurrentSnapshotTests(unittest.TestCase):
             "get_domain", "current.example.test"
         )
 
-        self.assertEqual(response, {
-            "domain": "current.example.test",
-            "is_known": False,
-            "ownership_status": "CONFIRMED",
-            "asset_class": "SHADOW",
-            "ip": "192.0.2.31",
-            "http_status": 200,
-            "risk_score": 4,
-            "priority": "Review",
-            "reasons": ["current"],
+        legacy_keys = ("domain", "is_known", "ownership_status", "asset_class", "ip",
+                       "http_status", "risk_score", "priority", "reasons")
+        self.assertEqual({key: response[key] for key in legacy_keys}, {
+            "domain": "current.example.test", "is_known": False,
+            "ownership_status": "CONFIRMED", "asset_class": "SHADOW",
+            "ip": "192.0.2.31", "http_status": 200, "risk_score": 4,
+            "priority": "Review", "reasons": ["current"],
         })
-        self.assertEqual(len(cursor.executions), 2)
+        self.assertEqual(response["scan_id"], 31)
+        self.assertEqual(response["context"]["scan_time"], "2026-11-10T03:00:00Z")
+        self.assertEqual(response["coverage"]["sensitive_ports"], "NO_POSITIVE_ROWS_COVERAGE_UNKNOWN")
+        self.assertEqual(len(cursor.executions), 9)
         self.assertIn("FROM scans", cursor.executions[0][0])
         self.assertEqual(cursor.executions[1][1], (31, "current.example.test"))
 

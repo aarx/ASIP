@@ -86,19 +86,17 @@ class GroundedAssetAssistantTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 404)
         self.main.ask_llm.assert_not_called()
 
-    def test_explain_risk_grounds_prompt_in_canonical_values(self):
+    def test_explain_risk_uses_deterministic_canonical_evidence(self):
         self.main.frontend_v2_asset_detail = mock.Mock(return_value=detail(
             risk={"score": 8, "priority": "High", "reasons": ["finding", "shadow_asset"]}
         ))
         result = self.main.frontend_v2_asset_assistant("asset.example", "explain_risk")
-        prompt = self.main.ask_llm.call_args.args[0]
-
-        self.assertIn('"score": 8', prompt)
-        self.assertIn('"priority": "High"', prompt)
-        self.assertIn('"shadow_asset"', prompt)
-        self.assertIn("Never calculate, modify, or infer a risk score", prompt)
+        self.main.ask_llm.assert_not_called()
+        self.assertIn("canonical risk 8 (High)", result["response"])
+        self.assertIn("shadow_asset", result["response"])
         self.assertEqual(result["action"], "explain_risk")
-        self.assertEqual(result["source"], "ShadowRecon deterministic evidence + Gemma")
+        self.assertEqual(result["source"], "ShadowRecon deterministic evidence")
+        self.assertEqual(result["mode"], "model_free")
 
     def test_candidate_and_external_never_receive_organizational_risk(self):
         for ownership in ("CANDIDATE", "EXTERNAL"):
@@ -109,36 +107,54 @@ class GroundedAssetAssistantTests(unittest.TestCase):
                     risk={"score": 12, "priority": "High", "reasons": ["finding"]},
                 ))
                 self.main.frontend_v2_asset_assistant("asset.example", "explain_risk")
-                prompt = self.main.ask_llm.call_args.args[0]
-                self.assertIn(f'"ownership_status": "{ownership}"', prompt)
-                self.assertIn('"risk": null', prompt)
-                self.assertNotIn('"score": 12', prompt)
+                self.main.ask_llm.assert_not_called()
+                self.assertIn(f"is {ownership} in authoritative scan", self.main.frontend_v2_asset_assistant("asset.example", "explain_risk")["response"])
+                self.assertNotIn("risk 12", self.main.frontend_v2_asset_assistant("asset.example", "explain_risk")["response"])
 
-    def test_investigation_plan_prompt_is_passive_only(self):
+    def test_investigation_plan_is_evidence_conditioned_and_advisory(self):
         self.main.frontend_v2_asset_detail = mock.Mock(return_value=detail())
-        self.main.frontend_v2_asset_assistant("asset.example", "investigation_plan")
-        prompt = self.main.ask_llm.call_args.args[0].lower()
-        for prohibited in (
-            "network requests", "scanning", "probing", "exploitation",
-            "brute force", "authentication attempts", "resource claiming",
-            "destructive actions", "authorization changes",
-        ):
-            self.assertIn(prohibited, prompt)
-        self.assertIn("passive review", prompt)
+        result = self.main.frontend_v2_asset_assistant("asset.example", "investigation_plan")
+        self.main.ask_llm.assert_not_called()
+        self.assertIn("no checks are launched", result["response"])
+        self.assertIn("requires separate authorization", result["response"])
+        self.assertTrue(result["next_actions"])
 
-    def test_llm_failure_is_a_clean_gateway_error(self):
+    def test_all_three_actions_work_without_provider_configuration_or_calls(self):
         self.main.frontend_v2_asset_detail = mock.Mock(return_value=detail())
-        for failure in ("LLM request failed: timeout", "", None):
-            with self.subTest(failure=failure):
-                self.main.ask_llm = mock.Mock(return_value=failure)
-                with self.assertRaises(HTTPException) as raised:
-                    self.main.frontend_v2_asset_assistant("asset.example", "summarize_asset")
-                self.assertEqual(raised.exception.status_code, 502)
+        self.main.ask_llm.side_effect = RuntimeError("offline")
+        with mock.patch.dict("os.environ", {}, clear=True):
+            for action in ("explain_risk", "investigation_plan", "summarize_asset"):
+                with self.subTest(action=action):
+                    result = self.main.frontend_v2_asset_assistant("asset.example", action)
+                    self.assertTrue(result["response"])
+                    self.assertEqual(result["mode"], "model_free")
+                    self.assertEqual(result["context"]["scan_id"], 42)
+        self.main.ask_llm.assert_not_called()
 
-        self.main.ask_llm = mock.Mock(side_effect=RuntimeError("offline"))
-        with self.assertRaises(HTTPException) as raised:
-            self.main.frontend_v2_asset_assistant("asset.example", "summarize_asset")
-        self.assertEqual(raised.exception.status_code, 502)
+    def test_partial_evidence_remains_unknown_not_clear(self):
+        self.main.frontend_v2_asset_detail = mock.Mock(return_value={
+            "scan_id": 42, "domain": "asset.example", "asset_class": "SHADOW",
+            "ownership_status": "CONFIRMED", "dns": {"has_ip": None, "observation_available": False},
+            "http": {"observation_status": "UNKNOWN", "observation_available": False},
+            "ports": [], "findings": [],
+        })
+        result = self.main.frontend_v2_asset_assistant("asset.example", "summarize_asset")
+        self.assertEqual(result["coverage"]["dns"], "UNKNOWN")
+        self.assertEqual(result["coverage"]["http"], "UNKNOWN")
+        self.assertIn("coverage is unknown", result["response"])
+
+    def test_dns_security_outcomes_motivate_advisory_review_without_vulnerability_claim(self):
+        evidence = detail()
+        evidence["dns_security"] = [{
+            "check_key": "cname_health", "outcome": "WARNING",
+            "severity": "MEDIUM", "confidence": "LOW",
+        }]
+        self.main.frontend_v2_asset_detail = mock.Mock(return_value=evidence)
+        plan = self.main.frontend_v2_asset_assistant("asset.example", "investigation_plan")
+        summary = self.main.frontend_v2_asset_assistant("asset.example", "summarize_asset")
+        self.main.ask_llm.assert_not_called()
+        self.assertIn("cname_health: WARNING", plan["response"])
+        self.assertIn("not all confirmed vulnerabilities", summary["response"])
 
 
 if __name__ == "__main__":

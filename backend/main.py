@@ -12,6 +12,7 @@ import requests
 import re
 from datetime import date, datetime
 from llm_service import ask_llm
+from investigation_assistance import deterministic_asset_assistance
 from urllib.parse import urlparse
 from db import get_conn, get_latest_authoritative_scan_id, get_previous_authoritative_scan_id
 from asset_reporting import (
@@ -2951,9 +2952,11 @@ def frontend_v2_asset_detail(domain_name: str):
     cur.execute("""
         SELECT d.id, d.is_known, d.ownership_status,
                d.first_seen_scan, d.last_seen_scan,
-               d.first_seen_at, d.last_seen_at, sr.seed
+               d.first_seen_at, d.last_seen_at, sr.seed,
+               d.scannable, s.scan_time
         FROM scan_results sr
         JOIN domains d ON d.id = sr.domain_id
+        JOIN scans s ON s.id = sr.scan_id
         WHERE sr.scan_id = %s AND d.domain = %s
     """, (scan_id, domain_name))
     identity = cur.fetchone()
@@ -2963,7 +2966,7 @@ def frontend_v2_asset_detail(domain_name: str):
 
     (
         domain_id, is_known, ownership_status, first_seen_scan,
-        last_seen_scan, first_seen_at, last_seen_at, seed,
+        last_seen_scan, first_seen_at, last_seen_at, seed, scannable, scan_time,
     ) = identity
     asset_classes = _current_scan_asset_classes(cur, scan_id)
     asset_class = asset_classes.get(domain_id, "CANDIDATE")
@@ -3069,6 +3072,26 @@ def frontend_v2_asset_detail(domain_name: str):
         for row in cur.fetchall()
     ]
 
+    dns_security_checks = None
+    try:
+        cur.execute("""
+            SELECT check_key, target_identity, record_type, outcome, severity,
+                   confidence, evidence, remediation, checked_at
+              FROM dns_security_checks
+             WHERE domain_id = %s AND scan_id = %s
+             ORDER BY check_key, target_identity, record_type LIMIT 10
+        """, (domain_id, scan_id))
+        dns_security_checks = [
+            {"check_key": row[0], "target": row[1], "record_type": row[2],
+             "outcome": row[3], "severity": row[4], "confidence": row[5],
+             "evidence": row[6], "remediation": row[7], "checked_at": row[8]}
+            for row in cur.fetchall()
+        ]
+    except Exception as exc:
+        if getattr(exc, "pgcode", None) not in {"42P01", "42703"}:
+            raise
+        conn.rollback()
+
     risk = next(
         (
             item for item in calculate_scan_risks(cur, scan_id)
@@ -3081,8 +3104,10 @@ def frontend_v2_asset_detail(domain_name: str):
 
     return {
         "scan_id": scan_id,
+        "scan_time": scan_time,
         "domain": domain_name,
         "ownership_status": ownership_status,
+        "scannable": bool(scannable),
         "is_known": is_known,
         "asset_class": asset_class,
         "first_seen_scan": first_seen_scan,
@@ -3093,11 +3118,13 @@ def frontend_v2_asset_detail(domain_name: str):
         "risk": _frontend_risk_payload(risk),
         "dns": {
             "ip": state[0] if state else None,
-            "has_ip": bool(state[1]) if state else False,
+            "has_ip": bool(state[1]) if state else None,
+            "observation_available": state is not None,
             "reverse_dns": state[2] if state else None,
         },
         "http": {
             "observation_status": state[3] if state else "UNKNOWN",
+            "observation_available": state is not None,
             "live": bool(state[4]) if state else False,
             "status": state[5] if state else None,
             "reason": state[6] if state else None,
@@ -3128,6 +3155,7 @@ def frontend_v2_asset_detail(domain_name: str):
         } if certificate else None,
         "discovery": {"sources": discovery_sources},
         "findings": findings,
+        "dns_security": dns_security_checks,
     }
 
 
@@ -3264,30 +3292,22 @@ def frontend_v2_asset_assistant(domain_name: str, action: str):
         raise HTTPException(status_code=404, detail=evidence["error"])
 
     # Organizational canonical risk is intentionally unavailable outside
-    # confirmed ownership, even if a malformed upstream payload supplied it.
-    if evidence.get("ownership_status") != "CONFIRMED":
+    # the effective organizational class, even if upstream data is malformed.
+    if evidence.get("asset_class") not in ("KNOWN", "SHADOW"):
         evidence = {**evidence, "risk": None}
-
-    prompt = _frontend_v2_assistant_prompt(action_value, evidence)
-    try:
-        response = ask_llm(prompt)
-    except Exception as exc:
-        logging.warning("Asset assistant request failed for %s: %s", domain_name, exc)
-        raise HTTPException(status_code=502, detail="assistant service unavailable")
-
-    if (
-        not isinstance(response, str)
-        or not response.strip()
-        or response.strip().lower().startswith("llm request failed:")
-    ):
-        raise HTTPException(status_code=502, detail="assistant service unavailable")
+    deterministic = deterministic_asset_assistance(action_value, evidence)
 
     return {
         "domain": evidence["domain"],
         "action": action_value,
-        "response": response.strip(),
-        "source": "ShadowRecon deterministic evidence + Gemma",
-        "model": os.getenv("LLM_MODEL", "gemma3:4b"),
+        "response": deterministic["response"],
+        "source": "ShadowRecon deterministic evidence",
+        "mode": "model_free",
+        "model": None,
+        "context": deterministic["context"],
+        "coverage": deterministic["coverage"],
+        "limitations": deterministic["limitations"],
+        "next_actions": deterministic["next_actions"],
     }
 
 

@@ -128,6 +128,8 @@ class McpScopeParityTests(unittest.TestCase):
             result = self.mcp.get_summary()
 
         self.assertEqual(result, {
+            "answer": "Authoritative scan #17 contains 652 members: 57 Known, 513 Shadow, 82 Candidate, and 0 External.",
+            "context": {"scan_id": 17, "scan_time": None, "status": "UNKNOWN"},
             "scan_id": 17,
             "live_domains": 557,
             "shadow_assets": 500,
@@ -137,6 +139,10 @@ class McpScopeParityTests(unittest.TestCase):
             "total_shadow_assets": 513,
             "candidate_assets": 82,
             "external_assets": 0,
+            "coverage": {"asset_classification": "CURRENT_AUTHORITATIVE_SCAN",
+                         "live_domains": "IP_PRESENT_KNOWN_OR_SHADOW_ONLY"},
+            "limitations": ["Candidates are reported separately and are not included as confirmed organizational assets."],
+            "next_actions": ["Use /tools/high-risk for canonical organizational risk priorities."],
         })
         sql, params = cursor.executions[0]
         self.assertIn("FROM scan_results sr", sql)
@@ -194,7 +200,7 @@ class McpScopeParityTests(unittest.TestCase):
 
     def test_domain_detail_preserves_historical_ownership_without_outside_risk(self):
         cursor = QueueCursor(fetchone=(571, "legacy-confirmed-outside.example", False,
-                                      "CONFIRMED", "192.0.2.571", 200))
+                                      "CONFIRMED", "192.0.2.571", 200, "RESPONDED", True))
         risks = [types.SimpleNamespace(domain_id=571, result=types.SimpleNamespace(
             score=12, priority="High", reasons=("historical",)
         ))]

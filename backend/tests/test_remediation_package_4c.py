@@ -624,7 +624,7 @@ class FrontendV2ContractTests(unittest.TestCase):
         now = datetime(2026, 9, 25, 12, 0, 0)
         cursor = QueueCursor(
             fetchones=[
-                (7, False, "CONFIRMED", 40, 42, now, now, "example.com"),
+                (7, False, "CONFIRMED", 40, 42, now, now, "example.com", True, now),
                 (
                     "192.0.2.7", True, "ptr.example", "RESPONDED",
                     True, 302, "redirect", "https://target.example", 200,
@@ -643,6 +643,7 @@ class FrontendV2ContractTests(unittest.TestCase):
                 )],
                 [("subfinder", "example.com")],
                 [("takeover_candidate", "MEDIUM", "404")],
+                [],
             ],
         )
         self.main.get_conn = lambda: FakeConnection(cursor)
