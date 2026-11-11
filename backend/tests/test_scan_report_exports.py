@@ -1,5 +1,6 @@
 import csv
 import asyncio
+from decimal import Decimal
 import importlib
 import io
 import json
@@ -180,6 +181,39 @@ class ScanReportTests(unittest.TestCase):
             self.assertEqual(len(rows), 503)
             self.assertEqual(rows[0]["domain"], 'comma,quote".example')
             self.assertEqual(rows[0]["value"], 'v=spf1; note="a,b"')
+        finally:
+            report.close()
+
+    def test_text_cells_are_formula_safe_and_numeric_negatives_stay_numeric(self):
+        from scan_report import _csv_value
+
+        self.assertEqual(_csv_value("=1+1"), "'=1+1")
+        self.assertEqual(_csv_value("  @SUM(A1:A2)"), "'  @SUM(A1:A2)")
+        self.assertEqual(_csv_value("ordinary text"), "ordinary text")
+        self.assertEqual(_csv_value(-12), -12)
+        self.assertEqual(_csv_value(Decimal("-0.5")), Decimal("-0.5"))
+
+        conn = _Connection(
+            scans={15: _scan(15)},
+            datasets={
+                (15, "dns"): [(1, "dns.example", "TXT", "=1+1,\"quoted\" ☃")],
+                (15, "http"): [(1, "web.example", None, None, None, None, None,
+                                None, None, None, "-cmd|payload,\"title\" ☃", None)],
+            },
+            optional_tables=(None, None),
+        )
+        report = build_scan_report(conn, 15)
+        try:
+            with zipfile.ZipFile(report) as archive:
+                dns = list(csv.DictReader(io.StringIO(
+                    archive.read("dns.csv").decode("utf-8")
+                )))
+                http = list(csv.DictReader(io.StringIO(
+                    archive.read("http.csv").decode("utf-8")
+                )))
+            self.assertEqual(dns[0]["value"], "'=1+1,\"quoted\" ☃")
+            self.assertEqual(http[0]["title"], "'-cmd|payload,\"title\" ☃")
+            self.assertEqual(dns[0]["domain"], "dns.example")
         finally:
             report.close()
 

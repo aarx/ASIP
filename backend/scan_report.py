@@ -5,6 +5,7 @@ import io
 import json
 import tempfile
 import zipfile
+from decimal import Decimal
 
 from ownership import reporting_asset_class_sql
 from scan_diagnostics import api_diagnostics
@@ -126,9 +127,18 @@ def _csv_value(value):
     if value is None:
         return ""
     if isinstance(value, (dict, list, tuple)):
-        return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+        value = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
     if hasattr(value, "isoformat"):
-        return value.isoformat()
+        value = value.isoformat()
+    # Keep numeric cells numeric (notably legitimate negative scores/durations).
+    # For text, prefix an apostrophe when spreadsheet software could interpret
+    # the first non-whitespace character as a formula operator.
+    if isinstance(value, (bool, int, float, Decimal)):
+        return value
+    if isinstance(value, str):
+        significant = value.lstrip(" \t\r\n")
+        if value.startswith(("\t", "\r", "\n")) or significant.startswith(("=", "+", "-", "@")):
+            return "'" + value
     return value
 
 
@@ -325,7 +335,7 @@ def write_adhoc_campaign_csv(stream, campaign, results):
     writer = csv.writer(stream, lineterminator="\r\n")
     writer.writerow(ADHOC_CAMPAIGN_CSV_HEADERS)
     for result in results:
-        writer.writerow([
+        writer.writerow([_csv_value(value) for value in [
             campaign.get("campaign_id"), campaign.get("check_id"),
             campaign.get("source_scan_id"), campaign.get("status"),
             campaign.get("assessment_date"), campaign.get("dataset_revision"),
@@ -341,4 +351,4 @@ def write_adhoc_campaign_csv(stream, campaign, results):
             _csv_value(result.get("lifecycle")), _csv_value(result.get("cve_intelligence")),
             result.get("observed_at"), result.get("persisted_at"),
             result.get("dataset_revision"),
-        ])
+        ]])
