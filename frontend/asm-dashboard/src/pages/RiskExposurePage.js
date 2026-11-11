@@ -21,7 +21,6 @@ const PRIORITY_LIMIT = 25;
 const SENSITIVE_PORT_RESULT_LIMIT = 20;
 const SECONDARY_VIEWS = [
   ["review-indicators", "Needs review"],
-  ["findings", "Findings"],
   ["sensitive-ports", "Sensitive ports"],
   ["dns-security", "DNS assessments"],
 ];
@@ -194,7 +193,7 @@ export default function RiskExposurePage({ query }) {
     if (status !== "ready") return;
     const params = new URLSearchParams(query);
     const section = params.get("section") || params.get("view");
-    if (!["findings", "sensitive-ports", "review-indicators", "dns-security"].includes(section)) return;
+    if (!["sensitive-ports", "review-indicators", "dns-security"].includes(section)) return;
     document.getElementById(section)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }, [query, status]);
 
@@ -244,7 +243,7 @@ export default function RiskExposurePage({ query }) {
       </section>
 
       <section className="actionable-kpis" aria-label="Actionable evidence">
-        <MetricCard label="Findings" value={findings.length} support="Deterministic observations" accent="#b43d4a" href="#/risk?section=findings" />
+        <MetricCard label="Findings" value={findings.length} support="Source-recorded observations" accent="#b43d4a" href="#/risk/findings" />
         <MetricCard label="Observed sensitive-port exposures" value={portSummary.value} support={portSummary.support} accent="#a96f1f" href="#/risk?section=sensitive-ports" />
         <MetricCard label="Review Indicators" value={reviewIndicators.count ?? "—"} support="Review only · not findings" accent="#9a79d6" href="#/risk?section=review-indicators" />
       </section>
@@ -342,23 +341,6 @@ export default function RiskExposurePage({ query }) {
                 </table>
               </div>
             ) : <div className="detail-empty">No cross-host HTTP redirects were observed in the current authoritative scan.</div>}
-          </Panel>
-          </div>
-        )}
-
-        {secondaryView === "findings" && (
-          <div id="findings" role="tabpanel" aria-labelledby="findings-tab" tabIndex={0}>
-          <Panel title="Findings" subtitle="Deterministic observations" meta={`${findings.length} ROWS`} className="operation-panel-full">
-            {findings.length ? (
-              <div className="compact-list">
-                {findings.map((finding, index) => (
-                  <div className="compact-evidence-row" key={`${finding.domain}-${finding.finding}-${index}`}>
-                    <StatusBadge value={finding.severity} />
-                    <div><AssetLink domain={finding.domain} returnTo="risk" /><strong>{finding.finding}</strong><p>{finding.evidence || "No additional evidence recorded"}</p></div>
-                  </div>
-                ))}
-              </div>
-            ) : <div className="detail-empty">No findings were recorded for the current scan.</div>}
           </Panel>
           </div>
         )}

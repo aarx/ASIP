@@ -55,6 +55,16 @@ export const askShadowRecon = async (question, domain = null) => {
   return res.data;
 };
 
+export const getSecurityFindings = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/security-findings`, { params });
+  return res.data;
+};
+
+export const getSecurityFindingsSummary = async () => {
+  const res = await axios.get(`${API_URL}/v2/security-findings/summary`);
+  return res.data;
+};
+
 export const getV2Scans = async (limit = 100) => {
   const res = await axios.get(`${API_URL}/v2/scans`, { params: { limit } });
   return res.data;

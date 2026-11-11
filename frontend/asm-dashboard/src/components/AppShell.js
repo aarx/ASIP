@@ -21,6 +21,7 @@ const NAV_GROUPS = [
     label: "Risk & Exposure",
     items: [
       ["risk", "RX", "Risk Overview"],
+      ["risk-findings", "FI", "Findings", "risk/findings"],
       ["risk-needs-attention", "NA", "Needs Attention", "risk/needs-attention"],
       ["risk-dns-security", "DNS", "DNS Security", "risk/dns-security"],
       ["brand", "BP", "Brand Exposure"],

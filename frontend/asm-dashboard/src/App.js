@@ -12,12 +12,14 @@ import InvestigationPage from "./pages/InvestigationPage";
 import ChangeIntelligencePage from "./pages/ChangeIntelligencePage";
 import AdhocChecksPage from "./pages/AdhocChecksPage";
 import DnsSecurityPage from "./pages/DnsSecurityPage";
+import SecurityFindingsPage from "./pages/SecurityFindingsPage";
 import "./App.css";
 
 const ROUTES = {
   overview: ["Overview", "Attack surface operations", "Authoritative exposure, change, and priority signals."],
   assets: ["Assets", "Inventory", "Explore current organizational and perimeter assets."],
   risk: ["Risk Overview", "Prioritization", "Review deterministic risk and exposure evidence."],
+  "risk-findings": ["Security Findings", "Risk & Exposure", "Review source-recorded observations and exposure signals."],
   "risk-needs-attention": ["Needs Attention", "Risk & Exposure", "Top deterministic risk scores followed by canonical risk distribution."],
   "risk-dns-security": ["DNS Security", "Risk & Exposure", "Read-only DNS assessment evidence from the current authoritative scan."],
   shadow: ["Shadow", "Unmanaged inventory", "Investigate confirmed organizational assets outside documented inventory."],
@@ -42,6 +44,8 @@ function locationFromHash() {
   }
   const riskSubroute = segments[0] === "risk" && segments[1] === "needs-attention"
     ? "risk-needs-attention"
+    : segments[0] === "risk" && segments[1] === "findings"
+      ? "risk-findings"
     : segments[0] === "risk" && segments[1] === "dns-security"
       ? "risk-dns-security"
       : null;
@@ -75,6 +79,7 @@ function App() {
       : <AssetExplorerPage query={query} />;
   }
   if (route === "risk") page = <RiskExposurePage query={query} />;
+  if (route === "risk-findings") page = <SecurityFindingsPage query={query} />;
   if (route === "risk-needs-attention") page = <RiskNeedsAttentionPage query={query} />;
   if (route === "risk-dns-security") page = <DnsSecurityPage query={query} />;
   if (route === "shadow") page = <ShadowCentrePage query={query} />;
