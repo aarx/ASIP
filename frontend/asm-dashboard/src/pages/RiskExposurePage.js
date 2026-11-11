@@ -3,6 +3,7 @@ import {
   getExposureSummary,
   getFindings,
   getHttpStatus,
+  getDnsSecuritySummary,
   getSensitiveExposure,
   getV2Assets,
   getV2Overview,
@@ -21,6 +22,7 @@ const SECONDARY_VIEWS = [
   ["review-indicators", "Needs review"],
   ["findings", "Findings"],
   ["sensitive-ports", "Sensitive ports"],
+  ["dns-security", "DNS Security"],
 ];
 
 function reasons(reasonsList) {
@@ -37,6 +39,55 @@ function readSecondaryView(query) {
   const params = new URLSearchParams(query);
   const requested = params.get("view") || params.get("section");
   return SECONDARY_VIEWS.some(([view]) => view === requested) ? requested : "review-indicators";
+}
+
+function dnsCount(value) {
+  return Number.isInteger(value) && value >= 0 ? value.toLocaleString() : "—";
+}
+
+function dnsScope(summary, currentScanId) {
+  if (!Number.isInteger(summary?.scan_id)) return "SCAN UNAVAILABLE";
+  return summary.scan_id === currentScanId ? `SCAN #${summary.scan_id}` : `HISTORICAL SCAN #${summary.scan_id}`;
+}
+
+function dnsCoverageState(summary) {
+  if (!summary || summary.error) return { title: "DNS Security unavailable", copy: "Assessment data could not be loaded." };
+  if (summary.checked_assets === 0) return { title: "Not Assessed", copy: "No DNS checks have been executed for this scan." };
+  if (![summary.checked_assets, summary.eligible_assets, summary.affected_assets].every((value) => Number.isInteger(value))) {
+    return { title: "Assessment coverage unavailable", copy: "The summary did not include enough coverage data to classify the assessment." };
+  }
+  if (summary.checked_assets < summary.eligible_assets) {
+    return { title: "Partial coverage", copy: `${dnsCount(summary.checked_assets)} of ${dnsCount(summary.eligible_assets)} eligible assets assessed.` };
+  }
+  return summary.affected_assets > 0
+    ? { title: "Affected assets recorded", copy: `${dnsCount(summary.affected_assets)} assets have actionable DNS outcomes.` }
+    : { title: "No actionable DNS outcomes recorded", copy: "Coverage is complete; outcome details remain available in DNS Security." };
+}
+
+function DnsSecurityCoverage({ summary, currentScanId }) {
+  const coverage = dnsCoverageState(summary);
+  return (
+    <Panel title="DNS Security" meta={dnsScope(summary, currentScanId)} className="operation-panel-full dns-risk-coverage-panel">
+      {summary?.error || !summary ? (
+        <div className="dns-risk-unavailable" role="alert"><strong>{coverage.title}</strong><span>{coverage.copy}</span></div>
+      ) : (
+        <>
+          <div className="dns-risk-coverage-grid" aria-label="DNS Security coverage">
+            <div><span>Eligible Assets</span><strong>{dnsCount(summary.eligible_assets)}</strong></div>
+            <div><span>Assessed Assets</span><strong>{dnsCount(summary.checked_assets)}</strong></div>
+            <div><span>Not Assessed</span><strong>{dnsCount(summary.unchecked_assets)}</strong></div>
+            <div><span>Affected Assets</span><strong>{dnsCount(summary.affected_assets)}</strong></div>
+          </div>
+          <div className="dns-risk-status" role="status">
+            <strong>{coverage.title}</strong>
+            <span>{coverage.copy}</span>
+            <span>Availability: {summary.availability_state || "Unavailable"} · Execution: {summary.execution_state || "Unavailable"} · Operation currently: {summary.operation_enabled_currently === true ? "Enabled" : summary.operation_enabled_currently === false ? "Disabled" : "Unavailable"}</span>
+          </div>
+          <a className="context-link dns-risk-link" href="#/risk/dns-security">Open DNS Security details →</a>
+        </>
+      )}
+    </Panel>
+  );
 }
 
 function redirectLabel(indicator) {
@@ -89,6 +140,9 @@ export default function RiskExposurePage({ query }) {
     const httpStatusRequest = typeof getHttpStatus === "function"
       ? Promise.resolve(getHttpStatus()).catch(() => null)
       : Promise.resolve(null);
+    const dnsSecurityRequest = typeof getDnsSecuritySummary === "function"
+      ? Promise.resolve(getDnsSecuritySummary()).then((result) => result?.availability_state === "AVAILABLE" ? result : { error: true }).catch(() => ({ error: true }))
+      : Promise.resolve({ error: true });
     Promise.all([
       getV2Overview(),
       getFindings(),
@@ -96,9 +150,10 @@ export default function RiskExposurePage({ query }) {
       getExposureSummary(),
       Promise.resolve(getV2ReviewIndicators()).catch(() => ({ error: true, count: 0, indicators: [] })),
       httpStatusRequest,
-    ]).then(([overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses]) => {
+      dnsSecurityRequest,
+    ]).then(([overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, dnsSummary]) => {
       if (active) {
-        setData({ overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses });
+        setData({ overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, dnsSummary });
         setStatus("ready");
       }
     }).catch(() => { if (active) setStatus("error"); });
@@ -126,8 +181,9 @@ export default function RiskExposurePage({ query }) {
 
   useEffect(() => {
     if (status !== "ready") return;
-    const section = new URLSearchParams(query).get("section");
-    if (!["findings", "sensitive-ports", "review-indicators"].includes(section)) return;
+    const params = new URLSearchParams(query);
+    const section = params.get("section") || params.get("view");
+    if (!["findings", "sensitive-ports", "review-indicators", "dns-security"].includes(section)) return;
     document.getElementById(section)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }, [query, status]);
 
@@ -162,7 +218,7 @@ export default function RiskExposurePage({ query }) {
   if (status === "error") return <ErrorState title="Risk workspace unavailable" copy="One or more current risk or exposure contracts could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
   if (data.overview.current_scan_id == null) return <EmptyState />;
 
-  const { overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses } = data;
+  const { overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, dnsSummary } = data;
   const totalPriorityPages = Math.max(Math.ceil((priorityData?.count || 0) / PRIORITY_LIMIT), 1);
   const groups = httpStatusGroups(httpStatuses);
 
@@ -309,6 +365,12 @@ export default function RiskExposurePage({ query }) {
               </div>
             ) : <div className="detail-empty">No configured sensitive ports were observed in the current scan.</div>}
           </Panel>
+          </div>
+        )}
+
+        {secondaryView === "dns-security" && (
+          <div id="dns-security" role="tabpanel" aria-labelledby="dns-security-tab" tabIndex={0}>
+            <DnsSecurityCoverage summary={dnsSummary} currentScanId={overview.current_scan_id} />
           </div>
         )}
       </section>

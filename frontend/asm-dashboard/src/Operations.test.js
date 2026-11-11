@@ -3,6 +3,7 @@ import App from "./App";
 import {
   getExposureSummary,
   getFindings,
+  getDnsSecuritySummary,
   getHttpStatus,
   getSensitiveExposure,
   getV2Assets,
@@ -29,6 +30,7 @@ jest.mock("./services/api", () => ({
   getFindings: jest.fn(),
   getSensitiveExposure: jest.fn(),
   getExposureSummary: jest.fn(),
+  getDnsSecuritySummary: jest.fn(),
 }));
 jest.mock("recharts", () => {
   const actual = jest.requireActual("recharts");
@@ -50,6 +52,7 @@ const overview = {
 beforeEach(() => {
   [
     getExposureSummary,
+    getDnsSecuritySummary,
     getFindings,
     getHttpStatus,
     getSensitiveExposure,
@@ -186,6 +189,64 @@ test("risk workspace presents exact metrics and separate review evidence", async
   screen.getAllByRole("link", { name: "Open critical.example.com" }).forEach((link) => {
     expect(link).toHaveAttribute("href", "#/assets/critical.example.com?return=risk");
   });
+});
+
+test("Risk Overview exposes DNS coverage without treating partial evidence as a vulnerability verdict", async () => {
+  window.location.hash = "#/risk?view=dns-security";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue([]);
+  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  getHttpStatus.mockResolvedValue(null);
+  getDnsSecuritySummary.mockResolvedValue({
+    scan_id: 42,
+    availability_state: "AVAILABLE",
+    execution_state: "SUCCEEDED",
+    operation_enabled_currently: false,
+    eligible_assets: 10,
+    checked_assets: 4,
+    unchecked_assets: 6,
+    affected_assets: 2,
+  });
+
+  render(<App />);
+
+  expect(await screen.findByRole("tab", { name: "DNS Security" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByText("Partial coverage")).toBeInTheDocument();
+  expect(screen.getByText("4 of 10 eligible assets assessed.")).toBeInTheDocument();
+  expect(screen.queryByText("HISTORICAL SCAN #42")).not.toBeInTheDocument();
+  expect(screen.getByText("SCAN #42")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open DNS Security details →" })).toHaveAttribute("href", "#/risk/dns-security");
+  expect(screen.queryByText(/confirmed vulnerability/i)).not.toBeInTheDocument();
+  expect(getDnsSecuritySummary).toHaveBeenCalledTimes(1);
+});
+
+test("Risk Overview labels DNS evidence from a non-authoritative scan as historical", async () => {
+  window.location.hash = "#/risk?view=dns-security";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue([]);
+  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  getHttpStatus.mockResolvedValue(null);
+  getDnsSecuritySummary.mockResolvedValue({
+    scan_id: 41,
+    availability_state: "AVAILABLE",
+    execution_state: "SUCCEEDED",
+    operation_enabled_currently: false,
+    eligible_assets: 3,
+    checked_assets: 0,
+    unchecked_assets: 3,
+    affected_assets: 0,
+  });
+
+  render(<App />);
+
+  expect(await screen.findByText("HISTORICAL SCAN #41")).toBeInTheDocument();
+  expect(screen.getAllByText("Not Assessed").length).toBeGreaterThan(0);
 });
 
 test("priority assets use the exact positive-risk count and paginate the ranked queue", async () => {

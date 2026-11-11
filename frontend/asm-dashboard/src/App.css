@@ -495,6 +495,15 @@
 .review-indicator-table strong { color: var(--asip-text-primary); font-size: 10px; }
 .review-destination { display: block; max-width: 330px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review-indicator-error { padding: 12px; border: 1px solid rgba(240, 100, 103, .2); background: rgba(240, 100, 103, .04); color: #dd9b9d; font-size: 10px; }
+.dns-risk-coverage-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.dns-risk-coverage-grid > div { display: grid; gap: 5px; min-width: 0; padding: 10px 11px; border: 1px solid var(--asip-border); border-radius: 4px; background: rgba(7, 15, 27, .2); }
+.dns-risk-coverage-grid span { color: var(--asip-text-muted); font-size: 9px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.dns-risk-coverage-grid strong { color: var(--asip-text-primary); font-family: var(--asip-font-mono); font-size: 18px; }
+.dns-risk-status, .dns-risk-unavailable { display: flex; flex-wrap: wrap; gap: 5px 12px; align-items: baseline; margin-top: 12px; padding: 10px 11px; border-left: 3px solid var(--asip-accent); background: rgba(61, 196, 255, .04); color: var(--asip-text-muted); font-size: 10px; line-height: 1.45; }
+.dns-risk-status strong, .dns-risk-unavailable strong { color: var(--asip-text-primary); font-size: 11px; }
+.dns-risk-status span:last-child { flex-basis: 100%; font-family: var(--asip-font-mono); font-size: 9px; }
+.dns-risk-unavailable { border-left-color: #d49a3a; }
+.dns-risk-link { margin-top: 12px; }
 
 .shadow-workspace, .scan-workspace { display: grid; gap: 14px; }
 .shadow-summary-bar { display: grid; grid-template-columns: 190px 190px minmax(260px, 1fr); gap: 18px; align-items: center; min-height: 88px; padding: 17px 20px; border: 1px solid var(--asip-border); border-radius: var(--asip-radius); background: rgba(16, 29, 47, .92); box-shadow: var(--asip-shadow); }
@@ -719,6 +728,7 @@
   .asset-coverage-classes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .certificate-health-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .brand-discovery-signals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dns-risk-coverage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dns-summary-metrics, .dns-status-strip, .dns-evidence-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dns-filter-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dns-evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -753,6 +763,7 @@
   .attention-table th:nth-child(4), .attention-table td:nth-child(4) { display: none; }
   .filter-primary-row, .filter-secondary-row, .detail-grid { grid-template-columns: 1fr; }
   .brand-discovery-signals { grid-template-columns: 1fr; }
+  .dns-risk-coverage-grid { grid-template-columns: 1fr; }
   .dns-summary-metrics, .dns-status-strip, .dns-filter-panel, .dns-evidence-summary, .dns-evidence-grid { grid-template-columns: 1fr; }
   .dns-evidence-wide { grid-column: auto; }
   .dns-filter-actions { grid-column: 1 / -1; }
