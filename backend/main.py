@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 import logging
 import os
 from fastapi import APIRouter
@@ -13,6 +13,7 @@ import re
 from datetime import date, datetime
 from llm_service import ask_llm
 from investigation_assistance import deterministic_asset_assistance
+from assistant_question import answer_question
 from urllib.parse import urlparse
 from db import get_conn, get_latest_authoritative_scan_id, get_previous_authoritative_scan_id
 from asset_reporting import (
@@ -92,6 +93,13 @@ class OwnershipReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ownership_status: str
+
+
+class AssistantQuestionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=500)
+    domain: str | None = Field(default=None, max_length=253)
 
 @app.get("/")
 def home():
@@ -3309,6 +3317,62 @@ def frontend_v2_asset_assistant(domain_name: str, action: str):
         "limitations": deterministic["limitations"],
         "next_actions": deterministic["next_actions"],
     }
+
+
+_ASSISTANT_DOMAIN_PATTERN = re.compile(
+    r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$",
+    re.IGNORECASE,
+)
+
+
+@app.post("/v2/assistant/ask")
+def assistant_ask(request: AssistantQuestionRequest):
+    question = request.question.strip()
+    if not question:
+        raise HTTPException(status_code=422, detail="question must not be blank")
+    domain = request.domain.strip().lower() if request.domain else None
+    if domain and not _ASSISTANT_DOMAIN_PATTERN.fullmatch(domain):
+        raise HTTPException(status_code=422, detail="domain must be a valid hostname")
+
+    # Import the existing read-only MCP handlers lazily. This is direct in-process
+    # reuse, not a network call or dynamic tool invocation.
+    import mcp_server
+
+    def compare_successful_scans(before_scan_id=None, after_scan_id=None):
+        conn = get_conn()
+        try:
+            cur = conn.cursor()
+            if before_scan_id is None or after_scan_id is None:
+                current_scan_id = get_latest_authoritative_scan_id(cur)
+                previous_scan_id = get_previous_authoritative_scan_id(cur, current_scan_id)
+            else:
+                previous_scan_id, current_scan_id = before_scan_id, after_scan_id
+        finally:
+            conn.close()
+        if current_scan_id is None or previous_scan_id is None:
+            return {
+                "answer": "Two successful scans are not available for comparison.",
+                "context": {"before_scan_id": previous_scan_id,
+                            "after_scan_id": current_scan_id},
+                "data": {},
+                "coverage": {"state": "INSUFFICIENT_SCAN_HISTORY"},
+                "limitations": ["A comparison requires two retained successful scans."],
+                "next_actions": ["Run or select another completed scan when one is available."],
+            }
+        return mcp_server.scan_comparison(previous_scan_id, current_scan_id)
+
+    handlers = {
+        "summary": mcp_server.get_summary,
+        "high_risk": mcp_server.high_risk,
+        "overview": frontend_v2_overview,
+        "asset_assistant": frontend_v2_asset_assistant,
+        "shadow_assets": mcp_server.get_shadow_assets,
+        "evidence": mcp_server.evidence,
+        "dns_security": mcp_server.dns_security_intelligence,
+        "scan_health": mcp_server.scan_health,
+        "scan_comparison": compare_successful_scans,
+    }
+    return answer_question(question, domain, handlers)
 
 
 DNS_SECURITY_CHECK_CATEGORIES = frozenset({
