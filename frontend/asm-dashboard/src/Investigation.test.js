@@ -75,8 +75,13 @@ test("selects the first queue asset by default and runs grounded actions without
     domain,
     action,
     response: `**${action}** grounded response`,
-    source: "ShadowRecon deterministic evidence + Gemma",
-    model: "gemma3:4b",
+    source: "ShadowRecon deterministic evidence",
+    mode: "model_free",
+    model: null,
+    context: { scan_scope: "CURRENT_AUTHORITATIVE_SCAN" },
+    coverage: { dns: "OBSERVED" },
+    limitations: ["Missing observations remain unknown."],
+    next_actions: ["Review the asset evidence."],
   }));
 
   render(<App />);
@@ -91,8 +96,8 @@ test("selects the first queue asset by default and runs grounded actions without
   expect(screen.getByText("nginx")).toBeInTheDocument();
   expect(screen.getByText("stored evidence")).toBeInTheDocument();
   expect(screen.getByText("subfinder")).toBeInTheDocument();
-  expect(screen.getByText("Grounded AI Assistance")).toBeInTheDocument();
-  expect(screen.getByText("AI · NOT EVIDENCE")).toBeInTheDocument();
+  expect(screen.getByText("Investigation Assistant")).toBeInTheDocument();
+  expect(screen.getByText("EVIDENCE-BASED")).toBeInTheDocument();
   expect(screen.queryByText("Current stored observations")).not.toBeInTheDocument();
   expect(screen.queryByText("Positive evidence only")).not.toBeInTheDocument();
   expect(screen.queryByText("Recorded deterministic observations")).not.toBeInTheDocument();
@@ -109,6 +114,13 @@ test("selects the first queue asset by default and runs grounded actions without
     expect(await screen.findByText(`${action} grounded response`)).toBeInTheDocument();
     expect(getV2AssetAssistant).toHaveBeenLastCalledWith(selectedAsset.domain, action);
   }
+  expect(screen.getByText("Evidence-based")).toBeInTheDocument();
+  expect(screen.getByText("ShadowRecon deterministic evidence")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Evidence details"));
+  expect(screen.getByText(/scan scope: CURRENT_AUTHORITATIVE_SCAN/)).toBeInTheDocument();
+  expect(screen.getByText(/dns: OBSERVED/)).toBeInTheDocument();
+  expect(screen.getByText("Missing observations remain unknown.")).toBeInTheDocument();
+  expect(screen.getByText("Review the asset evidence.")).toBeInTheDocument();
   expect(screen.queryByText(/Its prose is not an ASM observation/)).not.toBeInTheDocument();
   expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Gemma|Ollama|Qwen|gemma3:4b/i)).not.toBeInTheDocument();
@@ -156,8 +168,9 @@ test("Candidate assets retain the no-organizational-risk boundary", async () => 
     domain: "candidate.example.net",
     action: "explain_risk",
     response: "No organizational canonical risk applies.",
-    source: "ShadowRecon deterministic evidence + Gemma",
-    model: "gemma3:4b",
+    source: "ShadowRecon deterministic evidence",
+    mode: "model_free",
+    model: null,
   });
 
   render(<App />);
@@ -185,6 +198,18 @@ test("Investigation workspace exposes loading, empty, and request-error states",
   expect(await screen.findByText("Investigation queue unavailable")).toBeInTheDocument();
 });
 
+test("shows an invalid selected domain without requesting assistant output", async () => {
+  window.location.hash = "#/investigate?domain=missing.example.com";
+  getInvestigationAssets.mockResolvedValue(investigationList);
+  getV2AssetDetail.mockResolvedValue({ error: "Asset not found in the current authoritative scan." });
+
+  render(<App />);
+
+  expect(await screen.findByText("Asset is not current")).toBeInTheDocument();
+  expect(screen.queryByText("Investigation Assistant")).not.toBeInTheDocument();
+  expect(getV2AssetAssistant).not.toHaveBeenCalled();
+});
+
 test("assistant errors do not alter or hide authoritative evidence", async () => {
   window.location.hash = `#/investigate?domain=${selectedAsset.domain}`;
   getInvestigationAssets.mockResolvedValue(investigationList);
@@ -195,7 +220,7 @@ test("assistant errors do not alter or hide authoritative evidence", async () =>
 
   expect(await screen.findByText("Authoritative ShadowRecon evidence")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Summarize Asset" }));
-  expect(await screen.findByText("Grounded assistance is unavailable. Authoritative ShadowRecon evidence remains unchanged.")).toBeInTheDocument();
+  expect(await screen.findByText("Investigation Assistant is unavailable. Authoritative ShadowRecon evidence remains unchanged.")).toBeInTheDocument();
   expect(screen.getByText("192.0.2.10")).toBeInTheDocument();
 });
 

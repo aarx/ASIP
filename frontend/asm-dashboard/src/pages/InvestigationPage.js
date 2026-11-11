@@ -34,6 +34,36 @@ function cleanAIResponse(response) {
     .trim();
 }
 
+function assistantValue(value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (Array.isArray(value)) return value.join(" · ");
+  if (typeof value === "object") {
+    return Object.entries(value).map(([key, item]) => `${key.replaceAll("_", " ")}: ${assistantValue(item)}`).join(" · ");
+  }
+  return String(value);
+}
+
+function AssistantDetails({ assistant }) {
+  const details = [
+    ["Context", assistant.context],
+    ["Coverage", assistant.coverage],
+    ["Limitations", assistant.limitations],
+    ["Next actions", assistant.next_actions],
+    ["Model metadata", assistant.model],
+  ].filter(([, value]) => assistantValue(value));
+
+  if (!details.length) return null;
+
+  return (
+    <details className="assistant-details">
+      <summary>Evidence details</summary>
+      <div className="assistant-details-grid">
+        {details.map(([label, value]) => <div key={label}><span>{label}</span><p>{assistantValue(value)}</p></div>)}
+      </div>
+    </details>
+  );
+}
+
 function EvidenceItem({ label, children, mono = false }) {
   return <div className="investigation-evidence-item"><span>{label}</span><strong className={mono ? "technical-value" : ""}>{children}</strong></div>;
 }
@@ -194,11 +224,11 @@ export default function InvestigationPage({ query }) {
         {assetStatus === "ready" && <AssetEvidence asset={asset} detailHref={assetDetailHref} />}
 
         {assetStatus === "ready" && (
-          <Panel title="Grounded AI Assistance" meta="AI · NOT EVIDENCE" className="investigation-assistant">
+          <Panel title="Investigation Assistant" meta="EVIDENCE-BASED" className="investigation-assistant">
             <div className="assistant-actions">{ACTIONS.map(([action, label]) => <Button key={action} variant={assistant?.action === action ? "contained" : "outlined"} disabled={assistantStatus === "loading"} onClick={() => runAction(action)}>{label}</Button>)}</div>
-            {assistantStatus === "loading" && <div className="assistant-progress" role="status">AI is reviewing supplied ShadowRecon evidence…</div>}
-            {assistantStatus === "error" && <div className="assistant-error" role="alert">Grounded assistance is unavailable. Authoritative ShadowRecon evidence remains unchanged.</div>}
-            {assistantStatus === "ready" && <div className="assistant-response"><div><span>Source</span><strong>Grounded AI · authoritative ShadowRecon context</strong></div><pre>{cleanAIResponse(assistant.response)}</pre></div>}
+            {assistantStatus === "loading" && <div className="assistant-progress" role="status">Preparing an evidence-based response…</div>}
+            {assistantStatus === "error" && <div className="assistant-error" role="alert">Investigation Assistant is unavailable. Authoritative ShadowRecon evidence remains unchanged.</div>}
+            {assistantStatus === "ready" && <div className="assistant-response"><div><span>Mode</span><strong>{assistant.mode === "model_free" ? "Evidence-based" : assistantValue(assistant.mode) || "Evidence-based"}</strong></div>{assistant.source && <div><span>Source</span><strong>{assistant.source}</strong></div>}<pre>{cleanAIResponse(assistant.response)}</pre><AssistantDetails assistant={assistant} /></div>}
           </Panel>
         )}
       </div>
