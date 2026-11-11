@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button, TextField } from "@mui/material";
-import { getInvestigationAssets, getV2AssetAssistant, getV2AssetDetail } from "../services/api";
+import { askShadowRecon, getInvestigationAssets, getV2AssetAssistant, getV2AssetDetail } from "../services/api";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
@@ -12,6 +12,20 @@ const ACTIONS = [
   ["investigation_plan", "Investigation Plan"],
   ["summarize_asset", "Summarize Asset"],
 ];
+const GLOBAL_QUESTIONS = [
+  "What is our current attack surface?",
+  "Which assets need attention?",
+  "Are there DNS Security concerns?",
+  "Which certificates need attention?",
+  "Which technologies were detected?",
+  "Compare the last two successful scans",
+];
+const ASSET_QUESTIONS = [
+  "Tell me about this asset",
+  "Why is this domain risky?",
+  "What should I investigate next?",
+];
+const MAX_QUESTION_LENGTH = 500;
 
 function selectedFromQuery(query) {
   return new URLSearchParams(query).get("domain") || "";
@@ -25,7 +39,7 @@ function investigationHash(domain) {
   return domain ? `#/investigate?domain=${encodeURIComponent(domain)}` : "#/investigate";
 }
 
-function cleanAIResponse(response) {
+function cleanResponse(response) {
   return String(response || "")
     .replace(/\*\*(.*?)\*\*/g, "$1")
     .replace(/__(.*?)__/g, "$1")
@@ -36,7 +50,7 @@ function cleanAIResponse(response) {
 
 function assistantValue(value) {
   if (value === null || value === undefined || value === "") return "";
-  if (Array.isArray(value)) return value.join(" · ");
+  if (Array.isArray(value)) return value.map(assistantValue).join(" · ");
   if (typeof value === "object") {
     return Object.entries(value).map(([key, item]) => `${key.replaceAll("_", " ")}: ${assistantValue(item)}`).join(" · ");
   }
@@ -45,6 +59,8 @@ function assistantValue(value) {
 
 function AssistantDetails({ assistant }) {
   const details = [
+    ["Mode", assistant.mode],
+    ["Source", assistant.source],
     ["Context", assistant.context],
     ["Coverage", assistant.coverage],
     ["Limitations", assistant.limitations],
@@ -61,6 +77,107 @@ function AssistantDetails({ assistant }) {
         {details.map(([label, value]) => <div key={label}><span>{label}</span><p>{assistantValue(value)}</p></div>)}
       </div>
     </details>
+  );
+}
+
+function questionUsesAssetContext(question) {
+  const normalized = question.toLowerCase();
+  return normalized.includes("this asset")
+    || normalized.includes("this domain")
+    || normalized.includes("investigate next")
+    || normalized.includes("check on this");
+}
+
+function displayLabel(value) {
+  return String(value || "").replaceAll("_", " ");
+}
+
+function evidenceItemTitle(item) {
+  return item?.domain || item?.target || item?.technology || item?.check_key || "Observation";
+}
+
+function evidenceItemSummary(item) {
+  if (!item || typeof item !== "object") return String(item || "");
+  const parts = [];
+  if (item.priority) parts.push(`${item.priority}${item.score !== undefined ? ` · score ${item.score}` : ""}`);
+  if (item.outcome) parts.push(item.outcome);
+  if (item.severity) parts.push(item.severity);
+  if (item.status) parts.push(item.status);
+  if (item.technology && item.version) parts.push(`version ${item.version}`);
+  else if (item.version) parts.push(item.version);
+  if (item.ip) parts.push(item.ip);
+  if (item.before || item.after) parts.push(`before: ${item.before || "not recorded"} · after: ${item.after || "not recorded"}`);
+  if (item.expiry_date) parts.push(`expires ${item.expiry_date}`);
+  if (item.record_type) parts.push(item.record_type);
+  return parts.join(" · ") || "Evidence recorded";
+}
+
+function EvidenceList({ title, items, total }) {
+  if (!Array.isArray(items) || !items.length) return null;
+  const bounded = items.slice(0, 25);
+  return (
+    <section className="assistant-evidence-block">
+      <div className="assistant-evidence-block-head"><strong>{title}</strong><small>{total != null ? `Showing ${bounded.length} of ${total}` : `${bounded.length} returned`}</small></div>
+      <div className="assistant-evidence-list">
+        {bounded.map((item, index) => <div className="assistant-evidence-row" key={`${evidenceItemTitle(item)}-${index}`}><strong>{evidenceItemTitle(item)}</strong><span>{evidenceItemSummary(item)}</span></div>)}
+      </div>
+    </section>
+  );
+}
+
+function StructuredEvidence({ data, coverage }) {
+  if (!data || typeof data !== "object") return null;
+  const sections = [];
+  const nested = data.data && typeof data.data === "object" && !Array.isArray(data.data) ? data.data : null;
+  const scalarEntries = Object.entries(data).filter(([key, value]) => (
+    !["answer", "data", "risk_distribution", "next_tier_assets", "assets", "checks", "added", "removed", "http_dns_state_changes"].includes(key)
+    && ["string", "number", "boolean"].includes(typeof value)
+  ));
+
+  if (scalarEntries.length) {
+    sections.push(
+      <div className="assistant-metric-grid" key="metrics">
+        {scalarEntries.map(([key, value]) => <div key={key}><span>{displayLabel(key)}</span><strong>{String(value)}</strong></div>)}
+      </div>
+    );
+  }
+  if (data.risk_distribution && typeof data.risk_distribution === "object") {
+    sections.push(
+      <div className="assistant-metric-grid" key="risk-distribution">
+        {Object.entries(data.risk_distribution).map(([key, value]) => <div key={key}><span>{key}</span><strong>{String(value)}</strong></div>)}
+      </div>
+    );
+  }
+  if (nested?.items) sections.push(<EvidenceList key="items" title={`${displayLabel(nested.category || "Evidence")} observations`} items={nested.items} total={nested.total} />);
+  if (data.next_tier_assets) sections.push(<EvidenceList key="priority" title={`${data.next_priority_tier || "Ranked"} examples`} items={data.next_tier_assets} />);
+  if (data.assets) sections.push(<EvidenceList key="assets" title="Shadow assets with IP evidence" items={data.assets} total={data.total_shadow_assets} />);
+  if (data.checks) sections.push(<EvidenceList key="checks" title="DNS assessment records" items={data.checks} total={data.check_records} />);
+  if (data.added) sections.push(<EvidenceList key="added" title="Assets added" items={data.added} total={coverage?.membership_additions_total} />);
+  if (data.removed) sections.push(<EvidenceList key="removed" title="Assets removed" items={data.removed} total={coverage?.membership_removals_total} />);
+  if (data.http_dns_state_changes) sections.push(<EvidenceList key="changes" title="HTTP/DNS state changes" items={data.http_dns_state_changes} total={coverage?.state_changes_total} />);
+  if (!sections.length) return null;
+  return <div className="assistant-structured-evidence" aria-label="Supporting evidence">{sections}</div>;
+}
+
+function SuggestedQuestions({ questions, onSelect, label }) {
+  return (
+    <div className="assistant-suggestions">
+      <span>{label}</span>
+      <div>{questions.map((item) => <button type="button" key={item} onClick={() => onSelect(item)}>{item}</button>)}</div>
+    </div>
+  );
+}
+
+function QuestionResponse({ result, onSelect }) {
+  return (
+    <div className="question-response" role="region" aria-label="Ask ShadowRecon response">
+      <div className="question-asked"><span>Question</span><strong>{result.question}</strong></div>
+      <pre>{cleanResponse(result.answer)}</pre>
+      <StructuredEvidence data={result.data} coverage={result.coverage} />
+      {result.next_actions?.length > 0 && <div className="assistant-next-actions"><span>Next actions</span><ul>{result.next_actions.map((item) => <li key={item}>{item}</li>)}</ul></div>}
+      {result.suggested_questions?.length > 0 && <SuggestedQuestions questions={result.suggested_questions} onSelect={onSelect} label="Try a supported question" />}
+      <AssistantDetails assistant={result} />
+    </div>
   );
 }
 
@@ -131,6 +248,12 @@ export default function InvestigationPage({ query }) {
   const [assetVersion, setAssetVersion] = useState(0);
   const [assistant, setAssistant] = useState(null);
   const [assistantStatus, setAssistantStatus] = useState("idle");
+  const [question, setQuestion] = useState("");
+  const [questionResult, setQuestionResult] = useState(null);
+  const [questionStatus, setQuestionStatus] = useState("idle");
+  const [questionError, setQuestionError] = useState("");
+  const assistantRequestRef = useRef(0);
+  const questionRequestRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -156,8 +279,13 @@ export default function InvestigationPage({ query }) {
 
   useEffect(() => {
     let active = true;
+    assistantRequestRef.current += 1;
+    questionRequestRef.current += 1;
     setAssistant(null);
     setAssistantStatus("idle");
+    setQuestionResult(null);
+    setQuestionStatus("idle");
+    setQuestionError("");
     if (!queryDomain) {
       setAsset(null);
       setAssetStatus("idle");
@@ -175,11 +303,61 @@ export default function InvestigationPage({ query }) {
   }, [queryDomain, assetVersion]);
 
   const runAction = (action) => {
+    const selectedDomain = asset.domain;
+    const requestId = ++assistantRequestRef.current;
+    questionRequestRef.current += 1;
     setAssistant(null);
     setAssistantStatus("loading");
-    getV2AssetAssistant(asset.domain, action)
-      .then((result) => { setAssistant(result); setAssistantStatus("ready"); })
-      .catch(() => { setAssistantStatus("error"); });
+    setQuestionResult(null);
+    setQuestionStatus("idle");
+    getV2AssetAssistant(selectedDomain, action)
+      .then((result) => {
+        if (requestId !== assistantRequestRef.current || selectedDomain !== queryDomain) return;
+        setAssistant(result);
+        setAssistantStatus("ready");
+      })
+      .catch(() => {
+        if (requestId === assistantRequestRef.current && selectedDomain === queryDomain) setAssistantStatus("error");
+      });
+  };
+
+  const selectQuestion = (value) => {
+    setQuestion(value);
+    setQuestionError("");
+  };
+
+  const submitQuestion = (event) => {
+    event.preventDefault();
+    if (questionStatus === "loading") return;
+    const value = question.trim();
+    if (!value) {
+      setQuestionError("Enter a question to ask ShadowRecon.");
+      return;
+    }
+    if (value.length > MAX_QUESTION_LENGTH) {
+      setQuestionError(`Questions must be ${MAX_QUESTION_LENGTH} characters or fewer.`);
+      return;
+    }
+    const selectedDomain = asset?.domain && questionUsesAssetContext(value) ? asset.domain : null;
+    const requestId = ++questionRequestRef.current;
+    assistantRequestRef.current += 1;
+    setQuestionError("");
+    setQuestionResult(null);
+    setQuestionStatus("loading");
+    setAssistant(null);
+    setAssistantStatus("idle");
+    askShadowRecon(value, selectedDomain)
+      .then((result) => {
+        if (requestId !== questionRequestRef.current || selectedDomain !== (questionUsesAssetContext(value) ? queryDomain : null)) return;
+        setQuestionResult(result);
+        setQuestionStatus("ready");
+      })
+      .catch(() => {
+        if (requestId === questionRequestRef.current) {
+          setQuestionStatus("error");
+          setQuestionError("ShadowRecon questions are unavailable. Try again.");
+        }
+      });
   };
 
   const filtered = (list?.assets || []).filter((item) => item.domain.toLowerCase().includes(search.trim().toLowerCase()));
@@ -225,10 +403,30 @@ export default function InvestigationPage({ query }) {
 
         {assetStatus === "ready" && (
           <Panel title="Investigation Assistant" meta="EVIDENCE-BASED" className="investigation-assistant">
+            <div className="ask-shadowrecon">
+              <strong>ASK SHADOWRECON</strong>
+              <form className="assistant-question-form" onSubmit={submitQuestion}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  label="Ask ShadowRecon"
+                  placeholder="Ask ShadowRecon a security question..."
+                  value={question}
+                  inputProps={{ maxLength: MAX_QUESTION_LENGTH, "aria-label": "Ask ShadowRecon a security question" }}
+                  onChange={(event) => { setQuestion(event.target.value); setQuestionError(""); }}
+                />
+                <Button type="submit" variant="contained" disabled={questionStatus === "loading"}>{questionStatus === "loading" ? "Asking…" : "Ask"}</Button>
+              </form>
+              {questionError && <div className="assistant-error" role="alert">{questionError}</div>}
+              <SuggestedQuestions questions={GLOBAL_QUESTIONS} onSelect={selectQuestion} label="Suggested questions" />
+              <SuggestedQuestions questions={ASSET_QUESTIONS} onSelect={selectQuestion} label={`Selected asset: ${asset.domain}`} />
+            </div>
             <div className="assistant-actions">{ACTIONS.map(([action, label]) => <Button key={action} variant={assistant?.action === action ? "contained" : "outlined"} disabled={assistantStatus === "loading"} onClick={() => runAction(action)}>{label}</Button>)}</div>
             {assistantStatus === "loading" && <div className="assistant-progress" role="status">Preparing an evidence-based response…</div>}
             {assistantStatus === "error" && <div className="assistant-error" role="alert">Investigation Assistant is unavailable. Authoritative ShadowRecon evidence remains unchanged.</div>}
-            {assistantStatus === "ready" && <div className="assistant-response"><div><span>Mode</span><strong>{assistant.mode === "model_free" ? "Evidence-based" : assistantValue(assistant.mode) || "Evidence-based"}</strong></div>{assistant.source && <div><span>Source</span><strong>{assistant.source}</strong></div>}<pre>{cleanAIResponse(assistant.response)}</pre><AssistantDetails assistant={assistant} /></div>}
+            {questionStatus === "loading" && <div className="assistant-progress" role="status">Reading current ShadowRecon evidence…</div>}
+            {questionStatus === "ready" && questionResult && <QuestionResponse result={questionResult} onSelect={selectQuestion} />}
+            {assistantStatus === "ready" && <div className="assistant-response"><pre>{cleanResponse(assistant.response)}</pre><AssistantDetails assistant={assistant} /></div>}
           </Panel>
         )}
       </div>

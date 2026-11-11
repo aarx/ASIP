@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
-import { getInvestigationAssets, getV2AssetAssistant, getV2AssetDetail } from "./services/api";
+import { askShadowRecon, getInvestigationAssets, getV2AssetAssistant, getV2AssetDetail } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -8,6 +8,7 @@ jest.mock("./services/api", () => ({
   getV2AssetDetail: jest.fn(),
   updateV2AssetOwnership: jest.fn(),
   getV2AssetAssistant: jest.fn(),
+  askShadowRecon: jest.fn(),
   getV2Scans: jest.fn(),
   getV2BrandAssets: jest.fn(),
   getV2ReviewIndicators: jest.fn(),
@@ -66,6 +67,7 @@ beforeEach(() => {
   getInvestigationAssets.mockReset();
   getV2AssetDetail.mockReset();
   getV2AssetAssistant.mockReset();
+  askShadowRecon.mockReset();
 });
 
 test("selects the first queue asset by default and runs grounded actions without auto-running AI", async () => {
@@ -114,9 +116,11 @@ test("selects the first queue asset by default and runs grounded actions without
     expect(await screen.findByText(`${action} grounded response`)).toBeInTheDocument();
     expect(getV2AssetAssistant).toHaveBeenLastCalledWith(selectedAsset.domain, action);
   }
-  expect(screen.getByText("Evidence-based")).toBeInTheDocument();
-  expect(screen.getByText("ShadowRecon deterministic evidence")).toBeInTheDocument();
+  const actionDetails = screen.getByText("Evidence details").closest("details");
+  expect(actionDetails.open).toBe(false);
   fireEvent.click(screen.getByText("Evidence details"));
+  expect(screen.getByText("model_free")).toBeInTheDocument();
+  expect(screen.getByText("ShadowRecon deterministic evidence")).toBeInTheDocument();
   expect(screen.getByText(/scan scope: CURRENT_AUTHORITATIVE_SCAN/)).toBeInTheDocument();
   expect(screen.getByText(/dns: OBSERVED/)).toBeInTheDocument();
   expect(screen.getByText("Missing observations remain unknown.")).toBeInTheDocument();
@@ -124,6 +128,115 @@ test("selects the first queue asset by default and runs grounded actions without
   expect(screen.queryByText(/Its prose is not an ASM observation/)).not.toBeInTheDocument();
   expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Gemma|Ollama|Qwen|gemma3:4b/i)).not.toBeInTheDocument();
+});
+
+test("asks global and selected-asset questions through the model-free endpoint", async () => {
+  window.location.hash = `#/investigate?domain=${selectedAsset.domain}`;
+  getInvestigationAssets.mockResolvedValue(investigationList);
+  getV2AssetDetail.mockResolvedValue(selectedAsset);
+  askShadowRecon.mockImplementation((question, domain) => Promise.resolve({
+    question,
+    answer: `${question} answer`,
+    data: { risk_distribution: { High: 2, Review: 4 }, next_tier_assets: [{ domain: "priority.example.com", priority: "Review", score: 4 }] },
+    context: { scan_id: 42 },
+    coverage: { asset_classification: "CURRENT_AUTHORITATIVE_SCAN" },
+    limitations: ["Returned evidence is bounded."],
+    next_actions: ["Review the returned assets."],
+    suggested_questions: [],
+    source: "ShadowRecon deterministic evidence",
+    mode: "model_free",
+    model: null,
+  }));
+
+  render(<App />);
+
+  const input = await screen.findByLabelText("Ask ShadowRecon a security question");
+  fireEvent.change(input, { target: { value: "What is our current attack surface?" } });
+  expect(input).toHaveValue("What is our current attack surface?");
+  fireEvent.submit(input.closest("form"));
+  expect(await screen.findByText("What is our current attack surface? answer")).toBeInTheDocument();
+  expect(askShadowRecon).toHaveBeenLastCalledWith("What is our current attack surface?", null);
+  expect(screen.getAllByText("High").length).toBeGreaterThan(0);
+  expect(screen.getByText("priority.example.com")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Evidence details"));
+  expect(screen.getByText("ShadowRecon deterministic evidence")).toBeInTheDocument();
+  expect(screen.getByText(/scan id: 42/)).toBeInTheDocument();
+
+  fireEvent.change(input, { target: { value: "Why is this domain risky?" } });
+  fireEvent.submit(input.closest("form"));
+  expect(await screen.findByText("Why is this domain risky? answer")).toBeInTheDocument();
+  expect(askShadowRecon).toHaveBeenLastCalledWith("Why is this domain risky?", selectedAsset.domain);
+});
+
+test("suggested questions populate the input without submitting", async () => {
+  getInvestigationAssets.mockResolvedValue(investigationList);
+  getV2AssetDetail.mockResolvedValue(selectedAsset);
+
+  render(<App />);
+
+  const input = await screen.findByLabelText("Ask ShadowRecon a security question");
+  fireEvent.click(screen.getByRole("button", { name: "Are there DNS Security concerns?" }));
+  expect(input).toHaveValue("Are there DNS Security concerns?");
+  expect(askShadowRecon).not.toHaveBeenCalled();
+});
+
+test("renders unsupported, ambiguous, and selection-required responses with supported suggestions", async () => {
+  getInvestigationAssets.mockResolvedValue(investigationList);
+  getV2AssetDetail.mockResolvedValue(selectedAsset);
+  askShadowRecon
+    .mockResolvedValueOnce({ question: "What is the weather?", answer: "I cannot answer that question.", data: {}, context: {}, coverage: { routing: "UNSUPPORTED" }, limitations: [], next_actions: [], suggested_questions: ["What is our current attack surface?"], mode: "model_free", source: "ShadowRecon deterministic evidence", model: null })
+    .mockResolvedValueOnce({ question: "Why is this asset risky and which assets need attention?", answer: "Please ask about one topic at a time.", data: {}, context: {}, coverage: { routing: "AMBIGUOUS" }, limitations: [], next_actions: [], suggested_questions: ["Which assets need attention?"], mode: "model_free", source: "ShadowRecon deterministic evidence", model: null })
+    .mockResolvedValueOnce({ question: "Why is this domain risky?", answer: "Select an asset from the current authoritative scan.", data: {}, context: {}, coverage: { asset: "SELECTION_REQUIRED" }, limitations: [], next_actions: ["Select a current asset."], suggested_questions: [], mode: "model_free", source: "ShadowRecon deterministic evidence", model: null });
+
+  render(<App />);
+
+  const input = await screen.findByLabelText("Ask ShadowRecon a security question");
+  for (const question of ["What is the weather?", "Why is this asset risky and which assets need attention?", "Why is this domain risky?"]) {
+    fireEvent.change(input, { target: { value: question } });
+    fireEvent.submit(input.closest("form"));
+    await screen.findByText(/cannot answer|one topic at a time|Select an asset/);
+  }
+  expect(askShadowRecon).toHaveBeenCalledTimes(3);
+});
+
+test("question loading and request errors are retryable without hiding asset evidence", async () => {
+  getInvestigationAssets.mockResolvedValue(investigationList);
+  getV2AssetDetail.mockResolvedValue(selectedAsset);
+  let rejectQuestion;
+  askShadowRecon.mockReturnValue(new Promise((resolve, reject) => { rejectQuestion = reject; }));
+
+  render(<App />);
+
+  const input = await screen.findByLabelText("Ask ShadowRecon a security question");
+  fireEvent.change(input, { target: { value: "Which assets need attention?" } });
+  fireEvent.submit(input.closest("form"));
+  fireEvent.submit(input.closest("form"));
+  expect(screen.getByText("Reading current ShadowRecon evidence…")).toBeInTheDocument();
+  expect(askShadowRecon).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "Asking…" })).toBeDisabled();
+  rejectQuestion(new Error("offline"));
+  expect(await screen.findByText("ShadowRecon questions are unavailable. Try again.")).toBeInTheDocument();
+  expect(screen.getByText("192.0.2.10")).toBeInTheDocument();
+});
+
+test("ignores a question response after the selected asset changes", async () => {
+  window.location.hash = `#/investigate?domain=${selectedAsset.domain}`;
+  getInvestigationAssets.mockResolvedValue(investigationList);
+  getV2AssetDetail.mockImplementation((domain) => Promise.resolve({ ...selectedAsset, domain }));
+  let resolveQuestion;
+  askShadowRecon.mockReturnValue(new Promise((resolve) => { resolveQuestion = resolve; }));
+
+  render(<App />);
+
+  const input = await screen.findByLabelText("Ask ShadowRecon a security question");
+  fireEvent.change(input, { target: { value: "Why is this domain risky?" } });
+  fireEvent.submit(input.closest("form"));
+  window.location.hash = "#/investigate?domain=other.example.com";
+  fireEvent(window, new HashChangeEvent("hashchange"));
+  resolveQuestion({ question: "Why is this domain risky?", answer: "stale response", data: {}, context: {}, coverage: {}, limitations: [], next_actions: [], suggested_questions: [], mode: "model_free", source: "ShadowRecon deterministic evidence", model: null });
+
+  expect(await screen.findByText("other.example.com")).toBeInTheDocument();
+  expect(screen.queryByText("stale response")).not.toBeInTheDocument();
 });
 
 test("preserves an explicitly requested domain over the default queue selection", async () => {

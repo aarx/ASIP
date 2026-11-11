@@ -50,6 +50,11 @@ export const getV2AssetAssistant = async (domain, action) => {
   return res.data;
 };
 
+export const askShadowRecon = async (question, domain = null) => {
+  const res = await axios.post(`${API_URL}/v2/assistant/ask`, { question, domain });
+  return res.data;
+};
+
 export const getV2Scans = async (limit = 100) => {
   const res = await axios.get(`${API_URL}/v2/scans`, { params: { limit } });
   return res.data;
