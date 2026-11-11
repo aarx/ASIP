@@ -343,8 +343,22 @@ def answer_question(question, domain, handlers):
                                 "http_dns_state_changes")
                     actual_returned = len(bounded.get(category, []))
                     coverage[returned_key] = actual_returned
+        before_id = result.get("context", {}).get("before", {}).get("scan_id")
+        after_id = result.get("context", {}).get("after", {}).get("scan_id")
+        if before_id is not None and after_id is not None:
+            answer = (
+                f"Compared scans #{before_id} and #{after_id}: "
+                f"{coverage.get('membership_additions_total', 0)} members added "
+                f"({len(bounded.get('added', []))} details returned), "
+                f"{coverage.get('membership_removals_total', 0)} removed "
+                f"({len(bounded.get('removed', []))} details returned), and "
+                f"{coverage.get('state_changes_total', 0)} HTTP/DNS state changes "
+                f"({len(bounded.get('http_dns_state_changes', []))} details returned)."
+            )
+        else:
+            answer = result.get("answer", "Scan comparison evidence is unavailable.")
         result = {**result, "coverage": coverage}
-        return _result_payload(question, intent, result, data=bounded,
+        return _result_payload(question, intent, result, data=bounded, answer=answer,
                                extra_limitations=["Returned comparison detail is limited to 10 records per category; totals describe the full comparison."])
 
     return _common_response(question, None, "This question is not supported.",

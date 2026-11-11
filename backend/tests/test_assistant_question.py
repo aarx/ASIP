@@ -160,6 +160,8 @@ class AssistantQuestionRoutingTests(unittest.TestCase):
         self.assertEqual(len(result["data"]["added"]), 10)
         self.assertEqual(result["coverage"]["membership_additions_total"], 12)
         self.assertEqual(result["coverage"]["membership_additions_returned"], 10)
+        self.assertIn("10 details returned", result["answer"])
+        self.assertNotIn("12 details returned", result["answer"])
 
     def test_unsupported_and_ambiguous_questions_do_not_call_handlers(self):
         deps = handlers()
