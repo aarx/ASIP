@@ -77,9 +77,60 @@ class ModelFreeMcpTests(unittest.TestCase):
         self.mcp.get_conn = lambda: connection
         result = self.mcp.scan_health()
         self.assertEqual(result["context"]["scan_id"], 19)
+        self.assertEqual(result["data"]["asset_count"], 2133)
+        sql, params = cursor.executions[0]
+        self.assertIn("COUNT(DISTINCT sr.domain_id)", sql)
+        self.assertIn("FROM scan_results sr WHERE sr.scan_id = s.id", sql)
+        self.assertNotIn("s.asset_count", sql)
+        self.assertEqual(params, (19,))
         self.assertEqual(result["coverage"]["stage_attempts"], 1)
         self.assertIn("does not mean every optional stage", result["coverage"]["interpretation"])
         self.assertTrue(connection.closed)
+
+    def test_scan_health_selects_requested_historical_scan(self):
+        diagnostics = {"version": 1, "attempts": []}
+        cursor = Cursor(one=("SUCCEEDED", "2026-11-01", "2026-11-01", 10, diagnostics))
+        connection = Connection(cursor)
+        self.mcp.get_conn = lambda: connection
+
+        result = self.mcp.scan_health(scan_id=15)
+
+        self.assertEqual(result["context"]["scan_id"], 15)
+        self.assertEqual(cursor.executions[0][1], (15,))
+        self.assertEqual(result["data"]["asset_count"], 10)
+
+    def test_scan_health_reports_missing_diagnostics_without_fabrication(self):
+        cursor = Cursor(one=("SUCCEEDED", "2026-11-10", "2026-11-10", 0, None))
+        connection = Connection(cursor)
+        self.mcp.get_conn = lambda: connection
+
+        result = self.mcp.scan_health(scan_id=19)
+
+        self.assertEqual(result["data"]["asset_count"], 0)
+        self.assertIsNone(result["data"]["stage_diagnostics"])
+        self.assertFalse(result["coverage"]["diagnostics_available"])
+        self.assertEqual(result["coverage"]["stage_attempts"], 0)
+
+    def test_scan_health_returns_404_for_unknown_scan(self):
+        cursor = Cursor(one=None)
+        connection = Connection(cursor)
+        self.mcp.get_conn = lambda: connection
+
+        with self.assertRaises(self.mcp.HTTPException) as raised:
+            self.mcp.scan_health(scan_id=999)
+
+        self.assertEqual(raised.exception.status_code, 404)
+        self.assertTrue(connection.closed)
+
+    def test_scan_health_preserves_failed_scan_status(self):
+        cursor = Cursor(one=("FAILED", "2026-11-10", "2026-11-10", 3, None))
+        connection = Connection(cursor)
+        self.mcp.get_conn = lambda: connection
+
+        result = self.mcp.scan_health(scan_id=20)
+
+        self.assertEqual(result["data"]["status"], "FAILED")
+        self.assertEqual(result["data"]["asset_count"], 3)
 
     def test_scan_comparison_is_explicitly_historical_and_bounded(self):
         cursor = Cursor()

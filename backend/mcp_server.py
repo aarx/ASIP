@@ -459,7 +459,11 @@ def _resolve_scan(cur, scan_id=None):
     if scan_id is None:
         raise HTTPException(status_code=404, detail="No successful scan is available")
     cur.execute(
-        "SELECT status, scan_time, completed_at, asset_count, stage_diagnostics FROM scans WHERE id = %s",
+        """SELECT s.status, s.scan_time, s.completed_at,
+                  (SELECT COUNT(DISTINCT sr.domain_id)
+                     FROM scan_results sr WHERE sr.scan_id = s.id) AS asset_count,
+                  s.stage_diagnostics
+             FROM scans s WHERE s.id = %s""",
         (scan_id,),
     )
     row = cur.fetchone()
