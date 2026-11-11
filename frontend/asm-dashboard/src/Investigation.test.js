@@ -168,6 +168,41 @@ test("asks global and selected-asset questions through the model-free endpoint",
   expect(askShadowRecon).toHaveBeenLastCalledWith("Why is this domain risky?", selectedAsset.domain);
 });
 
+test("renders nested comparison state without object stringification", async () => {
+  getInvestigationAssets.mockResolvedValue(investigationList);
+  getV2AssetDetail.mockResolvedValue(selectedAsset);
+  askShadowRecon.mockResolvedValue({
+    question: "Compare the last two successful scans",
+    answer: "The scan comparison is available.",
+    data: {
+      http_dns_state_changes: [{
+        domain: "changed.example.com",
+        before: { http_status: 200, dns_state: "RESOLVING" },
+        after: { http_status: 404, dns_state: "UNRESOLVED" },
+      }],
+    },
+    coverage: { state_changes_total: 1 },
+    context: { scan_ids: [41, 42] },
+    limitations: [],
+    next_actions: [],
+    suggested_questions: [],
+    mode: "model_free",
+    source: "ShadowRecon deterministic evidence",
+    model: null,
+  });
+
+  render(<App />);
+
+  const input = await screen.findByLabelText("Ask ShadowRecon a security question");
+  fireEvent.change(input, { target: { value: "Compare the last two successful scans" } });
+  fireEvent.submit(input.closest("form"));
+
+  expect(await screen.findByText("changed.example.com")).toBeInTheDocument();
+  expect(screen.getByText(/before: http status: 200 · dns state: RESOLVING/)).toBeInTheDocument();
+  expect(screen.getByText(/after: http status: 404 · dns state: UNRESOLVED/)).toBeInTheDocument();
+  expect(screen.queryByText(/\[object Object\]/)).not.toBeInTheDocument();
+});
+
 test("suggested questions populate the input without submitting", async () => {
   getInvestigationAssets.mockResolvedValue(investigationList);
   getV2AssetDetail.mockResolvedValue(selectedAsset);

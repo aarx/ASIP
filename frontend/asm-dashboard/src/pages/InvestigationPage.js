@@ -106,7 +106,7 @@ function evidenceItemSummary(item) {
   if (item.technology && item.version) parts.push(`version ${item.version}`);
   else if (item.version) parts.push(item.version);
   if (item.ip) parts.push(item.ip);
-  if (item.before || item.after) parts.push(`before: ${item.before || "not recorded"} · after: ${item.after || "not recorded"}`);
+  if (item.before || item.after) parts.push(`before: ${assistantValue(item.before || "not recorded")} · after: ${assistantValue(item.after || "not recorded")}`);
   if (item.expiry_date) parts.push(`expires ${item.expiry_date}`);
   if (item.record_type) parts.push(item.record_type);
   return parts.join(" · ") || "Evidence recorded";
