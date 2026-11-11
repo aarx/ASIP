@@ -94,7 +94,7 @@ class CertificateExpiryContractTests(unittest.TestCase):
         ]
 
     def run_endpoint(self, rows=None, current_scan=16):
-        cursor = CertificateCursor(rows or self.rows(), current_scan=current_scan)
+        cursor = CertificateCursor(self.rows() if rows is None else rows, current_scan=current_scan)
         connection = CertificateConnection(cursor)
         self.main.get_conn = lambda: connection
         response = self.main.cert_expiry()
@@ -109,7 +109,9 @@ class CertificateExpiryContractTests(unittest.TestCase):
         self.assertIn("order by dc.expiry_date asc nulls last, d.domain asc", normalized)
         self.assertNotIn("order by dc.days_to_expiry", normalized)
         self.assertIn("limit 50", normalized)
-        self.assertIn("d.ownership_status = 'confirmed'", normalized)
+        self.assertIn("'known', 'shadow'", normalized)
+        self.assertIn("from scan_results sr", normalized)
+        self.assertNotIn("d.ownership_status = 'confirmed'", normalized)
         self.assertEqual(params, (16,))
         self.assertEqual(response, [
             {"domain": "expired.example", "expiry": "2025-01-01", "days": 900, "status": "healthy"},
@@ -117,6 +119,19 @@ class CertificateExpiryContractTests(unittest.TestCase):
             {"domain": "upcoming.example", "expiry": "2026-12-01", "days": 1, "status": "critical"},
             {"domain": "missing.example", "expiry": None, "days": 0, "status": "healthy"},
         ])
+
+    def test_empty_evidence_remains_empty_and_uses_effective_class_scope(self):
+        response, cursor = self.run_endpoint(rows=[])
+        self.assertEqual(response, [])
+        query, _params = cursor.executions[1]
+        normalized = " ".join(query.lower().split())
+        self.assertIn("case when d.ownership_status = 'external'", normalized)
+        self.assertIn("when d.ownership_status = 'candidate'", normalized)
+        self.assertIn("from seed_domains seed_root", normalized)
+        self.assertIn("from known_domains known_host", normalized)
+        self.assertIn("in ('known', 'shadow')", normalized)
+        self.assertIn("sr.scan_id = dc.scan_id", normalized)
+        self.assertIn("sr.domain_id = dc.domain_id", normalized)
 
     def test_uses_latest_successful_scan_scope(self):
         _response, cursor = self.run_endpoint(current_scan=42)

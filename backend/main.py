@@ -742,8 +742,9 @@ def sensitive_exposure():
     cur = conn.cursor()
 
     scan_id = get_latest_authoritative_scan_id(cur)
+    reporting_class = reporting_asset_class_sql("d.domain", "d.ownership_status")
 
-    cur.execute("""
+    cur.execute(f"""
         SELECT 
             d.domain,
             dp.port,
@@ -755,7 +756,13 @@ def sensitive_exposure():
         JOIN domains d
             ON dp.domain_id = d.id
         WHERE dp.scan_id = %s
-        AND d.ownership_status = 'CONFIRMED'
+        AND EXISTS (
+            SELECT 1
+            FROM scan_results sr
+            WHERE sr.scan_id = dp.scan_id
+              AND sr.domain_id = dp.domain_id
+        )
+        AND ({reporting_class}) IN ('KNOWN', 'SHADOW')
         ORDER BY sp.risk DESC
         LIMIT 20
     """, (scan_id,))
@@ -1734,8 +1741,9 @@ def findings():
     cur = conn.cursor()
 
     scan_id = get_latest_authoritative_scan_id(cur)
+    reporting_class = reporting_asset_class_sql("d.domain", "d.ownership_status")
 
-    cur.execute("""
+    cur.execute(f"""
         SELECT 
             d.domain,
             df.finding,
@@ -1745,7 +1753,13 @@ def findings():
         JOIN domains d 
             ON d.id = df.domain_id
         WHERE df.scan_id = %s
-        AND d.ownership_status = 'CONFIRMED'
+        AND EXISTS (
+            SELECT 1
+            FROM scan_results sr
+            WHERE sr.scan_id = df.scan_id
+              AND sr.domain_id = df.domain_id
+        )
+        AND ({reporting_class}) IN ('KNOWN', 'SHADOW')
         ORDER BY 
             CASE 
                 WHEN df.severity = 'HIGH' THEN 1
@@ -1774,8 +1788,9 @@ def cert_expiry():
     cur = conn.cursor()
 
     scan_id = get_latest_authoritative_scan_id(cur)
+    reporting_class = reporting_asset_class_sql("d.domain", "d.ownership_status")
 
-    cur.execute("""
+    cur.execute(f"""
         SELECT 
             d.domain,
             dc.expiry_date,
@@ -1784,7 +1799,13 @@ def cert_expiry():
         FROM domain_cert dc
         JOIN domains d ON d.id = dc.domain_id
         WHERE dc.scan_id = %s
-        AND d.ownership_status = 'CONFIRMED'
+        AND EXISTS (
+            SELECT 1
+            FROM scan_results sr
+            WHERE sr.scan_id = dc.scan_id
+              AND sr.domain_id = dc.domain_id
+        )
+        AND ({reporting_class}) IN ('KNOWN', 'SHADOW')
         ORDER BY dc.expiry_date ASC NULLS LAST, d.domain ASC
         LIMIT 50
     """, (scan_id,))
@@ -4764,6 +4785,8 @@ def naming_asset_exposure():
         conn.close()
         return []
 
+    reporting_class = reporting_asset_class_sql("d.domain", "d.ownership_status")
+
     keywords = [
         "dev",
         "test",
@@ -4806,7 +4829,7 @@ def naming_asset_exposure():
             FROM scan_results sr
             JOIN domains d ON d.id = sr.domain_id
             WHERE sr.scan_id = %s
-            AND d.ownership_status = 'CONFIRMED'
+            AND ({reporting_class}) IN ('KNOWN', 'SHADOW')
             AND {condition}
         """
 

@@ -231,7 +231,10 @@ class Package4BApiTests(unittest.TestCase):
                 start = text.index(f"def {name}(")
                 end = text.find("\n@app.get", start)
                 block = text[start:end if end != -1 else None]
-                if name in {"http_status", "exposure_summary"}:
+                if name in {
+                    "http_status", "exposure_summary", "sensitive_exposure",
+                    "findings", "cert_expiry", "naming_asset_exposure",
+                }:
                     # Current reporting uses the shared effective class. A
                     # historical CONFIRMED decision alone must not include
                     # an out-of-scope Candidate in organizational metrics.
@@ -240,6 +243,31 @@ class Package4BApiTests(unittest.TestCase):
                     self.assertNotIn("ownership_status = 'CONFIRMED'", block)
                 else:
                     self.assertIn("ownership_status = 'CONFIRMED'", block)
+
+    def test_legacy_evidence_routes_keep_current_scan_membership_and_contracts(self):
+        cases = {
+            "findings": ("scan_results sr", "sr.scan_id = df.scan_id", "df.finding"),
+            "sensitive_exposure": (
+                "scan_results sr", "sr.scan_id = dp.scan_id", "dp.port",
+            ),
+            "cert_expiry": (
+                "scan_results sr", "sr.scan_id = dc.scan_id", "dc.expiry_date",
+            ),
+            "naming_asset_exposure": (
+                "scan_results sr", "sr.scan_id = %s", "count(distinct d.domain)",
+            ),
+        }
+        text = (BACKEND / "main.py").read_text(encoding="utf-8").lower()
+        for name, required in cases.items():
+            with self.subTest(endpoint=name):
+                start = text.index(f"def {name}(")
+                end = text.find("\n@app.get", start)
+                block = text[start:end if end != -1 else None]
+                for fragment in required:
+                    self.assertIn(fragment, block)
+                self.assertIn("in ('known', 'shadow')", block)
+                self.assertIn("reporting_asset_class_sql(\"d.domain\", \"d.ownership_status\")", block)
+                self.assertNotIn("ownership_status = 'confirmed'", block)
 
 
 if __name__ == "__main__":
