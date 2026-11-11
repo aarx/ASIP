@@ -12,6 +12,15 @@ def _clean(value, limit=240):
     return text[:limit] if text else None
 
 
+def _http_status_label(value):
+    """Render only an actual HTTP status code; 0 is a storage sentinel."""
+    if isinstance(value, bool):
+        return "status not recorded"
+    if isinstance(value, int) and 100 <= value <= 599:
+        return str(value)
+    return "status not recorded"
+
+
 def _risk_evidence(evidence, reason):
     domain = evidence.get("domain")
     dns = evidence.get("dns") or {}
@@ -128,7 +137,7 @@ def _response_lines(action, evidence):
                  f"scannable: {evidence.get('scannable', 'UNKNOWN')}.")
     lines.append(f"DNS: IP present={dns.get('has_ip', 'UNKNOWN')}; IP={_clean(dns.get('ip')) or 'not recorded'}; "
                  f"reverse DNS={_clean(dns.get('reverse_dns')) or 'not recorded'}.")
-    lines.append(f"HTTP: {http.get('observation_status') or 'UNKNOWN'}; status={http.get('status') if http.get('status') is not None else 'not recorded'}; "
+    lines.append(f"HTTP: {http.get('observation_status') or 'UNKNOWN'}; status={_http_status_label(http.get('status'))}; "
                  f"redirect completion={((http.get('redirect_evidence') or {}).get('completion_status')) or 'UNKNOWN'}.")
     lines.append("Technologies: " + (", ".join(
         f"{_clean(item.get('technology')) or 'unknown'}"

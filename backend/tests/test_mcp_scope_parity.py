@@ -128,11 +128,13 @@ class McpScopeParityTests(unittest.TestCase):
             result = self.mcp.get_summary()
 
         self.assertEqual(result, {
-            "answer": "Authoritative scan #17 contains 652 members: 57 Known, 513 Shadow, 82 Candidate, and 0 External.",
+            "answer": "Authoritative scan #17 contains 652 members: 57 Known, 513 Shadow, 82 Candidate, and 0 External. 557 Known/Shadow assets have an IP recorded; this is not an HTTP-live count.",
             "context": {"scan_id": 17, "scan_time": None, "status": "UNKNOWN"},
             "scan_id": 17,
             "live_domains": 557,
+            "ip_present_organizational_assets": 557,
             "shadow_assets": 500,
+            "ip_present_shadow_assets": 500,
             "total_domains": 652,
             "organizational_assets": 570,
             "known_assets": 57,
@@ -140,7 +142,9 @@ class McpScopeParityTests(unittest.TestCase):
             "candidate_assets": 82,
             "external_assets": 0,
             "coverage": {"asset_classification": "CURRENT_AUTHORITATIVE_SCAN",
-                         "live_domains": "IP_PRESENT_KNOWN_OR_SHADOW_ONLY"},
+                         "live_domains": "IP_PRESENT_KNOWN_OR_SHADOW_ONLY",
+                         "ip_present_organizational_assets": "IP_PRESENT_KNOWN_OR_SHADOW_ONLY",
+                         "ip_present_shadow_assets": "IP_PRESENT_SHADOW_ONLY"},
             "limitations": ["Candidates are reported separately and are not included as confirmed organizational assets."],
             "next_actions": ["Use /tools/high-risk for canonical organizational risk priorities."],
         })

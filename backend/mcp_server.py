@@ -60,12 +60,15 @@ def get_summary():
     return {
         "answer": (f"Authoritative scan #{scan_id} contains {len(asset_classes)} members: "
                    f"{totals['KNOWN']} Known, {totals['SHADOW']} Shadow, "
-                   f"{totals['CANDIDATE']} Candidate, and {totals['EXTERNAL']} External."),
+                   f"{totals['CANDIDATE']} Candidate, and {totals['EXTERNAL']} External. "
+                   f"{live} Known/Shadow assets have an IP recorded; this is not an HTTP-live count."),
         "context": {"scan_id": scan_id, "scan_time": scan_meta[0] if scan_meta else None,
                     "status": scan_meta[1] if scan_meta else "UNKNOWN"},
         "scan_id": scan_id,
         "live_domains": live,
+        "ip_present_organizational_assets": live,
         "shadow_assets": live_shadow,
+        "ip_present_shadow_assets": live_shadow,
         "total_domains": len(asset_classes),
         "organizational_assets": totals["KNOWN"] + totals["SHADOW"],
         "known_assets": totals["KNOWN"],
@@ -73,7 +76,9 @@ def get_summary():
         "candidate_assets": totals["CANDIDATE"],
         "external_assets": totals["EXTERNAL"],
         "coverage": {"asset_classification": "CURRENT_AUTHORITATIVE_SCAN",
-                     "live_domains": "IP_PRESENT_KNOWN_OR_SHADOW_ONLY"},
+                     "live_domains": "IP_PRESENT_KNOWN_OR_SHADOW_ONLY",
+                     "ip_present_organizational_assets": "IP_PRESENT_KNOWN_OR_SHADOW_ONLY",
+                     "ip_present_shadow_assets": "IP_PRESENT_SHADOW_ONLY"},
         "limitations": ["Candidates are reported separately and are not included as confirmed organizational assets."],
         "next_actions": ["Use /tools/high-risk for canonical organizational risk priorities."],
     }
@@ -543,12 +548,29 @@ def scan_comparison(before_scan_id: int = Query(gt=0), after_scan_id: int = Quer
             if old != new:
                 state_changes.append({"domain": r[0], "before": {"http_status": r[2], "http_observation_status": r[1], "has_ip": r[3]},
                                       "after": {"http_status": r[5], "http_observation_status": r[4], "has_ip": r[6]}})
+        state_changes_total = len(state_changes)
+        added_returned = min(len(added), 100)
+        removed_returned = min(len(removed), 100)
         state_changes = state_changes[:100]
         return {
-            "answer": f"Compared scans #{before_id} and #{after_id}: {len(added)} members added and {len(removed)} removed.",
+            "answer": (f"Compared scans #{before_id} and #{after_id}: "
+                       f"{len(added)} members added ({added_returned} details returned), "
+                       f"{len(removed)} removed ({removed_returned} details returned), "
+                       f"and {state_changes_total} HTTP/DNS state changes "
+                       f"({len(state_changes)} details returned)."),
             "context": {"before": {"scan_id": before_id, "scan_time": before[1]}, "after": {"scan_id": after_id, "scan_time": after[1]}},
             "data": {"added": added[:100], "removed": removed[:100], "http_dns_state_changes": state_changes},
-            "coverage": {"membership": "SCAN_SCOPED", "state_changes": "SCAN_SCOPED", "state_change_rows_returned": len(state_changes)},
+            "coverage": {
+                "membership": "SCAN_SCOPED",
+                "state_changes": "SCAN_SCOPED",
+                "membership_additions_total": len(added),
+                "membership_additions_returned": added_returned,
+                "membership_removals_total": len(removed),
+                "membership_removals_returned": removed_returned,
+                "state_changes_total": state_changes_total,
+                "state_changes_returned": len(state_changes),
+                "state_change_rows_returned": len(state_changes),
+            },
             "limitations": ["Historical effective classifications and risk scores are not reconstructed from current ownership or current risk state.",
                             "State-change detail is limited to the first 100 changed shared members."],
             "next_actions": ["Investigate changed assets in their respective scan records."],

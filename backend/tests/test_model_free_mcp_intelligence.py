@@ -148,6 +148,36 @@ class ModelFreeMcpTests(unittest.TestCase):
                             for sql, _ in cursor.executions))
         self.assertIn("not reconstructed from current ownership", " ".join(result["limitations"]))
 
+    def test_scan_comparison_reports_total_and_returned_detail_counts(self):
+        membership = ([('ADDED', i, f'new-{i}.example') for i in range(105)]
+                      + [('REMOVED', 500 + i, f'old-{i}.example') for i in range(2)])
+        states = [(f'shared-{i}.example', 'UNKNOWN', None, False,
+                   'RESPONDED', 200, True) for i in range(103)]
+        cursor = Cursor()
+        cursor.fetchall = mock.Mock(side_effect=[membership, states])
+        cursor.one = ("SUCCEEDED", "2026-11-01", "2026-11-01", 10, {"attempts": []})
+        self.mcp.get_conn = lambda: Connection(cursor)
+
+        result = self.mcp.scan_comparison(18, 19)
+
+        self.assertEqual(len(result["data"]["added"]), 100)
+        self.assertEqual(len(result["data"]["removed"]), 2)
+        self.assertEqual(len(result["data"]["http_dns_state_changes"]), 100)
+        self.assertEqual(result["coverage"]["membership_additions_total"], 105)
+        self.assertEqual(result["coverage"]["membership_additions_returned"], 100)
+        self.assertEqual(result["coverage"]["membership_removals_total"], 2)
+        self.assertEqual(result["coverage"]["membership_removals_returned"], 2)
+        self.assertEqual(result["coverage"]["state_changes_total"], 103)
+        self.assertEqual(result["coverage"]["state_changes_returned"], 100)
+
+    def test_high_risk_empty_result_keeps_list_contract(self):
+        cursor = Cursor()
+        self.mcp.get_conn = lambda: Connection(cursor)
+        with mock.patch.object(self.mcp, "current_scan_risks", return_value=[]):
+            result = self.mcp.high_risk()
+        self.assertEqual(result, [])
+        self.assertIsInstance(result, list)
+
     def test_evidence_category_is_fixed_and_pagination_is_bounded(self):
         with self.assertRaises(Exception):
             self.mcp.evidence("arbitrary_table")

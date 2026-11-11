@@ -143,6 +143,37 @@ class GroundedAssetAssistantTests(unittest.TestCase):
         self.assertEqual(result["coverage"]["http"], "UNKNOWN")
         self.assertIn("coverage is unknown", result["response"])
 
+    def test_http_zero_is_not_reported_as_a_response_status(self):
+        evidence = detail()
+        evidence["http"] = {"observation_status": "UNKNOWN", "status": 0}
+        self.main.frontend_v2_asset_detail = mock.Mock(return_value=evidence)
+
+        result = self.main.frontend_v2_asset_assistant("asset.example", "summarize_asset")
+
+        self.assertIn("HTTP: UNKNOWN; status=status not recorded", result["response"])
+        self.assertNotIn("status=0", result["response"])
+        self.assertEqual(result["coverage"]["http"], "UNKNOWN")
+
+    def test_no_response_state_is_preserved_when_status_is_zero(self):
+        evidence = detail()
+        evidence["http"] = {"observation_status": "NO_RESPONSE", "status": 0}
+        self.main.frontend_v2_asset_detail = mock.Mock(return_value=evidence)
+
+        result = self.main.frontend_v2_asset_assistant("asset.example", "summarize_asset")
+
+        self.assertIn("HTTP: NO_RESPONSE; status=status not recorded", result["response"])
+        self.assertNotIn("HTTP: UNKNOWN", result["response"])
+        self.assertEqual(result["coverage"]["http"], "NO_RESPONSE")
+
+    def test_valid_http_status_codes_are_preserved(self):
+        for status in (200, 302, 599):
+            with self.subTest(status=status):
+                evidence = detail()
+                evidence["http"] = {"observation_status": "RESPONDED", "status": status}
+                self.main.frontend_v2_asset_detail = mock.Mock(return_value=evidence)
+                result = self.main.frontend_v2_asset_assistant("asset.example", "summarize_asset")
+                self.assertIn(f"HTTP: RESPONDED; status={status}", result["response"])
+
     def test_dns_security_outcomes_motivate_advisory_review_without_vulnerability_claim(self):
         evidence = detail()
         evidence["dns_security"] = [{
