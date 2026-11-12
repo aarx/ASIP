@@ -262,12 +262,6 @@ class HistoricalCursor:
             self.result = (max(successful),) if successful else None
             return
 
-        if "as total_assets" in normalized:
-            self.assert_succeeded_history(normalized)
-            assert "d.is_known = false" in normalized
-            self.result = self.asset_growth_rows()
-            return
-
         if "as resolving" in normalized and "as http_live" in normalized:
             self.assert_succeeded_history(normalized)
             self.result = self.exposure_rows()
@@ -342,21 +336,6 @@ class HistoricalCursor:
             ))
         return rows
 
-    def asset_growth_rows(self):
-        rows = []
-        for scan_id in self.successful_scan_ids():
-            states = [row for row in self.states if row["scan_id"] == scan_id]
-            rows.append((
-                scan_id,
-                len(states),
-                sum(row["has_ip"] for row in states),
-                sum(
-                    row["has_ip"] and not self.domains[row["domain_id"]]["is_known"]
-                    for row in states
-                ),
-            ))
-        return rows
-
     def volatility_rows(self):
         rows = []
         successful = set(self.successful_scan_ids())
@@ -378,6 +357,38 @@ class HistoricalCursor:
 
     def fetchone(self):
         return self.result
+
+    def fetchall(self):
+        return self.result
+
+
+class AssetGrowthCursor:
+    """Read-model fixture for effective-class growth aggregation."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.executions = []
+
+    def execute(self, sql, params=None):
+        self.executions.append((sql, params))
+        normalized = " ".join(sql.lower().split())
+        assert "where status = 'succeeded'" in normalized
+        assert "select distinct sr.scan_id, sr.domain_id" in normalized
+        assert "group by ds.scan_id, ds.domain_id" in normalized
+        assert "se.scan_id = m.scan_id" in normalized
+        assert "se.domain_id = m.domain_id" in normalized
+        assert "http_observation_status = 'responded'" in normalized
+        assert "http_status >= 200" in normalized
+        assert "http_status < 600" in normalized
+        assert "cm.asset_class in ('known', 'shadow')" in normalized
+        assert "from known_domains known_host" in normalized
+        assert "from seed_domains seed_root" in normalized
+        assert "when d.ownership_status = 'candidate' then 'candidate'" in normalized
+        assert "when d.ownership_status = 'external' then 'external'" in normalized
+        assert "cm.asset_class = 'candidate'" in normalized
+        assert "cm.asset_class = 'external'" in normalized
+        assert "else 'candidate' end" in normalized
+        self.result = self.rows
 
     def fetchall(self):
         return self.result
@@ -705,6 +716,14 @@ class AuthoritativeHistoryTests(unittest.TestCase):
         self.assertTrue(connection.closed)
         return response, cursor
 
+    def run_asset_growth(self, rows):
+        cursor = AssetGrowthCursor(rows)
+        connection = FakeConnection(cursor)
+        self.main.get_conn = lambda: connection
+        response = self.main.asset_growth()
+        self.assertTrue(connection.closed)
+        return response, cursor
+
     def test_exposure_trend_keeps_only_successful_snapshots(self):
         response, cursor = self.run_endpoint("exposure_trend")
 
@@ -715,16 +734,53 @@ class AuthoritativeHistoryTests(unittest.TestCase):
         ])
         self.assertEqual(len(cursor.executions), 1)
 
-    def test_asset_growth_keeps_successes_and_global_known_semantics(self):
-        response, cursor = self.run_endpoint("asset_growth")
-
-        self.assertEqual(response, [
-            {"scan_id": 20, "total": 2, "live": 2, "shadow": 1},
-            {"scan_id": 22, "total": 2, "live": 1, "shadow": 1},
-            {"scan_id": 24, "total": 2, "live": 1, "shadow": 1},
+    def test_asset_growth_uses_effective_classes_and_preserves_chart_keys(self):
+        response, cursor = self.run_asset_growth([
+            (19, 2, 1, 1, 1, 1, 2, 1),
+            (20, 1, 1, 0, 0, 0, 1, 1),
+            (21, 0, 0, 0, 0, 0, 0, 0),
         ])
-        sql = HistoricalCursor.normalize(cursor.executions[0][0])
-        self.assertIn("d.is_known = false", sql)
+
+        self.assertEqual(response[0]["scan_id"], 19)
+        self.assertEqual(response[0]["total"], 2)
+        self.assertEqual(response[0]["organizational_assets"], 2)
+        self.assertEqual(response[0]["known_assets"], 1)
+        self.assertEqual(response[0]["shadow"], 1)
+        self.assertEqual(response[0]["shadow_assets"], 1)
+        self.assertEqual(response[0]["candidate_assets"], 1)
+        self.assertEqual(response[0]["external_assets"], 1)
+        self.assertEqual(response[0]["ip_present_assets"], 2)
+        self.assertEqual(response[0]["http_responding_assets"], 1)
+        self.assertEqual(response[0]["live"], 1)
+        self.assertEqual(response[0]["live_metric"], "HTTP_RESPONDING")
+        self.assertEqual(
+            response[0]["classification_basis"],
+            "CURRENT_EFFECTIVE_CLASSIFICATION",
+        )
+        self.assertIn("historical class snapshots are not stored", response[0]["historical_semantics"])
+        self.assertEqual(response[2]["total"], 0)
+        self.assertEqual(response[2]["ip_present_assets"], 0)
+        self.assertEqual(len(cursor.executions), 1)
+
+    def test_asset_growth_keeps_scan_specific_ip_and_http_evidence_separate(self):
+        response, cursor = self.run_asset_growth([
+            (20, 2, 1, 1, 0, 0, 2, 1),
+            (22, 2, 1, 1, 0, 0, 1, 0),
+        ])
+
+        self.assertEqual(
+            [(row["scan_id"], row["ip_present_assets"], row["http_responding_assets"])
+             for row in response],
+            [(20, 2, 1), (22, 1, 0)],
+        )
+        sql = " ".join(cursor.executions[0][0].lower().split())
+        self.assertIn("left join state_evidence se", sql)
+        self.assertIn("on se.scan_id = m.scan_id", sql)
+        self.assertIn("and se.domain_id = m.domain_id", sql)
+
+    def test_asset_growth_returns_empty_when_there_are_no_successful_scans(self):
+        response, _ = self.run_asset_growth([])
+        self.assertEqual(response, [])
 
     def test_volatile_domains_filters_before_lag(self):
         response, cursor = self.run_endpoint("volatile_domains")

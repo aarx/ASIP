@@ -4791,60 +4791,102 @@ def llm_test():
 
 @app.get("/asset-growth")
 def asset_growth():
+    """Return successful-scan populations using current effective classes.
 
+    Historical asset classes are not persisted.  The shared reporting helper
+    therefore reconstructs each scan's class from the current ownership,
+    known-domain inventory, and trusted seed boundaries.
+    """
     conn = get_conn()
     cur = conn.cursor()
-
-    cur.execute("""
+    classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
+    cur.execute(f"""
+        WITH successful_scans AS (
+            SELECT id AS scan_id
+            FROM scans
+            WHERE status = 'SUCCEEDED'
+        ), scan_members AS (
+            SELECT DISTINCT sr.scan_id, sr.domain_id
+            FROM scan_results sr
+            JOIN successful_scans ss ON ss.scan_id = sr.scan_id
+        ), state_evidence AS (
+            SELECT
+                ds.scan_id,
+                ds.domain_id,
+                BOOL_OR(ds.has_ip IS TRUE) AS ip_present,
+                BOOL_OR(
+                    ds.http_observation_status = 'RESPONDED'
+                    AND ds.http_status >= 200
+                    AND ds.http_status < 600
+                ) AS http_responding
+            FROM domain_states ds
+            JOIN successful_scans ss ON ss.scan_id = ds.scan_id
+            GROUP BY ds.scan_id, ds.domain_id
+        ), classified_members AS (
+            SELECT
+                m.scan_id,
+                m.domain_id,
+                ({classification}) AS asset_class,
+                COALESCE(se.ip_present, FALSE) AS ip_present,
+                COALESCE(se.http_responding, FALSE) AS http_responding
+            FROM scan_members m
+            JOIN domains d ON d.id = m.domain_id
+            LEFT JOIN state_evidence se
+              ON se.scan_id = m.scan_id
+             AND se.domain_id = m.domain_id
+        )
         SELECT
-            ds.scan_id,
-
-            COUNT(*) FILTER (
-                WHERE d.ownership_status = 'CONFIRMED'
-            ) AS total_assets,
-
-            SUM(
-                CASE
-                    WHEN d.ownership_status = 'CONFIRMED'
-                    AND ds.has_ip = TRUE THEN 1
-                    ELSE 0
-                END
-            ) AS live_assets,
-
-            SUM(
-                CASE
-                    WHEN ds.has_ip = TRUE
-                    AND d.ownership_status = 'CONFIRMED'
-                    AND d.is_known = FALSE
-                    THEN 1
-                    ELSE 0
-                END
-            ) AS shadow_assets
-
-        FROM domain_states ds
-
-        JOIN domains d
-            ON ds.domain_id = d.id
-
-        JOIN scans s
-            ON s.id = ds.scan_id
-
-        WHERE s.status = 'SUCCEEDED'
-
-        GROUP BY ds.scan_id
-        ORDER BY ds.scan_id
+            ss.scan_id,
+            COUNT(DISTINCT cm.domain_id) FILTER (
+                WHERE cm.asset_class IN ('KNOWN', 'SHADOW')
+            ) AS organizational_assets,
+            COUNT(DISTINCT cm.domain_id) FILTER (
+                WHERE cm.asset_class = 'KNOWN'
+            ) AS known_assets,
+            COUNT(DISTINCT cm.domain_id) FILTER (
+                WHERE cm.asset_class = 'SHADOW'
+            ) AS shadow_assets,
+            COUNT(DISTINCT cm.domain_id) FILTER (
+                WHERE cm.asset_class = 'CANDIDATE'
+            ) AS candidate_assets,
+            COUNT(DISTINCT cm.domain_id) FILTER (
+                WHERE cm.asset_class = 'EXTERNAL'
+            ) AS external_assets,
+            COUNT(DISTINCT cm.domain_id) FILTER (
+                WHERE cm.asset_class IN ('KNOWN', 'SHADOW')
+                  AND cm.ip_present
+            ) AS ip_present_assets,
+            COUNT(DISTINCT cm.domain_id) FILTER (
+                WHERE cm.asset_class IN ('KNOWN', 'SHADOW')
+                  AND cm.http_responding
+            ) AS http_responding_assets
+        FROM successful_scans ss
+        LEFT JOIN classified_members cm ON cm.scan_id = ss.scan_id
+        GROUP BY ss.scan_id
+        ORDER BY ss.scan_id
     """)
-
     rows = cur.fetchall()
-
     conn.close()
 
     return [
         {
             "scan_id": r[0],
+            # Keep the chart's existing keys while adding explicit meanings.
             "total": r[1],
-            "live": r[2],
-            "shadow": r[3]
+            "live": r[7],
+            "shadow": r[3],
+            "organizational_assets": r[1],
+            "known_assets": r[2],
+            "shadow_assets": r[3],
+            "candidate_assets": r[4],
+            "external_assets": r[5],
+            "ip_present_assets": r[6],
+            "http_responding_assets": r[7],
+            "classification_basis": "CURRENT_EFFECTIVE_CLASSIFICATION",
+            "live_metric": "HTTP_RESPONDING",
+            "historical_semantics": (
+                "Classes use current effective rules; historical class snapshots are not stored."
+            ),
         }
         for r in rows
     ]
