@@ -1,0 +1,304 @@
+import importlib
+import ast
+import json
+import pathlib
+import sys
+import unittest
+from unittest import mock
+
+
+BACKEND = pathlib.Path(__file__).resolve().parents[1]
+REPOSITORY = BACKEND.parent
+sys.path.insert(0, str(BACKEND))
+sys.path.insert(0, str(BACKEND / "tests"))
+
+import capd  # noqa: E402
+from capd_cli import main as capd_cli_main  # noqa: E402
+_remediation_fixture = importlib.import_module("test_remediation_package_2d1c")
+
+
+class CapdDefinitionTests(unittest.TestCase):
+    def test_versioned_php_checks_reconcile_with_existing_advisory_catalog(self):
+        schema, checks = capd.load_checks()
+        self.assertEqual(schema, 1)
+        self.assertEqual(set(checks), {"CVE-2026-109618", "CVE-2026-109619"})
+        for check in checks.values():
+            self.assertEqual(check["version_scheme"], "php_semver3")
+            self.assertEqual(check["verification_method"], "PASSIVE_VERSION_RANGE_MATCH")
+            self.assertTrue(check["enabled"])
+            self.assertTrue(check["advisory_reference"].startswith("https://"))
+            self.assertNotIn("command", check)
+            self.assertNotIn("probe", check)
+        expected = {
+            item.cve_id: sorted((rng.branch, rng.fixed_version) for rng in item.affected_ranges)
+            for item in capd.PHP_CVE_ADVISORIES
+        }
+        actual = {
+            item["cve_id"]: sorted((rng["branch"], rng["fixed"]) for rng in item["affected_ranges"])
+            for item in checks.values()
+        }
+        self.assertEqual(actual, expected)
+
+    def test_invalid_comparison_scheme_and_generic_service_alias_are_rejected(self):
+        with pathlib.Path(capd.CHECKS_PATH).open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+        payload["checks"][0]["version_scheme"] = "shell"
+        with self._temporary_catalog(payload) as path, mock.patch.object(capd, "CHECKS_PATH", path):
+            with self.assertRaises(capd.CapdError):
+                capd.load_checks()
+        payload["checks"][0]["version_scheme"] = "php_semver3"
+        payload["checks"][0]["service_aliases"] = ["https"]
+        with self._temporary_catalog(payload) as path, mock.patch.object(capd, "CHECKS_PATH", path):
+            with self.assertRaises(capd.CapdError):
+                capd.load_checks()
+        payload["checks"][0].pop("service_aliases")
+        payload["checks"][0]["command"] = "unsafe"
+        with self._temporary_catalog(payload) as path, mock.patch.object(capd, "CHECKS_PATH", path):
+            with self.assertRaises(capd.CapdError):
+                capd.load_checks()
+
+    @staticmethod
+    def _temporary_catalog(payload):
+        import tempfile
+        from contextlib import contextmanager
+
+        @contextmanager
+        def temporary():
+            with tempfile.TemporaryDirectory() as directory:
+                path = pathlib.Path(directory) / "checks.json"
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                yield path
+        return temporary()
+
+    def test_php_version_range_boundaries(self):
+        check = capd.get_check("CVE-2026-109618")
+        self.assertEqual(capd._version_candidate(check, "8.2.34")[:2], ("POTENTIAL_MATCH", "VERSION_MATCHED"))
+        self.assertEqual(capd._version_candidate(check, "8.2.35")[:2], ("NOT_APPLICABLE", "NOT_APPLICABLE"))
+        self.assertEqual(capd._version_candidate(check, "8.6.0")[:2], ("INSUFFICIENT_EVIDENCE", "INSUFFICIENT_EVIDENCE"))
+        self.assertEqual(capd._version_candidate(check, "8.2")[:2], ("INSUFFICIENT_EVIDENCE", "INSUFFICIENT_EVIDENCE"))
+        self.assertEqual(capd._version_candidate(check, None)[:2], ("INSUFFICIENT_EVIDENCE", "INSUFFICIENT_EVIDENCE"))
+
+    def test_result_classification_distinguishes_unknown_product_version_and_no_evidence(self):
+        check = capd.get_check("CVE-2026-109618")
+        target = {"domain_id": 10, "domain": "host.example", "asset_class": "KNOWN"}
+        unknown = capd._assess_asset(check, target, [{
+            "source": "domain_technology_observations", "technology": "php",
+            "version": None, "confidence": "medium", "evidence_type": "server_header",
+        }])[0]
+        self.assertEqual(unknown["candidate_classification"], "PRODUCT_MATCHED_VERSION_UNKNOWN")
+        self.assertEqual(unknown["result_status"], "INSUFFICIENT_EVIDENCE")
+        absent = capd._assess_asset(check, target, [])[0]
+        self.assertEqual(absent["result_status"], "INSUFFICIENT_EVIDENCE")
+        self.assertIn("not evidence", absent["limitations"][-1])
+        legacy = capd._assess_asset(check, target, [{
+            "source": "domain_tech", "technology": "php", "version": None,
+            "confidence": "none", "evidence_type": "legacy_label",
+        }])[0]
+        self.assertEqual(legacy["candidate_classification"], "PRODUCT_MATCHED_VERSION_UNKNOWN")
+
+    def test_duplicate_observations_preserve_evidence_without_duplicate_results(self):
+        check = capd.get_check("CVE-2026-109618")
+        target = {"domain_id": 10, "domain": "host.example", "asset_class": "KNOWN"}
+        evidence = {
+            "source": "domain_technology_observations", "technology": "php",
+            "version": "8.2.34", "confidence": "medium", "evidence_type": "server_header",
+            "observed_url": "https://host.example", "evidence": "PHP/8.2.34",
+        }
+        records = [{**evidence, "persisted_at": "2026-11-01T00:00:00+00:00"},
+                   {**evidence, "persisted_at": "2026-11-02T00:00:00+00:00"}]
+        results = capd._assess_asset(check, target, records)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["result_status"], "POTENTIAL_MATCH")
+        self.assertEqual(len(results[0]["evidence"]), 2)
+
+    def test_cli_rejects_active_mode_and_checks_listing_needs_no_database(self):
+        with mock.patch("capd_cli.get_conn", side_effect=AssertionError("DB should not be opened")):
+            self.assertEqual(capd_cli_main(["checks", "list"]), 0)
+            self.assertEqual(capd_cli_main(["run", "--check", "CVE-2026-109618", "--mode", "active"]), 2)
+
+    def test_no_http_or_socket_execution_is_present_in_passive_module(self):
+        tree = ast.parse((BACKEND / "capd.py").read_text(encoding="utf-8"))
+        imports = {
+            alias.name.split(".")[0]
+            for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
+            for alias in node.names
+        }
+        self.assertFalse(imports & {"requests", "socket", "subprocess"})
+
+    def test_only_get_capd_routes_are_declared(self):
+        source = (BACKEND / "main.py").read_text(encoding="utf-8")
+        self.assertIn('@app.get("/v2/capd/checks")', source)
+        self.assertIn('@app.get("/v2/capd/runs")', source)
+        self.assertIn('@app.get("/v2/capd/runs/{run_id}/results")', source)
+        self.assertNotIn('@app.post("/v2/capd', source)
+
+
+class CapdPostgreSQLTests(unittest.TestCase):
+    """Exercise CAPD migration and isolated write path on disposable PostgreSQL."""
+
+    @classmethod
+    def setUpClass(cls):
+        _remediation_fixture.PostgreSQLIngestConvergenceTests.setUpClass.__func__(cls)
+        connection = cls.connect()
+        try:
+            with connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("ALTER TABLE scans ADD COLUMN completed_at timestamptz")
+                    cursor.execute("ALTER TABLE domains ALTER COLUMN ownership_status DROP NOT NULL")
+                    cursor.execute("""
+                        CREATE TABLE active_scan_scopes (
+                            scope_domain text, include_subdomains boolean,
+                            testing_level text, status text, expires_at timestamptz,
+                            excluded_domains text[] DEFAULT ARRAY[]::text[]
+                        )
+                    """)
+                    cursor.execute(
+                        (REPOSITORY / "backend/migrations/015_add_capd_runs.sql")
+                        .read_text(encoding="utf-8")
+                    )
+                    cursor.execute("INSERT INTO seed_domains(domain) VALUES ('org.example')")
+                    cursor.execute("INSERT INTO known_domains(domain) VALUES ('known.example')")
+        except Exception:
+            _remediation_fixture.PostgreSQLIngestConvergenceTests.tearDownClass.__func__(cls)
+            raise
+        finally:
+            connection.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        _remediation_fixture.PostgreSQLIngestConvergenceTests.tearDownClass.__func__(cls)
+
+    @classmethod
+    def connect(cls):
+        return cls.psycopg2.connect(**cls.connection_args)
+
+    def setUp(self):
+        connection = self.connect()
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM known_domains")
+                cursor.execute("DELETE FROM seed_domains")
+                cursor.execute("INSERT INTO seed_domains(domain) VALUES ('org.example')")
+                cursor.execute("INSERT INTO known_domains(domain) VALUES ('known.example')")
+                cursor.execute("INSERT INTO known_domains(domain) VALUES ('nullable.example')")
+                cursor.execute("TRUNCATE capd_results, capd_runs RESTART IDENTITY")
+                cursor.execute("DELETE FROM scan_results")
+                cursor.execute("DELETE FROM domain_technology_observations")
+                cursor.execute("DELETE FROM domain_tech")
+                cursor.execute("DELETE FROM domains")
+                cursor.execute("DELETE FROM scans")
+                cursor.execute("INSERT INTO scans(id,status,completed_at) VALUES (19,'SUCCEEDED',CURRENT_TIMESTAMP),(20,'FAILED',CURRENT_TIMESTAMP)")
+                cursor.execute("""
+                    INSERT INTO domains(id,domain,ownership_status,scannable,validation_source,confidence_reasons)
+                    VALUES
+                      (701,'known.example','CONFIRMED',TRUE,'manual',ARRAY[]::text[]),
+                      (702,'app.org.example','CONFIRMED',TRUE,'discovery',ARRAY[]::text[]),
+                      (703,'candidate.other','CONFIRMED',TRUE,'discovery',ARRAY[]::text[]),
+                      (704,'offline.org.example','CONFIRMED',FALSE,'discovery',ARRAY[]::text[]),
+                      (705,'rejected.org.example','CONFIRMED',TRUE,'discovery',ARRAY['manually rejected']),
+                      (706,'fixed.known.example','CONFIRMED',TRUE,'manual',ARRAY[]::text[]),
+                      (707,'external.org.example','EXTERNAL',TRUE,'discovery',ARRAY[]::text[]),
+                      (708,'nullable.example',NULL,TRUE,'manual',ARRAY[]::text[])
+                """)
+                cursor.execute("INSERT INTO known_domains(domain) VALUES ('fixed.known.example')")
+                cursor.execute("INSERT INTO scan_results(scan_id,domain_id,seed) VALUES (19,701,'known.example'),(19,702,'org.example'),(19,703,'org.example'),(19,704,'org.example'),(19,705,'org.example'),(19,706,'fixed.known.example'),(19,707,'org.example'),(19,708,'nullable.example'),(20,701,'known.example')")
+                cursor.execute("""
+                    INSERT INTO domain_technology_observations(
+                        scan_id,domain_id,technology,version,confidence,evidence_type,
+                        sanitized_evidence,observed_url,detector_version
+                    ) VALUES
+                      (19,701,'php','8.2.34','high','server_header','PHP/8.2.34','https://known.example','fixture'),
+                      (19,702,'php',NULL,'medium','server_header','marker=php','https://app.org.example','fixture'),
+                      (19,703,'php','8.2.34','high','server_header','PHP/8.2.34','https://candidate.other','fixture'),
+                      (19,706,'php','8.2.35','high','x-powered-by_header','PHP/8.2.35','https://fixed.known.example','fixture')
+                """)
+                cursor.execute("INSERT INTO domain_tech(scan_id,domain_id,tech) VALUES (19,701,'php'),(19,702,'php'),(19,703,'php'),(19,706,'php')")
+        connection.close()
+
+    def test_migration_creates_separate_persistence_without_scan_mutation(self):
+        rows = self.fetchall("SELECT id,status FROM scans ORDER BY id")
+        self.assertEqual(rows, [(19, "SUCCEEDED"), (20, "FAILED")])
+        self.assertEqual(self.fetchall("SELECT COUNT(*) FROM capd_runs"), [(0,)])
+        self.assertEqual(self.fetchall("SELECT COUNT(*) FROM capd_results"), [(0,)])
+
+    def test_unknown_ownership_is_not_counted_as_eligible(self):
+        connection = self.connect()
+        try:
+            summary = capd._eligibility_summary(connection.cursor(), 19)
+            self.assertEqual(summary["eligible_targets"], 3)
+            self.assertEqual(summary["skipped_by_reason"]["OWNERSHIP_NOT_CONFIRMED"], 1)
+            self.assertEqual(sum(summary["skipped_by_reason"].values()), summary["excluded_or_ineligible"])
+        finally:
+            connection.close()
+
+    def test_dry_run_is_read_only_and_selection_is_revalidated_on_execution(self):
+        connection = self.connect()
+        try:
+            preview = capd.execute_passive(connection, "CVE-2026-109618", scan_id=19, limit=100, dry_run=True)
+            self.assertEqual(preview["selection"]["eligible_targets"], 3)
+            self.assertEqual(preview["selection"]["selected_targets"], 3)
+            self.assertEqual(preview["network_requests"], 0)
+            self.assertEqual(self.fetchall("SELECT COUNT(*) FROM capd_runs"), [(0,)])
+        finally:
+            connection.close()
+        connection = self.connect()
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE domains SET scannable=FALSE WHERE id=702")
+        connection.close()
+        connection = self.connect()
+        try:
+            result = capd.execute_passive(connection, "CVE-2026-109618", scan_id=19, limit=100)
+            self.assertEqual(result["selection"]["selected_targets"], 2)
+            self.assertEqual(result["selection"]["eligible_targets"], 2)
+            self.assertEqual(result["network_requests"], 0)
+        finally:
+            connection.close()
+
+    def test_passive_run_persists_statuses_without_candidate_or_external_leakage(self):
+        connection = self.connect()
+        try:
+            result = capd.execute_passive(connection, "CVE-2026-109618", scan_id=19, limit=100)
+            self.assertEqual(result["status"], "SUCCEEDED")
+            self.assertEqual(result["selection"]["selected_targets"], 3)
+            self.assertEqual(result["counts"]["POTENTIAL_MATCH"], 1)
+            self.assertEqual(result["counts"]["NOT_APPLICABLE"], 1)
+            self.assertEqual(result["counts"]["INSUFFICIENT_EVIDENCE"], 1)
+            results = capd.list_results(connection, result["run_id"], limit=20)
+            self.assertEqual(results["total"], 3)
+            self.assertEqual({item["asset_class"] for item in results["results"]}, {"KNOWN", "SHADOW"})
+            self.assertNotIn("candidate.other", {item["domain"] for item in results["results"]})
+            self.assertNotIn("external.org.example", {item["domain"] for item in results["results"]})
+            self.assertEqual(capd.get_run(connection, result["run_id"])["status"], "SUCCEEDED")
+            self.assertEqual(capd.list_runs(connection, check_id="CVE-2026-109618")["total"], 1)
+            filtered = capd.list_results(connection, result["run_id"], result_status="POTENTIAL_MATCH")
+            self.assertEqual(filtered["total"], 1)
+            stored = capd.get_run(connection, result["run_id"])
+            self.assertEqual(stored["check"]["check_revision"], "1.0.0")
+            self.assertEqual(stored["check"]["affected_ranges"][0]["fixed"], "8.2.35")
+            second = capd.execute_passive(connection, "CVE-2026-109618", scan_id=19, limit=100)
+            self.assertNotEqual(second["run_id"], result["run_id"])
+            self.assertEqual(capd.list_runs(connection, check_id="CVE-2026-109618")["total"], 2)
+            self.assertEqual(capd.list_results(connection, result["run_id"])["total"], 3)
+            self.assertEqual(capd.list_results(connection, second["run_id"])["total"], 3)
+        finally:
+            connection.close()
+
+    def test_failed_scan_and_invalid_run_ids_are_rejected(self):
+        connection = self.connect()
+        try:
+            with self.assertRaises(capd.CapdError):
+                capd.preview_targets(connection, "CVE-2026-109618", scan_id=20)
+            with self.assertRaises(capd.CapdError):
+                capd.get_run(connection, "not-a-uuid")
+        finally:
+            connection.close()
+
+    def fetchall(self, query, params=()):
+        connection = self.connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(query, params)
+                return cursor.fetchall()
+        finally:
+            connection.close()

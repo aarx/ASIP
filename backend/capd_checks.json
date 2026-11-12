@@ -1,0 +1,72 @@
+{
+  "catalog_schema_version": 1,
+  "checks": [
+    {
+      "check_id": "CVE-2026-109618",
+      "check_revision": "1.0.0",
+      "cve_id": "CVE-2026-109618",
+      "vendor": "PHP",
+      "product": "PHP",
+      "canonical_product": "php",
+      "platform": "PHP runtime",
+      "category": "remote-code-execution",
+      "enabled": true,
+      "version_scheme": "php_semver3",
+      "affected_ranges": [
+        {"branch": "8.2", "introduced": null, "fixed": "8.2.35"},
+        {"branch": "8.3", "introduced": null, "fixed": "8.3.36"},
+        {"branch": "8.4", "introduced": null, "fixed": "8.4.27"},
+        {"branch": "8.5", "introduced": null, "fixed": "8.5.12"}
+      ],
+      "required_evidence": {
+        "technology_labels": ["php"],
+        "structured_sources": ["domain_technology_observations"],
+        "evidence_types": ["server_header", "x-powered-by_header"],
+        "minimum_detection_confidence": "medium"
+      },
+      "verification_method": "PASSIVE_VERSION_RANGE_MATCH",
+      "advisory_reference": "https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w",
+      "source_updated_at": "2026-10-21",
+      "last_reviewed_at": "2026-10-28",
+      "coverage": "partial",
+      "limitations": [
+        "A reported header version does not prove the installed or unpatched runtime.",
+        "Vendor backports, SAPI, configuration, and reachability require independent validation."
+      ]
+    },
+    {
+      "check_id": "CVE-2026-109619",
+      "check_revision": "1.0.0",
+      "cve_id": "CVE-2026-109619",
+      "vendor": "PHP",
+      "product": "PHP",
+      "canonical_product": "php",
+      "platform": "PHP runtime",
+      "category": "remote-code-execution",
+      "enabled": true,
+      "version_scheme": "php_semver3",
+      "affected_ranges": [
+        {"branch": "8.2", "introduced": null, "fixed": "8.2.35"},
+        {"branch": "8.3", "introduced": null, "fixed": "8.3.36"},
+        {"branch": "8.4", "introduced": null, "fixed": "8.4.27"},
+        {"branch": "8.5", "introduced": null, "fixed": "8.5.12"}
+      ],
+      "required_evidence": {
+        "technology_labels": ["php"],
+        "structured_sources": ["domain_technology_observations"],
+        "evidence_types": ["server_header", "x-powered-by_header"],
+        "minimum_detection_confidence": "medium"
+      },
+      "verification_method": "PASSIVE_VERSION_RANGE_MATCH",
+      "advisory_reference": "https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp",
+      "source_updated_at": "2026-10-21",
+      "last_reviewed_at": "2026-10-28",
+      "coverage": "partial",
+      "limitations": [
+        "A reported header version does not prove the installed or unpatched runtime.",
+        "A producer and consumer of stale request-owned state in a persistent worker are required conditions.",
+        "Vendor backports, SAPI, configuration, and reachability require independent validation."
+      ]
+    }
+  ]
+}

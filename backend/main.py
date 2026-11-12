@@ -61,6 +61,15 @@ from http_title_intelligence import (
     classify_title,
     signal_identity as _http_title_signal_identity,
 )
+from capd import (
+    CapdError,
+    get_check as _capd_get_check,
+    get_run as _capd_get_run,
+    list_results as _capd_list_results,
+    list_runs as _capd_list_runs,
+    load_checks as _capd_load_checks,
+    public_check as _capd_public_check,
+)
 
 os.makedirs("logs", exist_ok=True)
 
@@ -74,6 +83,107 @@ logging.basicConfig(
 )
 
 app = FastAPI(title="ShadowRecon Attack Surface Management API")
+
+
+def _capd_http_error(exc):
+    message = str(exc)
+    if "No successful inventory scan" in message:
+        return HTTPException(status_code=404, detail=message)
+    if "Source inventory scan not found" in message:
+        return HTTPException(status_code=404, detail=message)
+    if "must be SUCCEEDED" in message:
+        return HTTPException(status_code=409, detail=message)
+    if "not found or disabled" in message or "not found" in message:
+        return HTTPException(status_code=404, detail=message)
+    return HTTPException(status_code=400, detail=message)
+
+
+def _capd_storage_unavailable(exc):
+    message = str(exc).lower()
+    return "does not exist" in message and (
+        "capd_runs" in message or "capd_results" in message
+    )
+
+
+@app.get("/v2/capd/checks")
+def capd_checks():
+    """List inert versioned CAPD definitions; this endpoint never executes them."""
+    try:
+        schema_version, checks = _capd_load_checks()
+    except CapdError as exc:
+        raise _capd_http_error(exc)
+    return {
+        "catalog_schema_version": schema_version,
+        "count": len(checks),
+        "checks": [_capd_public_check(item) for item in checks.values()],
+        "execution_available_over_http": False,
+    }
+
+
+@app.get("/v2/capd/runs")
+def capd_runs(
+    page: int = 1, limit: int = 50, check_id: str = None,
+    cve_id: str = None, status: str = None,
+):
+    """List persisted local CLI CAPD runs."""
+    conn = get_conn()
+    try:
+        try:
+            return _capd_list_runs(
+                conn, page=page, limit=limit, check_id=check_id,
+                cve_id=cve_id, status=status,
+            )
+        except CapdError as exc:
+            raise _capd_http_error(exc)
+        except Exception as exc:
+            if _capd_storage_unavailable(exc):
+                return JSONResponse(status_code=503, content={
+                    "availability_state": "CAPD_STORAGE_UNAVAILABLE",
+                    "detail": "CAPD persistence migration is not available",
+                })
+            raise
+    finally:
+        conn.close()
+
+
+@app.get("/v2/capd/runs/{run_id}")
+def capd_run_detail(run_id: str):
+    conn = get_conn()
+    try:
+        try:
+            return _capd_get_run(conn, run_id)
+        except CapdError as exc:
+            raise _capd_http_error(exc)
+        except Exception as exc:
+            if _capd_storage_unavailable(exc):
+                return JSONResponse(status_code=503, content={
+                    "availability_state": "CAPD_STORAGE_UNAVAILABLE",
+                    "detail": "CAPD persistence migration is not available",
+                })
+            raise
+    finally:
+        conn.close()
+
+
+@app.get("/v2/capd/runs/{run_id}/results")
+def capd_run_results(run_id: str, page: int = 1, limit: int = 50, result_status: str = None):
+    conn = get_conn()
+    try:
+        try:
+            return _capd_list_results(
+                conn, run_id, page=page, limit=limit, result_status=result_status
+            )
+        except CapdError as exc:
+            raise _capd_http_error(exc)
+        except Exception as exc:
+            if _capd_storage_unavailable(exc):
+                return JSONResponse(status_code=503, content={
+                    "availability_state": "CAPD_STORAGE_UNAVAILABLE",
+                    "detail": "CAPD persistence migration is not available",
+                })
+            raise
+    finally:
+        conn.close()
 
 
 def _redirect_evidence_payload(evidence, legacy_url=None, legacy_status=None):
