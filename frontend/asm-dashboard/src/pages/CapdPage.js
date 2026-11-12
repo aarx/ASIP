@@ -120,12 +120,12 @@ function Evidence({ evidence }) {
   </dl></details>;
 }
 
-function ResultsTable({ results, query, total, page, onPage }) {
+function ResultsTable({ results, query, run, total, page, onPage }) {
   return <>
     <div className="capd-table-wrap"><table className="capd-table capd-results-table">
       <thead><tr><th>Asset</th><th>Observed product / version</th><th>Assessment result</th><th>Confidence</th><th>Evidence</th></tr></thead>
       <tbody>{results.map((item) => <tr key={item.result_id}>
-        <td data-label="Asset"><AssetLink domain={item.domain} returnTo="capd" returnQuery={query.toString()} /> <span className="capd-secondary">{item.asset_class || "Class unavailable"}</span></td>
+        <td data-label="Asset"><AssetLink domain={item.domain} returnTo="capd" returnQuery={query.toString()} /> <span className="capd-secondary">{item.asset_class || "Class unavailable"}</span><span className="capd-secondary">{run?.cve_id || run?.check_id || "Check unavailable"} · revision {run?.check_revision || "not recorded"} · {run?.source_scan_id ? `Scan #${run.source_scan_id}` : "source scan unavailable"}</span></td>
         <td data-label="Product / version">{item.product || "Product not established"}<span className="capd-secondary">{item.version || "Version unknown"}</span></td>
         <td data-label="Assessment result"><StatusBadge value={human(item.result_status)} /><span className="capd-secondary">{human(item.candidate_classification)}</span></td>
         <td data-label="Confidence">Detection: {human(item.detection_confidence)}<span className="capd-secondary">Match: {human(item.match_confidence)}</span></td>
@@ -224,7 +224,7 @@ export default function CapdPage({ query = "" }) {
           </Panel>}
           {resultsError ? <Failure error={resultsError} retry={retry} /> : resultsData === null ? <Loading /> : <Panel title="Assessment results" subtitle={`${potentialCount} potential match${potentialCount === 1 ? "" : "es"} on this returned page; ${resultsData.total} total matching results. A passive match requires independent validation.`} className="capd-panel">
             <div className="capd-result-toolbar"><label><span>Result view</span><select aria-label="Assessment result filter" value={resultStatus} onChange={statusChange}><option value="">All assessment results</option><option value="POTENTIAL_MATCH">Potential hosts only</option>{RESULT_STATUSES.filter((status) => status !== "POTENTIAL_MATCH").map((status) => <option value={status} key={status}>{human(status)}</option>)}</select></label><span>{resultsData.total} matching results</span></div>
-            <ResultsTable results={tableResults} query={params} total={resultsData.total || 0} page={resultsData.page || resultPage} onPage={(page) => { window.location.hash = pageHref(params, "result_page", page); }} />
+            <ResultsTable results={tableResults} query={params} run={resultsData.run} total={resultsData.total || 0} page={resultsData.page || resultPage} onPage={(page) => { window.location.hash = pageHref(params, "result_page", page); }} />
           </Panel>}
         </>}
       </>

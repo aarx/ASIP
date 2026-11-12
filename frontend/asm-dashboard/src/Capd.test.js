@@ -42,10 +42,11 @@ test("shows actual paginated runs and selected run result categories", async () 
   const { rerender } = render(<CapdPage query="check_id=CVE-X" />);
   expect(await screen.findByText("Scan #19")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /run-001/i })).toHaveAttribute("href", "#/capd?check_id=CVE-X&run_id=run-001");
-  getCapdRunResults.mockResolvedValue({ run: { run_id: run.run_id }, page: 1, limit: 20, total: 2, results });
+  getCapdRunResults.mockResolvedValue({ run: { run_id: run.run_id, cve_id: run.cve_id, check_revision: run.check_revision, source_scan_id: run.source_scan_id }, page: 1, limit: 20, total: 2, results });
   rerender(<CapdPage query="check_id=CVE-X&run_id=run-001" />);
   expect(await screen.findByText("potential.example")).toBeInTheDocument();
   expect(screen.getByText("Version unknown")).toBeInTheDocument();
+  expect(screen.getAllByText(/CVE-X · revision 1.2.0 · Scan #19/).length).toBe(2);
   expect(screen.getAllByText("Potential Match").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Insufficient Evidence").length).toBeGreaterThan(0);
   expect(screen.getByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
