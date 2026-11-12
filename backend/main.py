@@ -56,6 +56,11 @@ from security_findings import (
     normalize_security_record as _normalize_security_finding,
     normalized_findings_cte as _security_findings_cte,
 )
+from http_title_intelligence import (
+    HTTP_TITLE_CATEGORIES,
+    classify_title,
+    signal_identity as _http_title_signal_identity,
+)
 
 os.makedirs("logs", exist_ok=True)
 
@@ -2265,6 +2270,262 @@ def security_findings_summary():
         raise
     finally:
         conn.close()
+
+
+HTTP_TITLE_BATCH_SIZE = 500
+
+
+def _http_title_candidate_query():
+    asset_class_sql = reporting_asset_class_sql("d.domain", "d.ownership_status")
+    return f"""
+        SELECT DISTINCT d.id, d.domain, ({asset_class_sql}) AS asset_class,
+               ds.title, ds.http_status, ds.http_observation_status,
+               ds.final_url, s.scan_time
+          FROM domain_states ds
+          JOIN domains d ON d.id = ds.domain_id
+          JOIN scans s ON s.id = ds.scan_id AND s.status = 'SUCCEEDED'
+         WHERE ds.scan_id = %s
+           AND NULLIF(BTRIM(ds.title), '') IS NOT NULL
+           AND EXISTS (
+               SELECT 1 FROM scan_results sr
+                WHERE sr.scan_id = ds.scan_id AND sr.domain_id = ds.domain_id
+           )
+           AND ({asset_class_sql}) IN ('KNOWN', 'SHADOW')
+         ORDER BY d.domain, d.id, ds.final_url, ds.title
+         LIMIT %s OFFSET %s
+    """
+
+
+def _iter_http_title_candidates(cur, scan_id):
+    query = _http_title_candidate_query()
+    offset = 0
+    while True:
+        cur.execute(query, (scan_id, HTTP_TITLE_BATCH_SIZE, offset))
+        rows = cur.fetchall()
+        if not rows:
+            return
+        for row in rows:
+            yield row
+        if len(rows) < HTTP_TITLE_BATCH_SIZE:
+            return
+        offset += HTTP_TITLE_BATCH_SIZE
+
+
+def _http_title_signal(scan_id, row, rule):
+    domain_id, domain, asset_class, title, http_status, observation_status, final_url, scan_time = row
+    rule_id = rule["rule_id"]
+    return {
+        "signal_id": _http_title_signal_identity(
+            scan_id=scan_id, domain_id=domain_id, rule_id=rule_id,
+            service_url=final_url,
+        ),
+        "scan_time": scan_time.isoformat() if scan_time else None,
+        "asset_id": domain_id,
+        "asset_domain": domain,
+        "asset_class": asset_class,
+        "asset_detail_path": f"/v2/assets/{domain}",
+        "title": title,
+        "category": rule["category"],
+        "rule_id": rule_id,
+        "product_label": rule["product_label"],
+        "match_expression": rule["match_expression"],
+        "confidence": rule["confidence"],
+        "classification": rule["signal_classification"],
+        "verification_recommended": rule["verification_required"],
+        "explanation": rule["explanation"],
+        "evidence": {
+            "source_table": "domain_states",
+            "http_status": http_status,
+            "http_observation_status": observation_status,
+            "final_url": final_url,
+            "timestamp_semantics": "scan_time; domain_states has no per-title observation timestamp",
+        },
+    }
+
+
+def _http_title_connection():
+    conn = get_conn()
+    conn.set_session(
+        readonly=True, isolation_level="REPEATABLE READ", autocommit=False,
+    )
+    cur = conn.cursor()
+    cur.execute("SET LOCAL statement_timeout = '10s'")
+    cur.execute("SET LOCAL lock_timeout = '1s'")
+    return conn, cur
+
+
+def _http_title_coverage(cur, scan_id):
+    asset_class_sql = reporting_asset_class_sql("d.domain", "d.ownership_status")
+    members = f"""
+        WITH members AS (
+            SELECT DISTINCT d.id, d.domain, ({asset_class_sql}) AS asset_class,
+                   ds.title, ds.http_observation_status
+              FROM scan_results sr
+              JOIN domains d ON d.id = sr.domain_id
+              LEFT JOIN domain_states ds
+                ON ds.scan_id = sr.scan_id AND ds.domain_id = sr.domain_id
+             WHERE sr.scan_id = %s
+        )
+    """
+    cur.execute(members + """
+        SELECT COUNT(DISTINCT id) FILTER (WHERE asset_class IN ('KNOWN','SHADOW')),
+               COUNT(DISTINCT id) FILTER (
+                   WHERE asset_class IN ('KNOWN','SHADOW')
+                     AND NULLIF(BTRIM(title), '') IS NOT NULL
+               ),
+               COUNT(DISTINCT NULLIF(BTRIM(title), '')) FILTER (
+                   WHERE asset_class IN ('KNOWN','SHADOW')
+               ),
+               COUNT(DISTINCT id) FILTER (
+                   WHERE asset_class IN ('KNOWN','SHADOW')
+                     AND NULLIF(BTRIM(title), '') IS NULL
+               )
+          FROM members
+    """, (scan_id,))
+    total_assets, titled_assets, distinct_titles, titleless_assets = cur.fetchone()
+    cur.execute(members + """
+        SELECT COALESCE(http_observation_status, 'UNKNOWN'), COUNT(DISTINCT id)
+          FROM members
+         WHERE asset_class IN ('KNOWN','SHADOW')
+           AND NULLIF(BTRIM(title), '') IS NULL
+         GROUP BY COALESCE(http_observation_status, 'UNKNOWN')
+         ORDER BY 1
+    """, (scan_id,))
+    titleless_by_state = {state: count for state, count in cur.fetchall()}
+    return {
+        "organizational_assets": total_assets,
+        "assets_with_persisted_titles": titled_assets,
+        "assets_without_nonempty_titles": titleless_assets,
+        "distinct_persisted_titles": distinct_titles,
+        "titleless_assets_by_http_observation_state": titleless_by_state,
+        "collection_completeness": "UNKNOWN",
+        "limitations": [
+            "A missing title is not evidence that an asset was assessed and had no interface.",
+            "Title evidence is limited to the latest successful scan and persisted domain_states rows.",
+            "The source stores scan_time but no per-title observation timestamp.",
+        ],
+    }
+
+
+@app.get("/v2/http-title-intelligence")
+def http_title_intelligence(page: int = 1, limit: int = 50, category: str = None):
+    """List current-scan title signals, not vulnerability findings."""
+    if page < 1 or limit < 1:
+        raise HTTPException(status_code=400, detail="page and limit must be positive")
+    limit = min(limit, 200)
+    category_value = category.strip().upper() if category else None
+    if category_value is not None and category_value not in HTTP_TITLE_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Invalid HTTP title category")
+    conn = None
+    try:
+        conn, cur = _http_title_connection()
+        scan_id = get_latest_authoritative_scan_id(cur)
+        if scan_id is None:
+            return {
+                "scan_id": None, "availability_state": "UNAVAILABLE",
+                "page": page, "limit": limit, "total": 0, "signals": [],
+                "limitations": ["No successful authoritative scan is available."],
+            }
+        total = 0
+        offset = (page - 1) * limit
+        signals = []
+        seen_signal_ids = set()
+        for row in _iter_http_title_candidates(cur, scan_id):
+            for rule in classify_title(row[3]):
+                if category_value and rule["category"] != category_value:
+                    continue
+                signal_id = _http_title_signal_identity(
+                    scan_id=scan_id, domain_id=row[0], rule_id=rule["rule_id"],
+                    service_url=row[6],
+                )
+                if signal_id in seen_signal_ids:
+                    continue
+                seen_signal_ids.add(signal_id)
+                if offset <= total < offset + limit:
+                    signals.append(_http_title_signal(scan_id, row, rule))
+                total += 1
+        return {
+            "scan_id": scan_id, "availability_state": "AVAILABLE",
+            "page": page, "limit": limit, "total": total,
+            "returned": len(signals), "category": category_value,
+            "signals": signals,
+            "limitations": [
+                "Title matches are exposure or informational signals, not confirmed vulnerabilities.",
+                "Only titles persisted for current scan members with effective KNOWN/SHADOW classification are included.",
+                "Multiple rule matches may produce multiple signals for one asset.",
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.get("/v2/http-title-intelligence/summary")
+def http_title_intelligence_summary():
+    conn = None
+    try:
+        conn, cur = _http_title_connection()
+        scan_id = get_latest_authoritative_scan_id(cur)
+        if scan_id is None:
+            return {
+                "scan_id": None, "availability_state": "UNAVAILABLE",
+                "assets_with_persisted_titles": 0,
+                "distinct_persisted_titles": 0,
+                "distinct_assets_with_title_signals": 0,
+                "total_signals": 0,
+                "counts_by_category": {category: {"signals": 0, "distinct_assets": 0}
+                                        for category in sorted(HTTP_TITLE_CATEGORIES)},
+                "collection_completeness": "UNKNOWN",
+            }
+        coverage = _http_title_coverage(cur, scan_id)
+        counts = {category: {"signals": 0, "distinct_assets": set()}
+                  for category in HTTP_TITLE_CATEGORIES}
+        signal_assets = set()
+        seen_signal_ids = set()
+        total_signals = 0
+        for row in _iter_http_title_candidates(cur, scan_id):
+            for rule in classify_title(row[3]):
+                signal_id = _http_title_signal_identity(
+                    scan_id=scan_id, domain_id=row[0], rule_id=rule["rule_id"],
+                    service_url=row[6],
+                )
+                if signal_id in seen_signal_ids:
+                    continue
+                seen_signal_ids.add(signal_id)
+                bucket = counts[rule["category"]]
+                bucket["signals"] += 1
+                bucket["distinct_assets"].add(row[0])
+                signal_assets.add(row[0])
+                total_signals += 1
+        return {
+            "scan_id": scan_id,
+            "availability_state": "AVAILABLE",
+            "assets_with_persisted_titles": coverage["assets_with_persisted_titles"],
+            "distinct_persisted_titles": coverage["distinct_persisted_titles"],
+            "distinct_assets_with_title_signals": len(signal_assets),
+            "total_signals": total_signals,
+            "counts_by_category": {
+                category: {
+                    "signals": bucket["signals"],
+                    "distinct_assets": len(bucket["distinct_assets"]),
+                }
+                for category, bucket in sorted(counts.items())
+            },
+            "coverage": coverage,
+        }
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
     
 @app.get("/shadow-summary")
 def shadow_summary():
