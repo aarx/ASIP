@@ -31,7 +31,13 @@ const NAV_GROUPS = [
     key: "scans",
     symbol: "SC",
     label: "Scans",
-    items: [["scans", "SC", "Scan Centre"], ["adhoc", "AC", "Adhoc Checks", "adhoc/php-rce"]],
+    items: [["scans", "SC", "Scan Centre"]],
+  },
+  {
+    key: "capd",
+    symbol: "CV",
+    label: "CAPD",
+    items: [["capd", "CV", "CVE Checks"], ["adhoc", "AC", "Adhoc Checks", "adhoc/php-rce"]],
   },
 ];
 

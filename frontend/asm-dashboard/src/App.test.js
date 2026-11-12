@@ -167,17 +167,18 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByRole("link", { name: "Needs Attention" })).toHaveAttribute("href", "#/risk/needs-attention");
   expect(screen.getByRole("link", { name: "Brand Exposure" })).toHaveAttribute("href", "#/brand");
   expect(screen.getByRole("link", { name: "Scan Centre" })).toHaveAttribute("href", "#/scans");
+  expect(screen.getByRole("link", { name: "CVE Checks" })).toHaveAttribute("href", "#/capd");
   expect(screen.getByRole("link", { name: "Adhoc Checks" })).toHaveAttribute("href", "#/adhoc/php-rce");
   expect(screen.getByRole("link", { name: "Investigate" })).toHaveAttribute("href", "#/investigate");
   const primaryNavigation = screen.getByLabelText("Primary navigation").querySelector("nav");
   expect([...primaryNavigation.children]
     .filter((item) => item.matches("a, details"))
     .map((item) => item.querySelector(".nav-label").textContent.trim()))
-    .toEqual(["Overview", "Assets", "Risk & Exposure", "Scans", "Investigate"]);
+    .toEqual(["Overview", "Assets", "Risk & Exposure", "Scans", "CAPD", "Investigate"]);
   expect(screen.queryByText("Asset Discovery")).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "Dashboard" })).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "Risk Distribution" })).not.toBeInTheDocument();
-  expect(document.querySelectorAll(".nav-group")).toHaveLength(3);
+  expect(document.querySelectorAll(".nav-group")).toHaveLength(4);
   const riskGroup = [...document.querySelectorAll(".nav-group")].find((group) => group.querySelector(".nav-group-summary")?.textContent.includes("Risk & Exposure"));
   expect(riskGroup).toHaveAttribute("open");
   const riskSummary = riskGroup.querySelector(".nav-group-summary");

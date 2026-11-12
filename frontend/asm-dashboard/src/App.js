@@ -13,6 +13,7 @@ import ChangeIntelligencePage from "./pages/ChangeIntelligencePage";
 import AdhocChecksPage from "./pages/AdhocChecksPage";
 import DnsSecurityPage from "./pages/DnsSecurityPage";
 import SecurityFindingsPage from "./pages/SecurityFindingsPage";
+import CapdPage from "./pages/CapdPage";
 import "./App.css";
 
 const ROUTES = {
@@ -28,6 +29,7 @@ const ROUTES = {
   investigate: ["Investigate", "Analyst workspace", "Move from deterministic evidence to focused investigation."],
   changes: ["Change Intelligence", "Successful-scan comparison", "Inspect exact membership changes between authoritative scans."],
   adhoc: ["Adhoc Checks", "Targeted review", "Review vulnerability-specific intelligence without active scanning."],
+  capd: ["CAPD · CVE Checks", "On-demand assessment history", "Browse passive, inventory-based CVE assessments. Checks are run by an operator from the CLI."],
 };
 
 function locationFromHash() {
@@ -88,6 +90,7 @@ function App() {
   if (route === "investigate") page = <InvestigationPage query={query} />;
   if (route === "changes") page = <ChangeIntelligencePage query={query} />;
   if (route === "adhoc") page = <AdhocChecksPage />;
+  if (route === "capd") page = <CapdPage query={query} />;
 
   return (
     <AppShell activeRoute={route} routeMeta={routeMeta}>

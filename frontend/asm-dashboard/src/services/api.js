@@ -90,6 +90,26 @@ export const getV2AdhocCampaigns = async (params) => {
   return res.data;
 };
 
+export const getCapdChecks = async () => {
+  const res = await axios.get(`${API_URL}/v2/capd/checks`);
+  return res.data;
+};
+
+export const getCapdRuns = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/capd/runs`, { params });
+  return res.data;
+};
+
+export const getCapdRun = async (runId) => {
+  const res = await axios.get(`${API_URL}/v2/capd/runs/${encodeURIComponent(runId)}`);
+  return res.data;
+};
+
+export const getCapdRunResults = async (runId, params) => {
+  const res = await axios.get(`${API_URL}/v2/capd/runs/${encodeURIComponent(runId)}/results`, { params });
+  return res.data;
+};
+
 export const exportV2AdhocCampaign = async (campaignId) => axios.get(
   `${API_URL}/v2/adhoc/campaigns/${encodeURIComponent(campaignId)}/export`,
   { responseType: "blob" },
