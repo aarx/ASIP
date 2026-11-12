@@ -14,6 +14,7 @@ from capd import (
     list_results,
     load_checks,
     preview_targets,
+    preview_product_targets,
     public_check,
 )
 from db import get_conn
@@ -29,7 +30,9 @@ def build_parser():
     checks = commands.add_parser("checks", help="inspect inert local check definitions")
     checks.add_argument("action", choices=("list",))
     targets = commands.add_parser("targets", help="preview eligible inventory assets")
-    targets.add_argument("--check", required=True)
+    target_selector = targets.add_mutually_exclusive_group(required=True)
+    target_selector.add_argument("--check")
+    target_selector.add_argument("--product", choices=("apache",))
     targets.add_argument("--scan-id", type=int)
     targets.add_argument("--limit", type=int, default=MAX_TARGETS)
     run = commands.add_parser("run", help="execute a passive stored-evidence assessment")
@@ -61,6 +64,13 @@ def main(argv=None):
             return 0
         if args.command == "run" and args.mode != "passive":
             raise CapdError("Active CAPD execution is not implemented")
+        if args.command == "targets" and args.product:
+            conn = get_conn()
+            try:
+                _json(preview_product_targets(conn, args.product, scan_id=args.scan_id, limit=args.limit))
+                return 0
+            finally:
+                conn.close()
         if args.command in {"targets", "run"}:
             get_check(args.check, include_disabled=False)
         conn = get_conn()

@@ -14,10 +14,26 @@ sys.path.insert(0, str(BACKEND / "tests"))
 
 import capd  # noqa: E402
 from capd_cli import main as capd_cli_main  # noqa: E402
+from apache_version_evidence import parse_apache_server_header  # noqa: E402
 _remediation_fixture = importlib.import_module("test_remediation_package_2d1c")
 
 
 class CapdDefinitionTests(unittest.TestCase):
+    def test_apache_header_parser_requires_specific_product_evidence(self):
+        versioned = parse_apache_server_header("Apache/2.4.58 (Unix)")
+        self.assertEqual(versioned["outcome"], "VERSION_IDENTIFIED")
+        self.assertEqual(versioned["version"], "2.4.58")
+        self.assertEqual(parse_apache_server_header("Apache")["outcome"],
+                         "PRODUCT_IDENTIFIED_VERSION_UNKNOWN")
+        self.assertEqual(parse_apache_server_header("Apache-Coyote/1.1")["outcome"],
+                         "PRODUCT_NOT_CONFIRMED")
+        self.assertEqual(parse_apache_server_header("nginx/1.25.0")["outcome"],
+                         "PRODUCT_NOT_CONFIRMED")
+        self.assertNotIn("secret-value", parse_apache_server_header(
+            "nginx/1.25.0 token=secret-value")["evidence"])
+        self.assertEqual(parse_apache_server_header(None)["outcome"],
+                         "INSUFFICIENT_EVIDENCE")
+
     def test_versioned_php_checks_reconcile_with_existing_advisory_catalog(self):
         schema, checks = capd.load_checks()
         self.assertEqual(schema, 1)
@@ -163,6 +179,7 @@ class CapdPostgreSQLTests(unittest.TestCase):
                             excluded_domains text[] DEFAULT ARRAY[]::text[]
                         )
                     """)
+                    cursor.execute("ALTER TABLE domain_ports ADD COLUMN service text")
                     cursor.execute(
                         (REPOSITORY / "backend/migrations/015_add_capd_runs.sql")
                         .read_text(encoding="utf-8")
@@ -267,6 +284,56 @@ class CapdPostgreSQLTests(unittest.TestCase):
             self.assertEqual(preview["relevance"]["service_candidate_assets"], 0)
             self.assertEqual(preview["relevance"]["potential_cve_match_assets"], 0)
             self.assertEqual(preview["relevance"]["assets_without_relevant_product_or_service_evidence"], 4)
+        finally:
+            connection.close()
+
+    def test_apache_product_preview_separates_versioned_unknown_and_service_only(self):
+        connection = self.connect()
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO domain_technology_observations(
+                        scan_id,domain_id,technology,version,confidence,evidence_type,
+                        sanitized_evidence,observed_url,detector_version
+                    ) VALUES
+                      (19,701,'apache','2.4.58','high','server_header','apache/2.4.58','https://known.example','fixture'),
+                      (19,702,'apache',NULL,'medium','server_header','marker=apache','https://app.org.example','fixture'),
+                      (19,703,'apache','2.4.58','high','server_header','apache/2.4.58','https://candidate.other','fixture'),
+                      (19,707,'apache','2.4.58','high','server_header','apache/2.4.58','https://external.org.example','fixture')
+                """)
+                cursor.execute("INSERT INTO domain_ports(domain_id,scan_id,port,service) VALUES (706,19,8080,'httpd'),(704,19,443,'httpd'),(709,19,443,'https')")
+        connection.close()
+        connection = self.connect()
+        try:
+            preview = capd.preview_product_targets(connection, "apache", scan_id=19)
+            populations = preview["populations"]
+            counts = populations["selected_candidate_counts"]
+            self.assertEqual(populations["eligible_inventory_total"], 4)
+            self.assertEqual(populations["selected_inventory_total"], 4)
+            self.assertEqual(populations["candidate_counts_scope"], "SELECTED_INVENTORY")
+            self.assertTrue(populations["candidate_counts_complete"])
+            self.assertFalse(populations["truncated"])
+            self.assertEqual(counts["product_matched_candidates"], 2)
+            self.assertEqual(counts["version_known_candidates"], 1)
+            self.assertEqual(counts["version_unknown_candidates"], 1)
+            self.assertEqual(counts["service_only_candidates"], 1)
+            self.assertEqual(counts["insufficient_evidence"], 1)
+            self.assertEqual({row["classification"] for row in preview["targets"]},
+                             {"VERSION_KNOWN", "VERSION_UNKNOWN", "SERVICE_ONLY_CANDIDATE"})
+            self.assertFalse(preview["version_verification_preview"]["enabled"])
+            self.assertEqual(preview["version_verification_preview"]["network_requests"], 0)
+            self.assertEqual(preview["version_verification_preview"]["database_writes"], 0)
+            self.assertNotIn("candidate.other", {row["domain"] for row in preview["targets"]})
+            self.assertNotIn("external.org.example", {row["domain"] for row in preview["targets"]})
+            connection.close()
+            connection = self.connect()
+            limited = capd.preview_product_targets(connection, "apache", scan_id=19, limit=1)
+            self.assertEqual(limited["populations"]["eligible_inventory_total"], 4)
+            self.assertEqual(limited["populations"]["selected_inventory_total"], 1)
+            self.assertTrue(limited["populations"]["truncated"])
+            self.assertFalse(limited["populations"]["candidate_counts_complete"])
+            self.assertEqual(limited["populations"]["candidate_counts_scope"], "SELECTED_INVENTORY")
+            self.assertEqual(limited["populations"]["selected_candidate_counts"]["product_matched_candidates"], 1)
         finally:
             connection.close()
 

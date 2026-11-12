@@ -5,6 +5,7 @@ import re
 import sys
 
 import requests
+from apache_version_evidence import parse_apache_server_header
 
 from authorization_policy import (
     active_scan_authorization_sql,
@@ -125,19 +126,11 @@ def parse_php_header(value, evidence_type="header"):
 
 
 def parse_apache_header(value, evidence_type="server_header"):
-    value = str(value or "")
-    if re.search(r"\bapache-coyote\b", value, re.IGNORECASE):
+    parsed = parse_apache_server_header(str(value or ""))
+    if parsed["outcome"] not in {"VERSION_IDENTIFIED", "PRODUCT_IDENTIFIED_VERSION_UNKNOWN"}:
         return None
-    if not re.search(r"\bapache\b", value, re.IGNORECASE):
-        return None
-    return (
-        _versioned_header(
-            value,
-            "apache",
-            rf"\bapache/{VERSION_PATTERN}(?=$|[\s(;)])",
-            evidence_type,
-        )
-        or _observation("apache", None, "medium", evidence_type, "marker=apache")
+    return _observation(
+        "apache", parsed["version"], parsed["confidence"], evidence_type, parsed["evidence"]
     )
 
 

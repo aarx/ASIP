@@ -15,6 +15,7 @@ import uuid
 from urllib.parse import urlparse
 
 from php_cve_intelligence import PHP_CVE_ADVISORIES, evaluate_php_cve_applicability
+from apache_version_evidence import parse_apache_server_header
 from ownership import reporting_asset_class_sql, trusted_boundary_sql
 from authorization_policy import active_scope_exclusion_sql
 
@@ -269,6 +270,94 @@ def preview_targets(conn, check_id, *, scan_id=None, limit=MAX_TARGETS):
         "target_limit": limit, "selected_count": len(targets),
         "truncated": summary["eligible_targets"] > len(targets),
         "relevance": relevance, "targets": target_relevance,
+    }
+
+
+def preview_product_targets(conn, product, *, scan_id=None, limit=MAX_TARGETS):
+    """Read-only, service-specific inventory preview; never performs requests."""
+    normalized = str(product or "").strip().lower()
+    if normalized != "apache":
+        raise CapdError("Unsupported CAPD product preview")
+    limit = _bounded_limit(limit)
+    cur = conn.cursor()
+    cur.execute("SET TRANSACTION READ ONLY")
+    cur.execute("SET LOCAL statement_timeout = 10000")
+    cur.execute("SET LOCAL lock_timeout = 1000")
+    scan = _validate_source_scan(cur, scan_id)
+    selection = _eligibility_summary(cur, scan["scan_id"])
+    targets = _select_targets(cur, scan["scan_id"], limit)
+    product_definition = {
+        "required_evidence": {
+            "technology_labels": ["apache"],
+            "structured_sources": ["domain_technology_observations"],
+            "evidence_types": ["server_header"],
+            "minimum_detection_confidence": "medium",
+        },
+        "service_aliases": ["apache", "httpd", "apache-httpd"],
+    }
+    evidence = _load_evidence(cur, scan["scan_id"], targets, product_definition)
+    rows = []
+    candidate_counts = {"product_matched_candidates": 0, "version_known_candidates": 0,
+                        "version_unknown_candidates": 0, "service_only_candidates": 0,
+                        "insufficient_evidence": 0}
+    for target in targets:
+        records = evidence.get(target["domain_id"], [])
+        products = [row for row in records if str(row.get("technology") or "").lower() == "apache"]
+        parsed_versions = []
+        for record in products:
+            if record.get("source") != "domain_technology_observations" or record.get("evidence_type") != "server_header":
+                continue
+            parsed = parse_apache_server_header(str(record.get("evidence") or ""))
+            if (parsed["outcome"] == "VERSION_IDENTIFIED"
+                    and parsed["version"] == record.get("version")
+                    and record.get("confidence") == "high"):
+                parsed_versions.append((record, parsed))
+        services = [row for row in records if row.get("source") == "domain_ports"]
+        if products:
+            candidate_counts["product_matched_candidates"] += 1
+            if parsed_versions:
+                candidate_counts["version_known_candidates"] += 1
+                classification = "VERSION_KNOWN"
+                outcome = "VERSION_IDENTIFIED"
+                version = parsed_versions[0][1]["version"]
+                selected_evidence = [item[0] for item in parsed_versions]
+            else:
+                candidate_counts["version_unknown_candidates"] += 1
+                classification = "VERSION_UNKNOWN"
+                outcome = "PRODUCT_IDENTIFIED_VERSION_UNKNOWN"
+                version = None
+                selected_evidence = products
+        elif services:
+            candidate_counts["service_only_candidates"] += 1
+            classification = "SERVICE_ONLY_CANDIDATE"
+            outcome = "INSUFFICIENT_EVIDENCE"
+            version = None
+            selected_evidence = services
+        else:
+            candidate_counts["insufficient_evidence"] += 1
+            continue
+        rows.append({**target, "classification": classification, "outcome": outcome,
+                     "version": version, "evidence": selected_evidence})
+    truncated = selection["eligible_targets"] > len(targets)
+    populations = {
+        "eligible_inventory_total": selection["eligible_targets"],
+        "selected_inventory_total": len(targets),
+        "candidate_counts_scope": "SELECTED_INVENTORY",
+        "candidate_counts_complete": not truncated,
+        "truncated": truncated,
+        "selected_candidate_counts": candidate_counts,
+        "excluded_targets": selection["skipped_by_reason"],
+    }
+    return {
+        "product": "Apache HTTP Server", "source_scan": scan, "selection": selection,
+        "populations": populations,
+        "version_verification_preview": {
+            "enabled": False, "network_requests": 0, "database_writes": 0,
+            "request": "One bounded GET to the already-observed approved origin; redirects disabled.",
+            "authorization_required": "ADHOC_CHECK plus current per-target authorization revalidation.",
+            "targets": "Apache product-matched candidates only; generic HTTP services are excluded.",
+        },
+        "targets": rows,
     }
 
 
