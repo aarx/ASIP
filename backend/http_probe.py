@@ -5,6 +5,7 @@ import re
 import socket
 import ssl
 from urllib.parse import urljoin, urlsplit, urlunsplit
+from ownership import normalize_hostname
 
 
 TIMEOUT = 8
@@ -72,8 +73,13 @@ def _resolve_allowed_addresses(domain, port, expected_ip=None):
         literal = ipaddress.ip_address(domain.rstrip("."))
         addresses = [str(literal)]
     except ValueError:
+        normalized_domain = normalize_hostname(domain, require_fqdn=True)
+        if normalized_domain is None:
+            return []
         try:
-            infos = socket.getaddrinfo(domain, port, type=socket.SOCK_STREAM)
+            infos = socket.getaddrinfo(
+                normalized_domain, port, type=socket.SOCK_STREAM
+            )
         except (OSError, socket.gaierror):
             return []
         addresses = []

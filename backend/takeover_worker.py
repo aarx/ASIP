@@ -3,13 +3,17 @@ import sys
 import dns.resolver
 from db import get_conn, require_running_scan
 from authorization_policy import passive_dns_discovery_sql
+from ownership import normalize_hostname
 
 scan_id = int(sys.argv[1])
 
 
 def get_live_cname(domain):
+    normalized_domain = normalize_hostname(domain, require_fqdn=True)
+    if normalized_domain is None:
+        return None
     try:
-        answers = dns.resolver.resolve(domain, "CNAME")
+        answers = dns.resolver.resolve(normalized_domain, "CNAME")
         for r in answers:
             return r.to_text().rstrip(".")
     except:

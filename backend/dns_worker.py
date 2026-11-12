@@ -3,6 +3,7 @@ import socket
 import sys
 from db import get_conn, require_running_scan
 from authorization_policy import passive_dns_discovery_sql
+from ownership import normalize_hostname
 
 scan_id = int(sys.argv[1])
 
@@ -37,6 +38,10 @@ def passive_dns_target_allowed(cur, target_scan_id, domain_id):
 
 def resolve_dns(domain, before_query=None):
     records = []
+    normalized_domain = normalize_hostname(domain, require_fqdn=True)
+    if normalized_domain is None:
+        return records
+    domain = normalized_domain
 
     try:
         resolver = dns.resolver.Resolver()
@@ -133,7 +138,14 @@ def main():
 
     processed = 0
     inserted = 0
+    invalid_hostname_skips = 0
     for domain_id, domain, has_ip in rows:
+
+        normalized_domain = normalize_hostname(domain, require_fqdn=True)
+        if normalized_domain is None:
+            invalid_hostname_skips += 1
+            continue
+        domain = normalized_domain
 
         if not passive_dns_target_allowed(cur, scan_id, domain_id):
             print(f"Skipping DNS target outside permitted discovery scope: {domain}")
@@ -225,6 +237,11 @@ def main():
     print("\n✅ DNS enrichment complete")
     print(f"Processed domains: {processed}")
     print(f"Inserted records: {inserted}")
+    if invalid_hostname_skips:
+        print(
+            "Skipped invalid DNS hostnames before resolver calls: "
+            f"{invalid_hostname_skips}"
+        )
 
 
 if __name__ == "__main__":

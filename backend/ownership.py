@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import idna
 import re
 
 
@@ -28,14 +29,38 @@ class TrustedDomainBoundary:
     known_domains: frozenset
 
 
-def normalize_hostname(value):
-    """Canonicalize a DNS hostname, returning None for malformed input."""
+def normalize_hostname(value, *, allow_wildcard=False, require_fqdn=False):
+    """Return a canonical IDNA A-label hostname or None for invalid input.
+
+    Wildcard certificate names are accepted only when the caller explicitly
+    opts in; the wildcard is removed before validating the DNS name.
+    """
     if not isinstance(value, str):
         return None
-    hostname = value.strip().lower()
+    if not value or any(character.isspace() for character in value):
+        return None
+    hostname = value
+    if hostname.startswith("*."):
+        if not allow_wildcard:
+            return None
+        hostname = hostname[2:]
+    elif "*" in hostname:
+        return None
     if hostname.endswith("."):
         hostname = hostname[:-1]
+    if not hostname:
+        return None
+    try:
+        # UTS #46 maps valid Unicode domain labels to their stable A-labels;
+        # STD3 rules reject underscores and other non-hostname punctuation.
+        hostname = idna.encode(
+            hostname, uts46=True, std3_rules=True, transitional=False
+        ).decode("ascii").lower()
+    except (idna.IDNAError, UnicodeError):
+        return None
     if len(hostname) > 253 or not _DNS_NAME_RE.fullmatch(hostname):
+        return None
+    if require_fqdn and "." not in hostname:
         return None
     return hostname
 

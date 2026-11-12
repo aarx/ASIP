@@ -16,6 +16,7 @@ import dns.rcode
 import dns.resolver
 
 from authorization_policy import default_operation_enabled, recheck_active_authorization
+from ownership import normalize_hostname
 
 
 DNS_SECURITY_OPERATION = "DNS_SECURITY"
@@ -58,36 +59,23 @@ def normalize_dns_name(value, *, allow_dmarc=False):
     """Return a bounded lowercase IDNA name; allow only the DMARC owner label."""
     if not isinstance(value, str):
         raise ValueError("DNS name must be text")
-    raw = value.strip()
-    if raw.endswith(".."):
-        raise ValueError("invalid DNS name")
-    if raw.endswith("."):
-        raw = raw[:-1]
-    if not raw or len(raw) > 253 or "@" in raw or "/" in raw or "\\" in raw:
+    if not value or len(value) > 255 or "@" in value or "/" in value or "\\" in value:
         raise ValueError("invalid DNS name")
     try:
-        ipaddress.ip_address(raw)
+        ipaddress.ip_address(value.rstrip("."))
     except ValueError:
         pass
     else:
         raise ValueError("DNS query name cannot be an IP literal")
-    labels = raw.split(".")
     prefix = ""
-    if allow_dmarc and labels[0].lower() == _DMARC_LABEL:
+    host_value = value
+    if allow_dmarc and value.lower().startswith(_DMARC_LABEL + "."):
         prefix = _DMARC_LABEL + "."
-        labels = labels[1:]
-    if not labels:
-        raise ValueError("invalid DNS name")
-    try:
-        normalized = ".".join(label.encode("idna").decode("ascii").lower() for label in labels)
-    except UnicodeError as exc:
-        raise ValueError("invalid IDNA name") from exc
-    if len(normalized) > 253 or any(
-        not label or len(label) > 63 or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
-        for label in normalized.split(".")
-    ):
-        raise ValueError("invalid DNS name")
-    normalized = prefix + normalized
+        host_value = value[len(_DMARC_LABEL) + 1:]
+    normalized_host = normalize_hostname(host_value, require_fqdn=True)
+    if normalized_host is None:
+        raise ValueError("invalid IDNA name")
+    normalized = prefix + normalized_host
     if len(normalized) > 253:
         raise ValueError("DNS name is too long")
     return normalized

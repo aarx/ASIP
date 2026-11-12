@@ -6,6 +6,7 @@ import unittest
 from unittest import mock
 
 from backend.authorization_policy import passive_dns_discovery_sql
+from backend.ownership import normalize_hostname
 
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
@@ -17,18 +18,21 @@ def load_worker():
     fake_db.require_running_scan = mock.Mock()
     fake_policy = types.ModuleType("authorization_policy")
     fake_policy.passive_dns_discovery_sql = passive_dns_discovery_sql
+    fake_ownership = types.ModuleType("ownership")
+    fake_ownership.normalize_hostname = normalize_hostname
     spec = importlib.util.spec_from_file_location(
         f"dns_worker_policy_test_{id(fake_db)}", BACKEND / "dns_worker.py"
     )
     module = importlib.util.module_from_spec(spec)
     prior = {
         key: sys.modules.get(key)
-        for key in ("db", "authorization_policy")
+        for key in ("db", "authorization_policy", "ownership")
     }
     argv = sys.argv[:]
     try:
         sys.modules["db"] = fake_db
         sys.modules["authorization_policy"] = fake_policy
+        sys.modules["ownership"] = fake_ownership
         sys.argv = ["dns_worker.py", "42"]
         spec.loader.exec_module(module)
     finally:

@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import logging
 import os
+import re
 import sys
 from urllib.parse import urlsplit
 from db import get_conn, require_running_scan
@@ -143,9 +144,16 @@ try:
     cur.execute("DELETE FROM domain_states WHERE scan_id = %s", (scan_id,))
     cur.execute("DELETE FROM scan_results WHERE scan_id = %s", (scan_id,))
 
+    rejected_hostname_rows = {}
+
     for _, row in df.iterrows():
 
-        domain = normalize_artifact_text(row.get("Domain", "")).lower()
+        raw_domain_value = row.get("Domain", "")
+        raw_domain = (
+            ""
+            if pd.isna(raw_domain_value)
+            else str(raw_domain_value)
+        )
         seed = normalize_artifact_text(row.get("Seed", ""))
         sources_raw = normalize_artifact_text(row.get("Source", "")).lower()
         sources = [s.strip() for s in sources_raw.split(",") if s.strip()]
@@ -153,13 +161,25 @@ try:
         # pick primary source (first one)
         primary_source = sources[0] if sources else "unknown"
 
-        if not domain:
+        if not raw_domain:
+            continue
+
+        domain = normalize_hostname(raw_domain, require_fqdn=True)
+        if domain is None:
+            safe_source = (
+                primary_source
+                if re.fullmatch(r"[a-zA-Z0-9_.-]{1,32}", primary_source)
+                else "other"
+            )
+            rejected_hostname_rows[safe_source] = (
+                rejected_hostname_rows.get(safe_source, 0) + 1
+            )
             continue
 
         # Trusted roots are the union of seed_domains and known_domains.
         # The seed value remains discovery provenance; it does not grant trust.
-        normalized_domain = normalize_hostname(domain)
-        known = normalized_domain in known_domains if normalized_domain else False
+        normalized_domain = domain
+        known = normalized_domain in known_domains
         ownership_status = ownership_for_discovery(
             domain,
             sources,
@@ -365,6 +385,14 @@ try:
                 """,
                 (domain_id, scan_id, src, seed)
             )
+
+    for source, count in sorted(rejected_hostname_rows.items())[:10]:
+        logging.warning(
+            "Rejected malformed discovery identities during ingestion: "
+            "source=%s count=%d reason=invalid_hostname",
+            source,
+            count,
+        )
 
     conn.commit()
 except Exception:

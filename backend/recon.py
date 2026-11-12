@@ -5,12 +5,14 @@ import socket
 import argparse
 import csv
 import os
+import re
 import signal
 import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from db import get_conn, require_running_scan
 from config import CERTSPOTTER_API_KEY
+from ownership import normalize_hostname
 from recon_artifact import publish_recon_artifact, scan_recon_artifact_path
 
 
@@ -41,6 +43,8 @@ KNOWN_DOMAINS_FILE = "known_domains.csv"
 domain_registry = {}
 source_stats = {}
 source_outcomes = {}
+rejected_discovery = {}
+MAX_REJECTION_SEEDS_PER_SOURCE = 100
 
 SOURCE_OK = "OK"
 SOURCE_ZERO = "ZERO"
@@ -57,18 +61,35 @@ SOURCE_LABELS = {
 }
 
 
-def normalize_domain(d):
-    d = (d or "").strip().lower()
-    d = d.replace("https://","").replace("http://","")
-    d = d.split("/")[0]
-    return d
+def normalize_domain(value, *, allow_wildcard=False):
+    """Use the shared strict hostname and IDNA canonicalization boundary."""
+    return normalize_hostname(
+        value, allow_wildcard=allow_wildcard, require_fqdn=True
+    )
+
+
+def record_rejected_discovery(source, seed, reason="invalid_hostname"):
+    source_name = str(source or "unknown")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", source_name):
+        source_name = "other"
+    entry = rejected_discovery.setdefault(
+        (source_name, reason), {"count": 0, "seeds": set()}
+    )
+    entry["count"] += 1
+    normalized_seed = normalize_hostname(seed)
+    if (
+        normalized_seed
+        and len(entry["seeds"]) < MAX_REJECTION_SEEDS_PER_SOURCE
+    ):
+        entry["seeds"].add(normalized_seed)
 
 
 def add_domain(domain, source, seed):
 
     domain = normalize_domain(domain)
 
-    if not domain or "." not in domain:
+    if not domain:
+        record_rejected_discovery(source, seed)
         return False
 
     source_stats[source] = source_stats.get(source, 0) + 1
@@ -140,6 +161,14 @@ def print_source_summary():
             print(f"{label:<16} {status:<7} {detail}")
         else:
             print(f"{label:<16} {status}")
+
+    if rejected_discovery:
+        print("Rejected hostname candidates:")
+        for (source, reason), entry in sorted(rejected_discovery.items()):
+            print(
+                f"{source:<16} {reason:<24} count={entry['count']} "
+                f"distinct_seed_provenance<={len(entry['seeds'])}"
+            )
 
     warnings = sum(
         entry["status"] in {SOURCE_ZERO, SOURCE_FAILED}
@@ -302,9 +331,13 @@ def crtsh_expand(seed):
 
             for d in name_value.split("\n"):
 
-                d = normalize_domain(
-                    d.lstrip("*.")
-                )
+                if not d:
+                    continue
+
+                d = normalize_domain(d, allow_wildcard=True)
+                if d is None:
+                    record_rejected_discovery("brand_ct", seed)
+                    continue
 
                 if brand in d:
                     candidates.append(d)
@@ -388,9 +421,10 @@ def certspotter_expand(seed):
                 if not isinstance(d, str):
                     raise ValueError("response contained a malformed DNS name")
 
-                d = normalize_domain(
-                    d.lstrip("*.")
-                )
+                d = normalize_domain(d, allow_wildcard=True)
+                if d is None:
+                    record_rejected_discovery("certspotter", seed)
+                    continue
 
                 if brand in d:
                     candidates.append(d)
@@ -417,8 +451,11 @@ def certspotter_expand(seed):
         )
 
 def resolve_ip(domain):
+    normalized = normalize_hostname(domain, require_fqdn=True)
+    if normalized is None:
+        return ""
     try:
-        return socket.gethostbyname(domain)
+        return socket.gethostbyname(normalized)
     except:
         return ""
 
@@ -461,6 +498,7 @@ def load_known():
 def main(seed_file, deep, expand, scan_id):
 
     source_outcomes.clear()
+    rejected_discovery.clear()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     outdir = f"recon_scan_{scan_id}_{timestamp}"
@@ -471,9 +509,14 @@ def main(seed_file, deep, expand, scan_id):
     file_seeds = []
     with open(seed_file) as f:
         for line in f:
-            s = normalize_domain(line)
+            seed_value = line.rstrip("\r\n")
+            if not seed_value:
+                continue
+            s = normalize_domain(seed_value)
             if s:
                 file_seeds.append(s)
+            else:
+                record_rejected_discovery("seed_file", seed_value)
 
     # seeds.txt is the exclusive source of reconnaissance starting domains.
     # Keep its existing normalization and avoid duplicate campaigns.

@@ -210,10 +210,9 @@ def _normalized_san_names(parent_domain, san_observation):
     parent_normalized = normalize_hostname(parent_domain)
     normalized_names = set()
     for raw_san in san_observation:
-        candidate = str(raw_san).strip().lower()
-        if candidate.startswith("*."):
-            candidate = candidate[2:]
-        normalized = normalize_hostname(candidate)
+        normalized = normalize_hostname(
+            str(raw_san), allow_wildcard=True, require_fqdn=True
+        )
         if normalized and normalized != parent_normalized and "." in normalized:
             normalized_names.add(normalized)
     return normalized_names

@@ -1,4 +1,5 @@
 import pandas as pd
+import logging
 from db import get_conn
 from ownership import (
     load_trusted_domains,
@@ -19,6 +20,7 @@ known_domains = {
 }
 
 df = pd.read_csv("latest_scan.csv")
+rejected_identity_rows = 0
 
 # create scan record
 cur.execute(
@@ -30,8 +32,11 @@ scan_id = cur.fetchone()[0]
 
 for _, row in df.iterrows():
 
-    domain = row["Domain"]
+    domain = normalize_hostname(row["Domain"], require_fqdn=True)
     seed = row["Seed"]
+    if domain is None:
+        rejected_identity_rows += 1
+        continue
 
     cur.execute(
         "SELECT id FROM domains WHERE domain=%s",
@@ -69,6 +74,13 @@ for _, row in df.iterrows():
     cur.execute(
         "INSERT INTO scan_results(scan_id, domain_id, seed) VALUES (%s,%s,%s)",
         (scan_id, domain_id, seed)
+    )
+
+if rejected_identity_rows:
+    logging.warning(
+        "Rejected malformed discovery identities during legacy ingestion: "
+        "count=%d reason=invalid_hostname",
+        rejected_identity_rows,
     )
 
 conn.commit()
