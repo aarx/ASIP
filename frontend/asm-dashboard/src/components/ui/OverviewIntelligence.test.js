@@ -20,8 +20,8 @@ jest.mock("recharts", () => {
 });
 
 const growth = [
-  { scan_id: 41, total: 10, live: 8, shadow: 3 },
-  { scan_id: 42, total: 12, live: 9, shadow: 4 },
+  { scan_id: 41, organizational_assets: 10, known_assets: 7, shadow_assets: 3, ip_present_assets: 8, http_responding_assets: 6 },
+  { scan_id: 42, organizational_assets: 12, known_assets: 8, shadow_assets: 4, ip_present_assets: 9, http_responding_assets: 7 },
 ];
 
 test("renders supported aggregate charts with their scope", () => {
@@ -32,8 +32,11 @@ test("renders supported aggregate charts with their scope", () => {
     />
   );
 
-  expect(screen.getByText("Confirmed organizational assets across successful scans")).toBeInTheDocument();
+  expect(screen.getByText("Current effective populations across successful scans · historical classes are reconstructed")).toBeInTheDocument();
   expect(screen.getByTestId("overview-asset-growth-chart")).toHaveClass("overview-chart-canvas");
+  expect(screen.getByTestId("overview-asset-growth-chart")).toHaveAttribute(
+    "aria-label", expect.stringContaining("Organizational Assets, Known Assets, Shadow Assets, IP-Present Assets, HTTP-Responding Assets")
+  );
   expect(screen.getByText("Current authoritative confirmed-organizational scan")).toBeInTheDocument();
   expect(screen.getByTestId("overview-http-status-chart")).toHaveClass("overview-chart-canvas");
   expect(screen.getByTestId("overview-http-status-chart").parentElement).toHaveClass("overview-http-status-chart");
@@ -115,7 +118,7 @@ test("normalizes overlapping naming categories without treating them as additive
   ]);
 });
 
-test("renders naming exposure as non-clickable current-scan signals", () => {
+test("renders naming exposure as clickable inferred hostname signals", () => {
   render(<OverviewIntelligence namingExposure={[
     { keyword: "DEV", count: 20 },
     { keyword: "STAGE", count: 2 },
@@ -124,11 +127,10 @@ test("renders naming exposure as non-clickable current-scan signals", () => {
 
   const panel = document.getElementById("overview-naming-exposure");
   expect(within(panel).getByText("SCAN #16")).toBeInTheDocument();
-  expect(within(panel).getByLabelText("DEV: 20 matching confirmed assets")).toBeInTheDocument();
-  expect(within(panel).getByLabelText("STAGE: 2 matching confirmed assets")).toBeInTheDocument();
-  expect(within(panel).getByLabelText("STAGING: 4 matching confirmed assets")).toBeInTheDocument();
-  expect(within(panel).getByText(/Categories may overlap/i)).toBeInTheDocument();
-  expect(panel.querySelectorAll("a")).toHaveLength(0);
+  expect(within(panel).getByRole("link", { name: "Open DEV matching assets (20)" })).toHaveAttribute("href", "#/assets?exposure_keyword=DEV&limit=25");
+  expect(within(panel).getByRole("link", { name: "Open STAGE matching assets (2)" })).toHaveAttribute("href", "#/assets?exposure_keyword=STAGE&limit=25");
+  expect(within(panel).getByRole("link", { name: "Open STAGING matching assets (4)" })).toHaveAttribute("href", "#/assets?exposure_keyword=STAGING&limit=25");
+  expect(within(panel).getByText(/not a verified environment/i)).toBeInTheDocument();
 });
 
 test("renders naming exposure loading, failure, and empty states", () => {

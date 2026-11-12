@@ -110,6 +110,11 @@ export const getDnsSecurityFindings = async (params) => {
   return res.data;
 };
 
+export const getDnsSecurityHosts = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/dns-security/hosts`, { params });
+  return res.data;
+};
+
 export const getDnsSecurityDomainEvidence = async (domainId, scanId) => {
   const res = await axios.get(`${API_URL}/v2/dns-security/domains/${encodeURIComponent(domainId)}`, { params: { scan_id: scanId } });
   return res.data;

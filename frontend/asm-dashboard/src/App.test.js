@@ -217,7 +217,7 @@ test("renders the permanent shell and authoritative overview", async () => {
     "href", "#/assets?discovery_source=brand_union&asset_class=EXTERNAL&limit=25"
   );
   expect(screen.getByText("Naming exposure")).toBeInTheDocument();
-  expect(screen.getByLabelText("DEV: 2 matching confirmed assets")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open DEV matching assets (2)" })).toBeInTheDocument();
   expect(getNamingAssetExposure).toHaveBeenCalledTimes(1);
   expect(getSeeds).toHaveBeenCalledTimes(1);
 

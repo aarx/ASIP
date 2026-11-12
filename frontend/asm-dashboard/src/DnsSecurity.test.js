@@ -1,11 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
-import { getDnsSecurityDomainEvidence, getDnsSecurityFindings, getDnsSecuritySummary } from "./services/api";
+import { getDnsSecurityHosts, getDnsSecuritySummary } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getDnsSecuritySummary: jest.fn(),
-  getDnsSecurityFindings: jest.fn(),
-  getDnsSecurityDomainEvidence: jest.fn(),
+  getDnsSecurityHosts: jest.fn(),
 }));
 
 const summary = {
@@ -22,29 +21,51 @@ const summary = {
   counts_by_category: {},
 };
 
-const emptyFindings = {
+const emptyHosts = {
   scan_id: 17,
   availability_state: "AVAILABLE",
   page: 1,
   limit: 25,
   total: 0,
-  findings: [],
+  hosts: [],
 };
 
-const finding = {
-  check_id: 101,
+const host = {
   domain_id: 42,
   domain: "mail.example.com",
   asset_class: "KNOWN",
-  category: "spf_configuration",
-  outcome: "INCONCLUSIVE",
-  severity: "UNKNOWN",
-  confidence: "LOW",
-  record_type: "TXT",
-  target: "v=spf1 ?all",
-  evidence: "Basic SPF parsing could not establish a clear result.",
-  remediation: "Review the SPF record.",
-  checked_at: "2026-11-10T12:00:00Z",
+  scan_id: 17,
+  check_count: 2,
+  assessment_state: "ASSESSED",
+  outcome_distribution: { INCONCLUSIVE: 1, CLEAR: 1 },
+  checks: [
+    {
+      check_id: 101,
+      check_key: "spf_configuration",
+      outcome: "INCONCLUSIVE",
+      severity: "UNKNOWN",
+      confidence: "LOW",
+      record_type: "TXT",
+      target: "v=spf1 ?all",
+      evidence: { resolver_outcome: "NXDOMAIN", notes: ["No authoritative answer"] },
+      remediation: "Review the SPF record.",
+      checked_at: "2026-11-10T12:00:00Z",
+      scan_id: 17,
+    },
+    {
+      check_id: 102,
+      check_key: "dmarc_configuration",
+      outcome: "CLEAR",
+      severity: "INFO",
+      confidence: "HIGH",
+      record_type: "TXT",
+      target: "v=DMARC1; p=none",
+      evidence: "Policy is present.",
+      remediation: null,
+      checked_at: "2026-11-10T12:00:01Z",
+      scan_id: 17,
+    },
+  ],
 };
 
 const loadedSummary = {
@@ -53,116 +74,118 @@ const loadedSummary = {
   checked_assets: 2,
   unchecked_assets: 2,
   affected_assets: 1,
-  counts_by_outcome: { INCONCLUSIVE: 1, NOT_CHECKED: 1, POTENTIAL_EXPOSURE: 1 },
+  counts_by_outcome: { INCONCLUSIVE: 1, NOT_CHECKED: 1, WARNING: 1 },
 };
 
 beforeEach(() => {
   window.location.hash = "#/risk/dns-security";
   getDnsSecuritySummary.mockReset();
-  getDnsSecurityFindings.mockReset();
-  getDnsSecurityDomainEvidence.mockReset();
+  getDnsSecurityHosts.mockReset();
 });
 
-test("renders the current scan summary without implying DNS is secure when nothing was assessed", async () => {
+test("renders coverage without implying DNS is secure when nothing was assessed", async () => {
   getDnsSecuritySummary.mockResolvedValue(summary);
-  getDnsSecurityFindings.mockResolvedValue(emptyFindings);
+  getDnsSecurityHosts.mockResolvedValue(emptyHosts);
 
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "DNS Security" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "DNS assessment summary" })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "DNS check results" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "DNS assessments by host" })).toBeInTheDocument();
   expect(screen.getAllByText("Not Assessed")).toHaveLength(3);
   expect(screen.getAllByText("570", { selector: ".dns-summary-metric strong" })).toHaveLength(2);
   expect(screen.getByText("No DNS checks have been executed for this scan.")).toBeInTheDocument();
-  expect(screen.queryByText("No actionable findings recorded for the assessed assets")).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "DNS Security" })).toHaveAttribute("href", "#/risk/dns-security");
-  await waitFor(() => expect(getDnsSecurityFindings).toHaveBeenCalledWith({ scan_id: 17, page: 1, limit: 25 }));
+  await waitFor(() => expect(getDnsSecurityHosts).toHaveBeenCalledWith({ scan_id: 17, page: 1, limit: 25 }));
   expect(getDnsSecuritySummary).toHaveBeenCalledTimes(1);
-  expect(getDnsSecurityFindings).toHaveBeenCalledTimes(1);
+  expect(getDnsSecurityHosts).toHaveBeenCalledTimes(1);
 });
 
-test("shows partial coverage, distinct outcomes, exact filters, and server pagination", async () => {
+test("groups checks by host and paginates distinct hosts", async () => {
   getDnsSecuritySummary.mockResolvedValue(loadedSummary);
-  getDnsSecurityFindings.mockImplementation(({ page, limit, outcome }) => Promise.resolve({
-    ...emptyFindings,
+  getDnsSecurityHosts.mockImplementation(({ page, limit, outcome, asset_class }) => Promise.resolve({
+    ...emptyHosts,
     page,
     limit,
-    total: outcome ? 1 : limit === 50 ? 101 : 51,
-    findings: outcome
-      ? [{ ...finding, outcome: "POTENTIAL_EXPOSURE" }]
+    total: outcome || asset_class ? 1 : limit === 50 ? 101 : 51,
+    hosts: outcome || asset_class
+      ? [{ ...host, outcome_distribution: { WARNING: 1, INCONCLUSIVE: 1 }, check_count: 2 }]
       : page === 2
-        ? [{ ...finding, check_id: 102, domain: "dns.example.com", outcome: "NOT_CHECKED" }]
-        : [finding],
+        ? [{ ...host, domain_id: 43, domain: "dns.example.com", check_count: 1, checks: [] }]
+        : [host],
   }));
 
   render(<App />);
 
   expect(await screen.findByText("Partial assessment coverage")).toBeInTheDocument();
   expect(screen.getByText("2 of 4 eligible assets assessed.")).toBeInTheDocument();
-  expect(screen.getAllByText("INCONCLUSIVE").length).toBeGreaterThan(0);
-  expect(screen.getAllByText("UNKNOWN").length).toBeGreaterThan(0);
-  expect(screen.getByText("Page 1 of 3 · 51 matching")).toBeInTheDocument();
+  expect(screen.getByText("Page 1 of 3 · 51 matching hosts")).toBeInTheDocument();
+  expect(screen.getByText("mail.example.com")).toBeInTheDocument();
+  expect(screen.getAllByText("INCONCLUSIVE").length).toBeGreaterThan(1);
+  expect(screen.getAllByText("CLEAR").length).toBeGreaterThan(1);
 
   fireEvent.change(screen.getByLabelText("Page size"), { target: { value: "50" } });
-  await waitFor(() => expect(getDnsSecurityFindings).toHaveBeenLastCalledWith({ scan_id: 17, page: 1, limit: 50 }));
+  await waitFor(() => expect(getDnsSecurityHosts).toHaveBeenLastCalledWith({ scan_id: 17, page: 1, limit: 50 }));
 
-  const nextButton = screen.getByRole("button", { name: "Next" });
-  fireEvent.click(nextButton);
-  await waitFor(() => expect(getDnsSecurityFindings).toHaveBeenLastCalledWith({ scan_id: 17, page: 2, limit: 50 }));
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await waitFor(() => expect(getDnsSecurityHosts).toHaveBeenLastCalledWith({ scan_id: 17, page: 2, limit: 50 }));
   expect(await screen.findByText("dns.example.com")).toBeInTheDocument();
-  expect(screen.getAllByText("NOT_CHECKED").length).toBeGreaterThan(0);
 
-  fireEvent.change(screen.getByLabelText("Outcome"), { target: { value: "POTENTIAL_EXPOSURE" } });
+  fireEvent.change(screen.getByLabelText("Outcome"), { target: { value: "WARNING" } });
   fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await waitFor(() => expect(getDnsSecurityFindings).toHaveBeenLastCalledWith({ scan_id: 17, page: 1, limit: 50, outcome: "POTENTIAL_EXPOSURE" }));
-  expect(window.location.hash).toContain("outcome=POTENTIAL_EXPOSURE");
+  await waitFor(() => expect(getDnsSecurityHosts).toHaveBeenLastCalledWith({ scan_id: 17, page: 1, limit: 50, outcome: "WARNING" }));
+  expect(window.location.hash).toContain("outcome=WARNING");
 });
 
-test("loads domain evidence only after an accessible finding control is activated", async () => {
+test("expands one host to show every recorded check and nested evidence", async () => {
   getDnsSecuritySummary.mockResolvedValue({ ...summary, eligible_assets: 1, checked_assets: 1, unchecked_assets: 0 });
-  getDnsSecurityFindings.mockResolvedValue({ ...emptyFindings, total: 1, findings: [finding] });
-  getDnsSecurityDomainEvidence.mockResolvedValue({
-    scan_id: 17,
-    domain_id: 42,
-    domain: "mail.example.com",
-    asset_class: "KNOWN",
-    availability_state: "AVAILABLE",
-    execution_state: "SUCCEEDED",
-    checks: [{ ...finding, category: "dmarc_configuration", outcome: "CLEAR", severity: "INFO", confidence: "HIGH", record_type: "TXT", target: "v=DMARC1; p=none" }],
-  });
+  getDnsSecurityHosts.mockResolvedValue({ ...emptyHosts, total: 1, hosts: [host] });
 
   render(<App />);
 
-  const evidenceButton = await screen.findByRole("button", { name: "Show DNS evidence for mail.example.com" });
-  expect(getDnsSecurityDomainEvidence).not.toHaveBeenCalled();
-  expect(evidenceButton).toHaveAttribute("aria-expanded", "false");
+  const expandButton = await screen.findByRole("button", { name: "Expand DNS checks for mail.example.com" });
+  expect(getDnsSecurityHosts).toHaveBeenCalledTimes(1);
+  expect(expandButton).toHaveAttribute("aria-expanded", "false");
 
-  fireEvent.click(evidenceButton);
-  expect(evidenceButton).toHaveAttribute("aria-expanded", "true");
-  await waitFor(() => expect(getDnsSecurityDomainEvidence).toHaveBeenCalledWith(42, 17));
-  expect(screen.getAllByText("DMARC configuration").length).toBeGreaterThan(0);
-  expect(screen.getByText("v=DMARC1; p=none")).toBeInTheDocument();
+  fireEvent.click(expandButton);
+  expect(expandButton).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getAllByText("spf configuration").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("dmarc configuration").length).toBeGreaterThan(0);
+  expect(screen.getByText("resolver outcome")).toBeInTheDocument();
+  expect(screen.getByText("NXDOMAIN")).toBeInTheDocument();
+  expect(screen.getByText("No authoritative answer")).toBeInTheDocument();
+  expect(screen.getByText("Unavailable")).toBeInTheDocument();
+  expect(document.body.textContent).not.toContain("[object Object]");
 
-  fireEvent.click(screen.getByRole("button", { name: "Hide DNS evidence for mail.example.com" }));
-  expect(screen.queryByText("v=DMARC1; p=none")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Show DNS evidence for mail.example.com" }));
-  expect(getDnsSecurityDomainEvidence).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Collapse DNS checks for mail.example.com" }));
+  expect(screen.queryByText("No authoritative answer")).not.toBeInTheDocument();
 });
 
-test("distinguishes filtered empty results", async () => {
-  getDnsSecuritySummary.mockResolvedValue(summary);
-  getDnsSecurityFindings.mockResolvedValue(emptyFindings);
+test("outcome filtering preserves all checks for matching hosts", async () => {
+  getDnsSecuritySummary.mockResolvedValue({ ...summary, eligible_assets: 2, checked_assets: 2, unchecked_assets: 0 });
+  getDnsSecurityHosts.mockResolvedValue({ ...emptyHosts, total: 2, hosts: [
+    { ...host, outcome_distribution: { WARNING: 1, INCONCLUSIVE: 1 } },
+    { ...host, domain_id: 43, domain: "other.example.com", outcome_distribution: { WARNING: 1, CLEAR: 2 }, check_count: 3 },
+  ] });
   window.location.hash = "#/risk/dns-security?outcome=WARNING";
   render(<App />);
 
-  expect(await screen.findByText("No matching results")).toBeInTheDocument();
-  expect(getDnsSecurityFindings).toHaveBeenCalledWith({ scan_id: 17, page: 1, limit: 25, outcome: "WARNING" });
+  expect(await screen.findByText("other.example.com")).toBeInTheDocument();
+  expect(getDnsSecurityHosts).toHaveBeenCalledWith({ scan_id: 17, page: 1, limit: 25, outcome: "WARNING" });
+});
+
+test("distinguishes filtered empty hosts", async () => {
+  getDnsSecuritySummary.mockResolvedValue(summary);
+  getDnsSecurityHosts.mockResolvedValue(emptyHosts);
+  window.location.hash = "#/risk/dns-security?outcome=WARNING";
+  render(<App />);
+
+  expect(await screen.findByText("No matching hosts")).toBeInTheDocument();
+  expect(getDnsSecurityHosts).toHaveBeenCalledWith({ scan_id: 17, page: 1, limit: 25, outcome: "WARNING" });
 });
 
 test("shows a retryable state for summary request failures", async () => {
   getDnsSecuritySummary.mockRejectedValueOnce(new Error("request failed")).mockResolvedValueOnce(summary);
-  getDnsSecurityFindings.mockResolvedValue(emptyFindings);
+  getDnsSecurityHosts.mockResolvedValue(emptyHosts);
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "DNS Security unavailable" })).toBeInTheDocument();

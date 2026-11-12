@@ -297,6 +297,25 @@ test("Asset Explorer preserves its explicit HTTP observation filter", async () =
   expect(screen.getByText("http observation status: NO_RESPONSE")).toBeInTheDocument();
 });
 
+test("Asset Explorer preserves naming exposure drill-down filters and pagination", async () => {
+  window.location.hash = "#/assets?exposure_keyword=DEV&limit=25&page=2";
+  getV2Assets.mockResolvedValue({ ...assetPage, page: 2, count: 32 });
+  render(<App />);
+
+  await screen.findByText("app.example.com");
+  expect(getV2Assets).toHaveBeenCalledWith({
+    page: 2,
+    limit: 25,
+    exposure_keyword: "DEV",
+    sort_by: "domain",
+    sort_dir: "asc",
+  });
+  expect(screen.getByText("exposure keyword: DEV")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open app.example.com" })).toHaveAttribute(
+    "href", "#/assets/app.example.com?exposure_keyword=DEV&limit=25&page=2"
+  );
+});
+
 test("Asset Explorer forwards metric drill-down filters and preserves their active state", async () => {
   window.location.hash = "#/assets?risk_positive=true&has_ip=true&http_live=true&http_status_group=3xx&http_status=302&limit=25";
   getV2Assets.mockResolvedValue(assetPage);

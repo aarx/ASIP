@@ -229,8 +229,12 @@
 .brand-discovery-arrow { color: var(--asip-accent); font-size: 13px !important; }
 .naming-exposure-signals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .naming-exposure-signal { display: grid; gap: 5px; padding: 10px; border: 1px solid rgba(115, 142, 170, .16); border-radius: 5px; }
+.naming-exposure-signal-link { color: inherit; text-decoration: none; transition: border-color .15s ease, background .15s ease; }
+.naming-exposure-signal-link:hover { border-color: rgba(61, 196, 255, .45); background: rgba(61, 196, 255, .05); }
+.naming-exposure-signal-link:focus-visible { outline: 2px solid var(--asip-accent); outline-offset: 2px; }
 .naming-exposure-signal span { color: var(--asip-text-secondary); font-family: var(--asip-font-mono); font-size: 10px; }
 .naming-exposure-signal strong { color: var(--asip-text-primary); font-family: var(--asip-font-mono); font-size: 18px; }
+.naming-exposure-arrow { color: var(--asip-accent); font-size: 13px !important; }
 .naming-exposure-note { margin: 12px 0 0; color: var(--asip-text-muted); font-size: 10px; line-height: 1.45; }
 .dns-security-page { display: grid; gap: 16px; min-width: 0; }
 .dns-summary-panel, .dns-findings-panel { min-width: 0; }
@@ -257,9 +261,22 @@
 .dns-secondary-action:disabled { cursor: not-allowed; opacity: .45; }
 .dns-table-wrap { min-width: 0; }
 .dns-findings-table { min-width: 900px; }
+.dns-host-table { min-width: 760px; }
 .dns-findings-table th, .dns-findings-table td { vertical-align: top; }
+.dns-host-table th, .dns-host-table td { vertical-align: top; }
 .dns-domain-button { padding: 0; border: 0; background: none; color: var(--asip-accent-bright); cursor: pointer; font: inherit; font-family: var(--asip-font-mono); text-align: left; }
 .dns-domain-button:hover { text-decoration: underline; }
+.dns-outcome-summary { display: flex; flex-wrap: wrap; gap: 5px 8px; align-items: center; min-width: 180px; }
+.dns-outcome-count { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
+.dns-outcome-count strong { color: var(--asip-text-primary); font-family: var(--asip-font-mono); font-size: 11px; }
+.dns-check-heading { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 9px 10px; border-bottom: 1px solid rgba(115, 142, 170, .16); color: var(--asip-text-secondary); font-size: 11px; }
+.dns-check-detail { border: 1px solid rgba(115, 142, 170, .16); border-radius: 4px; }
+.dns-check-detail .dns-evidence-grid { padding-top: 10px; }
+.dns-evidence-value-object { display: grid; gap: 4px; margin: 0; }
+.dns-evidence-value-object > div { display: grid; grid-template-columns: minmax(90px, 0.4fr) minmax(0, 1fr); gap: 8px; }
+.dns-evidence-value-object dt { color: var(--asip-text-muted); font-size: 10px; text-transform: capitalize; }
+.dns-evidence-value-object dd { margin: 0; }
+.dns-evidence-value-list { display: grid; gap: 3px; margin: 0; padding-left: 16px; }
 .dns-finding-row-expanded td { background: rgba(61, 196, 255, .04); }
 .dns-finding-row-expanded + tr td { padding: 0; border-top: 0; }
 .dns-evidence-details { padding: 14px; border: 1px solid rgba(61, 196, 255, .18); border-radius: 4px; background: rgba(7, 15, 27, .22); }
@@ -863,6 +880,7 @@
   .brand-discovery-signals { grid-template-columns: 1fr; }
   .dns-risk-coverage-grid { grid-template-columns: 1fr; }
   .dns-summary-metrics, .dns-status-strip, .dns-filter-panel, .dns-evidence-summary, .dns-evidence-grid { grid-template-columns: 1fr; }
+  .dns-evidence-value-object > div { grid-template-columns: 1fr; gap: 2px; }
   .dns-evidence-wide { grid-column: auto; }
   .dns-filter-actions { grid-column: 1 / -1; }
   .dns-pagination { align-items: flex-start; flex-direction: column; gap: 10px; }

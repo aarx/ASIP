@@ -42,6 +42,7 @@ function readFilters(query) {
     http_status: params.get("http_status") || "",
     http_status_group: params.get("http_status_group") || "",
     discovery_source: params.get("discovery_source") || "",
+    exposure_keyword: params.get("exposure_keyword") || "",
   };
 }
 

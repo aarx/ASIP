@@ -83,11 +83,13 @@ function normalizeGrowth(value) {
   return value
     .map((row) => ({
       scan: row?.scan_id,
-      total: asCount(row?.total),
-      live: asCount(row?.live),
-      shadow: asCount(row?.shadow),
+      organizational: asCount(row?.organizational_assets),
+      known: asCount(row?.known_assets),
+      shadow: asCount(row?.shadow_assets),
+      ipPresent: asCount(row?.ip_present_assets),
+      httpResponding: asCount(row?.http_responding_assets),
     }))
-    .filter((row) => row.scan != null && row.total != null && row.live != null && row.shadow != null);
+    .filter((row) => row.scan != null);
 }
 
 function ChartState({ title, copy, error = false }) {
@@ -101,6 +103,13 @@ function ChartState({ title, copy, error = false }) {
 
 export function AssetGrowthPanel({ value, status }) {
   const data = normalizeGrowth(value);
+  const visibleSeries = [
+    ["organizational", "Organizational Assets"],
+    ["known", "Known Assets"],
+    ["shadow", "Shadow Assets"],
+    ["ipPresent", "IP-Present Assets"],
+    ["httpResponding", "HTTP-Responding Assets"],
+  ].filter(([key]) => data.some((row) => row[key] != null));
   let content;
   if (status === "loading") {
     content = <ChartState title="Loading history" copy="Reading successful-scan asset populations." />;
@@ -110,7 +119,7 @@ export function AssetGrowthPanel({ value, status }) {
     content = <ChartState title="Insufficient scan history" copy="A trend appears after two successful scans." />;
   } else {
     content = (
-      <div className="overview-chart-canvas" data-testid="overview-asset-growth-chart" aria-label="Confirmed asset growth chart">
+      <div className="overview-chart-canvas" data-testid="overview-asset-growth-chart" aria-label={`Asset population growth chart: ${visibleSeries.map(([, label]) => label).join(", ")}`}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 4, right: 12, bottom: 4, left: 0 }}>
             <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
@@ -118,9 +127,11 @@ export function AssetGrowthPanel({ value, status }) {
             <YAxis allowDecimals={false} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} width={28} />
             <Tooltip contentStyle={chartTooltipStyle} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
-            <Line type="monotone" dataKey="total" name="Confirmed assets" stroke="#4655a6" strokeWidth={2} dot={{ r: 2 }} />
-            <Line type="monotone" dataKey="live" name="Live assets" stroke="#327d80" strokeWidth={2} dot={{ r: 2 }} />
-            <Line type="monotone" dataKey="shadow" name="Shadow assets" stroke="#7e91a8" strokeWidth={2} dot={{ r: 2 }} />
+            {visibleSeries.some(([key]) => key === "organizational") && <Line type="monotone" dataKey="organizational" name="Organizational Assets" stroke="#4655a6" strokeWidth={2} dot={{ r: 2 }} />}
+            {visibleSeries.some(([key]) => key === "known") && <Line type="monotone" dataKey="known" name="Known Assets" stroke="#5c6bc0" strokeWidth={2} dot={{ r: 2 }} />}
+            {visibleSeries.some(([key]) => key === "shadow") && <Line type="monotone" dataKey="shadow" name="Shadow Assets" stroke="#7e91a8" strokeWidth={2} dot={{ r: 2 }} />}
+            {visibleSeries.some(([key]) => key === "ipPresent") && <Line type="monotone" dataKey="ipPresent" name="IP-Present Assets" stroke="#327d80" strokeWidth={2} dot={{ r: 2 }} />}
+            {visibleSeries.some(([key]) => key === "httpResponding") && <Line type="monotone" dataKey="httpResponding" name="HTTP-Responding Assets" stroke="#d49a3a" strokeWidth={2} dot={{ r: 2 }} />}
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -128,7 +139,7 @@ export function AssetGrowthPanel({ value, status }) {
   }
 
   return (
-    <Panel title="Asset growth trend" subtitle="Confirmed organizational assets across successful scans" className="intelligence-panel">
+    <Panel title="Asset growth trend" subtitle="Current effective populations across successful scans · historical classes are reconstructed" className="intelligence-panel">
       {content}
     </Panel>
   );
@@ -414,13 +425,14 @@ export function NamingExposurePanel({ value, status, scanId }) {
       <>
         <div className="naming-exposure-signals" aria-label="Naming exposure category counts">
           {categories.map(({ keyword, count }) => (
-            <div className="naming-exposure-signal" key={keyword} aria-label={`${keyword}: ${count} matching confirmed assets`}>
+            <a className="naming-exposure-signal naming-exposure-signal-link" key={keyword} href={`#/assets?exposure_keyword=${encodeURIComponent(keyword)}&limit=25`} aria-label={`Open ${keyword} matching assets (${count})`}>
               <span>{keyword}</span>
               <strong>{count}</strong>
-            </div>
+              <span className="naming-exposure-arrow" aria-hidden="true">→</span>
+            </a>
           ))}
         </div>
-        <p className="naming-exposure-note">Counts are unique confirmed domains. Categories may overlap, and a name match is an investigation indicator—not proof of an exposed interface or vulnerability.</p>
+        <p className="naming-exposure-note">Counts are unique organizational assets. Categories may overlap; a hostname indicator is not a verified environment or vulnerability.</p>
       </>
     );
   }
