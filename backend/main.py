@@ -21,7 +21,7 @@ from asset_reporting import (
     current_scan_risks,
 )
 from scan_diagnostics import api_diagnostics
-from risk_engine import ASSET_EXPOSURE_KEYWORDS, calculate_scan_risks, get_asset_exposure_keywords
+from risk_engine import ASSET_EXPOSURE_KEYWORDS, calculate_scan_risks, get_asset_exposure_keywords, priority_for_score
 from ownership import (
     OWNERSHIP_CONFIRMED,
     OWNERSHIP_EXTERNAL,
@@ -958,6 +958,223 @@ def risk_leaderboard():
         }
         for risk in ranked
     ]
+
+
+def _risk_history_ctes():
+    """Build scan-scoped history CTEs using today's effective org boundary."""
+    classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
+    return f"""
+        WITH successful_scans AS (
+            SELECT id, scan_time
+              FROM scans
+             WHERE status = 'SUCCEEDED'
+        ), org_members AS (
+            SELECT DISTINCT sr.scan_id, d.id AS domain_id, d.domain,
+                   ({classification}) AS asset_class
+              FROM successful_scans ss
+              JOIN scan_results sr ON sr.scan_id = ss.id
+              JOIN domains d ON d.id = sr.domain_id
+             WHERE ({classification}) IN ('KNOWN', 'SHADOW')
+        ), scoped_risk AS (
+            SELECT ss.id AS scan_id, m.domain_id, m.domain, m.asset_class,
+                   r.domain_id AS risk_observation_id, r.risk_score, ss.scan_time
+              FROM successful_scans ss
+              LEFT JOIN org_members m ON m.scan_id = ss.id
+              LEFT JOIN domain_risk r
+                ON r.scan_id = m.scan_id AND r.domain_id = m.domain_id
+        ), high_history AS (
+            SELECT * FROM scoped_risk WHERE risk_score >= 8
+        )
+    """
+
+
+@app.get("/v2/risk-history/summary")
+def risk_history_summary():
+    """Read-only historical High-score counts and per-scan risk coverage."""
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(_risk_history_ctes() + """
+            SELECT scan_id, scan_time,
+                   COUNT(DISTINCT domain_id) AS organizational_members,
+                   COUNT(DISTINCT domain_id) FILTER (WHERE risk_observation_id IS NOT NULL) AS assets_with_risk,
+                   COUNT(DISTINCT domain_id) FILTER (WHERE risk_score >= 8) AS high_assets,
+                   COUNT(*) FILTER (WHERE risk_score >= 8) AS high_observations
+              FROM scoped_risk
+             GROUP BY scan_id, scan_time
+             ORDER BY scan_id
+        """)
+        per_scan_rows = cur.fetchall()
+        if not per_scan_rows:
+            return {
+                "availability_state": "UNAVAILABLE",
+                "latest_successful_scan_id": None,
+                "current_high_assets": 0,
+                "historical_unique_high_assets": 0,
+                "historical_high_observations": 0,
+                "formerly_high_scoring_assets": 0,
+                "successful_scans_considered": 0,
+                "per_scan": [],
+                "limitations": ["No successful scans are available."],
+            }
+
+        cur.execute(_risk_history_ctes() + """
+            SELECT COUNT(DISTINCT h.domain_id), COUNT(*),
+                   COUNT(DISTINCT h.domain_id) FILTER (WHERE EXISTS (
+                       SELECT 1
+                         FROM scoped_risk latest_state
+                        WHERE latest_state.scan_id = (SELECT MAX(id) FROM successful_scans)
+                          AND latest_state.domain_id = h.domain_id
+                          AND latest_state.risk_observation_id IS NOT NULL
+                          AND latest_state.risk_score IS NOT NULL
+                          AND latest_state.risk_score < 8
+                   ))
+              FROM high_history h
+        """)
+        historical_unique, historical_observations, formerly_high = cur.fetchone()
+        latest_scan_id = per_scan_rows[-1][0]
+        current_high_assets = per_scan_rows[-1][4]
+        current_coverage = per_scan_rows[-1]
+        per_scan = []
+        for scan_id, scan_time, members, with_risk, high_assets, high_observations in per_scan_rows:
+            missing = max(0, members - with_risk)
+            per_scan.append({
+                "scan_id": scan_id,
+                "scan_time": scan_time.isoformat() if scan_time else None,
+                "organizational_members": members,
+                "assets_with_risk_observation": with_risk,
+                "assets_missing_risk_observation": missing,
+                "coverage_complete": missing == 0,
+                "high_assets": high_assets,
+                "high_score_observations": high_observations,
+            })
+        return {
+            "availability_state": "AVAILABLE",
+            "latest_successful_scan_id": latest_scan_id,
+            "current_high_assets": current_high_assets,
+            "historical_unique_high_assets": historical_unique,
+            "historical_high_observations": historical_observations,
+            "formerly_high_scoring_assets": formerly_high,
+            "historical_high_assets_current_status_unknown": max(
+                0, historical_unique - current_high_assets - formerly_high
+            ),
+            "current_risk_data_coverage": {
+                "organizational_members": current_coverage[2],
+                "assets_with_risk_observation": current_coverage[3],
+                "assets_missing_risk_observation": max(0, current_coverage[2] - current_coverage[3]),
+                "complete": current_coverage[2] == current_coverage[3],
+            },
+            "successful_scans_considered": len(per_scan),
+            "threshold": {"priority": "High", "minimum_risk_score": 8},
+            "classification_semantics": "Current effective KNOWN/SHADOW classification is applied retrospectively; historical class-at-scan-time is not stored.",
+            "per_scan": per_scan,
+            "limitations": [
+                "Only persisted domain_risk scores from SUCCEEDED scans are counted.",
+                "Missing risk rows are unknown coverage, not Low priority.",
+                "A lower or absent later score does not establish remediation.",
+                "Historical organizational membership uses current effective classification.",
+            ],
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v2/risk-history/assets")
+def risk_history_assets(page: int = 1, limit: int = 50):
+    """Paginated assets with at least one persisted High score in a successful scan."""
+    if page < 1 or limit < 1:
+        raise HTTPException(status_code=400, detail="page and limit must be positive")
+    limit = min(limit, 200)
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        ctes = _risk_history_ctes()
+        cur.execute(ctes + """
+            SELECT COUNT(*), (SELECT MAX(id) FROM successful_scans)
+              FROM (SELECT domain_id FROM high_history GROUP BY domain_id) qualifying
+        """)
+        total, latest_scan_id = cur.fetchone()
+        if latest_scan_id is None:
+            return {
+                "availability_state": "UNAVAILABLE",
+                "latest_successful_scan_id": None,
+                "page": page, "limit": limit, "total": 0, "assets": [],
+                "limitations": ["No successful scans are available."],
+            }
+        cur.execute(ctes + """
+            , history AS (
+                SELECT domain_id, domain, asset_class,
+                       MIN(scan_id) AS first_high_scan_id,
+                       MAX(scan_id) AS last_high_scan_id,
+                       MAX(risk_score) AS maximum_historical_score,
+                       COUNT(*) AS high_score_observations
+                  FROM high_history
+                 GROUP BY domain_id, domain, asset_class
+            ), latest AS (
+                SELECT id AS scan_id FROM successful_scans ORDER BY id DESC LIMIT 1
+            ), latest_members AS (
+                SELECT DISTINCT sr.domain_id
+                  FROM latest
+                  JOIN scan_results sr ON sr.scan_id = latest.scan_id
+                  JOIN domains d ON d.id = sr.domain_id
+                 WHERE (""" + reporting_asset_class_sql("d.domain", "d.ownership_status") + """) IN ('KNOWN', 'SHADOW')
+            )
+            SELECT h.domain_id, h.domain, h.asset_class,
+                   h.first_high_scan_id, first_scan.scan_time,
+                   h.last_high_scan_id, last_scan.scan_time,
+                   h.maximum_historical_score, h.high_score_observations,
+                   EXISTS (
+                       SELECT 1 FROM scan_results current_member
+                        WHERE current_member.scan_id = latest.scan_id
+                          AND current_member.domain_id = h.domain_id
+                   ) AS current_scan_member,
+                   current_risk.risk_score
+              FROM history h
+              CROSS JOIN latest
+              JOIN scans first_scan ON first_scan.id = h.first_high_scan_id
+              JOIN scans last_scan ON last_scan.id = h.last_high_scan_id
+              LEFT JOIN domain_risk current_risk
+                ON current_risk.scan_id = latest.scan_id
+               AND current_risk.domain_id = h.domain_id
+               AND EXISTS (SELECT 1 FROM latest_members lm WHERE lm.domain_id = h.domain_id)
+             ORDER BY h.maximum_historical_score DESC, LOWER(h.domain), h.domain_id
+             LIMIT %s OFFSET %s
+        """, (limit, (page - 1) * limit))
+        rows = cur.fetchall()
+        assets = []
+        for row in rows:
+            current_score = row[10]
+            assets.append({
+                "domain_id": row[0], "domain": row[1], "asset_class": row[2],
+                "first_recorded_high_scan_id": row[3],
+                "first_recorded_high_scan_time": row[4].isoformat() if row[4] else None,
+                "last_recorded_high_scan_id": row[5],
+                "last_recorded_high_scan_time": row[6].isoformat() if row[6] else None,
+                "maximum_persisted_historical_score": row[7],
+                "high_score_observations": row[8],
+                "current_scan_member": row[9],
+                "current_risk_score": current_score,
+                "current_priority": priority_for_score(current_score) if current_score is not None else None,
+            })
+        return {
+            "availability_state": "AVAILABLE",
+            "latest_successful_scan_id": latest_scan_id,
+            "page": page, "limit": limit, "total": total, "assets": assets,
+            "classification_semantics": "Current effective KNOWN/SHADOW classification is applied retrospectively.",
+            "limitations": [
+                "Only persisted High-score observations from SUCCEEDED scans qualify.",
+                "Current score and priority are null when the latest successful scan has no persisted risk row.",
+                "A score decrease or missing later observation does not establish remediation.",
+            ],
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 @app.get("/domain/{domain_name}")

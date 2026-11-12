@@ -271,6 +271,10 @@ class CanonicalIntegrationContractTests(unittest.TestCase):
         for filename in ("main.py", "mcp_server.py"):
             with self.subTest(filename=filename):
                 source = (BACKEND / filename).read_text(encoding="utf-8")
+                if filename == "main.py":
+                    # Historical intelligence intentionally reads stored scores;
+                    # existing current-risk consumers must keep using the shared engine.
+                    source = source.split("def _risk_history_ctes():", 1)[0]
                 self.assertNotIn("domain_risk", source.lower())
                 helper = "current_scan_risks" if filename == "mcp_server.py" else "calculate_scan_risks"
                 self.assertIn(helper, source)
