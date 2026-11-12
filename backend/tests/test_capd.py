@@ -96,6 +96,17 @@ class CapdDefinitionTests(unittest.TestCase):
         }])[0]
         self.assertEqual(legacy["candidate_classification"], "PRODUCT_MATCHED_VERSION_UNKNOWN")
 
+    def test_stored_service_evidence_is_candidate_not_product_identification(self):
+        check = dict(capd.get_check("CVE-2026-109618"))
+        check["service_aliases"] = ["php-fpm"]
+        target = {"domain_id": 10, "domain": "host.example", "asset_class": "KNOWN"}
+        result = capd._assess_asset(check, target, [{
+            "source": "domain_ports", "service": "php-fpm", "port": 9000,
+            "technology": None, "version": None, "confidence": "low",
+        }])[0]
+        self.assertEqual(result["candidate_classification"], "SERVICE_CANDIDATE")
+        self.assertEqual(result["result_status"], "INSUFFICIENT_EVIDENCE")
+
     def test_duplicate_observations_preserve_evidence_without_duplicate_results(self):
         check = capd.get_check("CVE-2026-109618")
         target = {"domain_id": 10, "domain": "host.example", "asset_class": "KNOWN"}
@@ -158,6 +169,7 @@ class CapdPostgreSQLTests(unittest.TestCase):
                     )
                     cursor.execute("INSERT INTO seed_domains(domain) VALUES ('org.example')")
                     cursor.execute("INSERT INTO known_domains(domain) VALUES ('known.example')")
+                    cursor.execute("INSERT INTO known_domains(domain) VALUES ('nullable.example')")
         except Exception:
             _remediation_fixture.PostgreSQLIngestConvergenceTests.tearDownClass.__func__(cls)
             raise
@@ -198,10 +210,11 @@ class CapdPostgreSQLTests(unittest.TestCase):
                       (705,'rejected.org.example','CONFIRMED',TRUE,'discovery',ARRAY['manually rejected']),
                       (706,'fixed.known.example','CONFIRMED',TRUE,'manual',ARRAY[]::text[]),
                       (707,'external.org.example','EXTERNAL',TRUE,'discovery',ARRAY[]::text[]),
-                      (708,'nullable.example',NULL,TRUE,'manual',ARRAY[]::text[])
+                      (708,'nullable.example',NULL,TRUE,'manual',ARRAY[]::text[]),
+                      (709,'no-evidence.org.example','CONFIRMED',TRUE,'discovery',ARRAY[]::text[])
                 """)
                 cursor.execute("INSERT INTO known_domains(domain) VALUES ('fixed.known.example')")
-                cursor.execute("INSERT INTO scan_results(scan_id,domain_id,seed) VALUES (19,701,'known.example'),(19,702,'org.example'),(19,703,'org.example'),(19,704,'org.example'),(19,705,'org.example'),(19,706,'fixed.known.example'),(19,707,'org.example'),(19,708,'nullable.example'),(20,701,'known.example')")
+                cursor.execute("INSERT INTO scan_results(scan_id,domain_id,seed) VALUES (19,701,'known.example'),(19,702,'org.example'),(19,703,'org.example'),(19,704,'org.example'),(19,705,'org.example'),(19,706,'fixed.known.example'),(19,707,'org.example'),(19,708,'nullable.example'),(19,709,'org.example'),(20,701,'known.example')")
                 cursor.execute("""
                     INSERT INTO domain_technology_observations(
                         scan_id,domain_id,technology,version,confidence,evidence_type,
@@ -220,12 +233,48 @@ class CapdPostgreSQLTests(unittest.TestCase):
         self.assertEqual(rows, [(19, "SUCCEEDED"), (20, "FAILED")])
         self.assertEqual(self.fetchall("SELECT COUNT(*) FROM capd_runs"), [(0,)])
         self.assertEqual(self.fetchall("SELECT COUNT(*) FROM capd_results"), [(0,)])
+        self.assertEqual(self.fetchall("SELECT to_regclass('public.tracked_security_issues')"), [(None,)])
+
+    def test_preview_separates_eligible_inventory_from_relevant_candidates(self):
+        connection = self.connect()
+        try:
+            preview = capd.preview_targets(connection, "CVE-2026-109618", scan_id=19)
+            self.assertEqual(preview["selection"]["eligible_targets"], 4)
+            self.assertEqual(preview["relevance"]["eligible_inventory_assets"], 4)
+            self.assertEqual(preview["relevance"]["product_matched_candidate_assets"], 3)
+            self.assertEqual(preview["relevance"]["version_matched_candidate_assets"], 1)
+            self.assertEqual(preview["relevance"]["potential_cve_match_assets"], 1)
+            self.assertEqual(preview["relevance"]["assets_without_relevant_product_or_service_evidence"], 1)
+            self.assertEqual(
+                next(item for item in preview["targets"] if item["domain_id"] == 709)["relevance"],
+                "NO_RELEVANT_PRODUCT_OR_SERVICE_EVIDENCE",
+            )
+        finally:
+            connection.close()
+
+    def test_zero_php_evidence_remains_eligible_but_is_not_a_php_candidate(self):
+        connection = self.connect()
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM domain_technology_observations")
+                cursor.execute("DELETE FROM domain_tech")
+        connection.close()
+        connection = self.connect()
+        try:
+            preview = capd.preview_targets(connection, "CVE-2026-109618", scan_id=19)
+            self.assertEqual(preview["selection"]["eligible_targets"], 4)
+            self.assertEqual(preview["relevance"]["product_matched_candidate_assets"], 0)
+            self.assertEqual(preview["relevance"]["service_candidate_assets"], 0)
+            self.assertEqual(preview["relevance"]["potential_cve_match_assets"], 0)
+            self.assertEqual(preview["relevance"]["assets_without_relevant_product_or_service_evidence"], 4)
+        finally:
+            connection.close()
 
     def test_unknown_ownership_is_not_counted_as_eligible(self):
         connection = self.connect()
         try:
             summary = capd._eligibility_summary(connection.cursor(), 19)
-            self.assertEqual(summary["eligible_targets"], 3)
+            self.assertEqual(summary["eligible_targets"], 4)
             self.assertEqual(summary["skipped_by_reason"]["OWNERSHIP_NOT_CONFIRMED"], 1)
             self.assertEqual(sum(summary["skipped_by_reason"].values()), summary["excluded_or_ineligible"])
         finally:
@@ -235,8 +284,8 @@ class CapdPostgreSQLTests(unittest.TestCase):
         connection = self.connect()
         try:
             preview = capd.execute_passive(connection, "CVE-2026-109618", scan_id=19, limit=100, dry_run=True)
-            self.assertEqual(preview["selection"]["eligible_targets"], 3)
-            self.assertEqual(preview["selection"]["selected_targets"], 3)
+            self.assertEqual(preview["selection"]["eligible_targets"], 4)
+            self.assertEqual(preview["selection"]["selected_targets"], 4)
             self.assertEqual(preview["network_requests"], 0)
             self.assertEqual(self.fetchall("SELECT COUNT(*) FROM capd_runs"), [(0,)])
         finally:
@@ -249,8 +298,8 @@ class CapdPostgreSQLTests(unittest.TestCase):
         connection = self.connect()
         try:
             result = capd.execute_passive(connection, "CVE-2026-109618", scan_id=19, limit=100)
-            self.assertEqual(result["selection"]["selected_targets"], 2)
-            self.assertEqual(result["selection"]["eligible_targets"], 2)
+            self.assertEqual(result["selection"]["selected_targets"], 3)
+            self.assertEqual(result["selection"]["eligible_targets"], 3)
             self.assertEqual(result["network_requests"], 0)
         finally:
             connection.close()
@@ -260,12 +309,12 @@ class CapdPostgreSQLTests(unittest.TestCase):
         try:
             result = capd.execute_passive(connection, "CVE-2026-109618", scan_id=19, limit=100)
             self.assertEqual(result["status"], "SUCCEEDED")
-            self.assertEqual(result["selection"]["selected_targets"], 3)
+            self.assertEqual(result["selection"]["selected_targets"], 4)
             self.assertEqual(result["counts"]["POTENTIAL_MATCH"], 1)
             self.assertEqual(result["counts"]["NOT_APPLICABLE"], 1)
-            self.assertEqual(result["counts"]["INSUFFICIENT_EVIDENCE"], 1)
+            self.assertEqual(result["counts"]["INSUFFICIENT_EVIDENCE"], 2)
             results = capd.list_results(connection, result["run_id"], limit=20)
-            self.assertEqual(results["total"], 3)
+            self.assertEqual(results["total"], 4)
             self.assertEqual({item["asset_class"] for item in results["results"]}, {"KNOWN", "SHADOW"})
             self.assertNotIn("candidate.other", {item["domain"] for item in results["results"]})
             self.assertNotIn("external.org.example", {item["domain"] for item in results["results"]})
@@ -279,8 +328,45 @@ class CapdPostgreSQLTests(unittest.TestCase):
             second = capd.execute_passive(connection, "CVE-2026-109618", scan_id=19, limit=100)
             self.assertNotEqual(second["run_id"], result["run_id"])
             self.assertEqual(capd.list_runs(connection, check_id="CVE-2026-109618")["total"], 2)
-            self.assertEqual(capd.list_results(connection, result["run_id"])["total"], 3)
-            self.assertEqual(capd.list_results(connection, second["run_id"])["total"], 3)
+            self.assertEqual(capd.list_results(connection, result["run_id"])["total"], 4)
+            self.assertEqual(capd.list_results(connection, second["run_id"])["total"], 4)
+        finally:
+            connection.close()
+
+    def test_forced_target_error_is_saved_with_valid_json_and_run_is_partial(self):
+        original = capd._assess_asset
+
+        def forced(target_check, target, records):
+            if target["domain_id"] == 702:
+                raise RuntimeError("secret-token-must-not-be-persisted")
+            return original(target_check, target, records)
+
+        connection = self.connect()
+        try:
+            with mock.patch.object(capd, "_assess_asset", side_effect=forced):
+                run = capd.execute_passive(connection, "CVE-2026-109618", scan_id=19)
+            self.assertEqual(run["status"], "PARTIAL")
+            self.assertEqual(run["counts"]["ERROR"], 1)
+            result = self.fetchall(
+                "SELECT result_status,evidence,limitations,explanation FROM capd_results WHERE run_id=%s AND domain_id=702",
+                (run["run_id"],),
+            )[0]
+            self.assertEqual(result[0], "ERROR")
+            self.assertEqual(result[1], [])
+            self.assertEqual(result[2], ["Target evidence evaluation failed."])
+            self.assertNotIn("secret-token", result[3])
+            self.assertEqual(self.fetchall("SELECT COUNT(*) FROM capd_results WHERE run_id=%s", (run["run_id"],)), [(4,)])
+        finally:
+            connection.close()
+
+    def test_unrecoverable_evidence_load_failure_marks_run_failed(self):
+        connection = self.connect()
+        try:
+            with mock.patch.object(capd, "_load_evidence", side_effect=RuntimeError("fixture failure")):
+                with self.assertRaisesRegex(RuntimeError, "fixture failure"):
+                    capd.execute_passive(connection, "CVE-2026-109618", scan_id=19)
+            self.assertEqual(self.fetchall("SELECT status FROM capd_runs"), [("FAILED",)])
+            self.assertEqual(self.fetchall("SELECT COUNT(*) FROM capd_results"), [(0,)])
         finally:
             connection.close()
 

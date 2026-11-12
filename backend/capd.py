@@ -260,11 +260,15 @@ def preview_targets(conn, check_id, *, scan_id=None, limit=MAX_TARGETS):
     scan = _validate_source_scan(cur, scan_id)
     summary = _eligibility_summary(cur, scan["scan_id"])
     targets = _select_targets(cur, scan["scan_id"], limit)
+    evidence_by_domain = _load_evidence(cur, scan["scan_id"], targets, check)
+    relevance, target_relevance = _relevance_summary(check, targets, evidence_by_domain)
+    relevance["eligible_inventory_assets"] = summary["eligible_targets"]
+    relevance["selected_inventory_assets"] = len(targets)
     return {
         "check": public_check(check), "source_scan": scan, "selection": summary,
         "target_limit": limit, "selected_count": len(targets),
         "truncated": summary["eligible_targets"] > len(targets),
-        "targets": targets,
+        "relevance": relevance, "targets": target_relevance,
     }
 
 
@@ -370,6 +374,76 @@ def _version_candidate(check, version):
 def _evidence_identity(records, domain_id):
     canonical = json.dumps(records, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256((str(domain_id) + ":" + canonical).encode("utf-8")).hexdigest()
+
+
+def _relevance_summary(check, targets, evidence_by_domain):
+    product_assets, service_assets, version_assets = set(), set(), set()
+    no_relevant_assets, potential_assets = set(), set()
+    target_relevance = []
+    required = check["required_evidence"]
+    labels = {str(label).strip().lower() for label in required["technology_labels"]}
+    acceptable_sources = set(required.get("structured_sources", []))
+    acceptable_types = set(required.get("evidence_types", []))
+    minimum = required.get("minimum_detection_confidence", "none")
+    for target in targets:
+        records = evidence_by_domain.get(target["domain_id"], [])
+        product_records = [record for record in records
+                           if str(record.get("technology") or "").strip().lower() in labels]
+        service_records = [record for record in records if record.get("source") == "domain_ports"]
+        versions = [record for record in product_records
+                    if record.get("source") in acceptable_sources
+                    and record.get("evidence_type") in acceptable_types
+                    and CONFIDENCE_RANK.get(str(record.get("confidence") or "none").lower(), 0)
+                        >= CONFIDENCE_RANK.get(minimum, 0)
+                    and record.get("version")]
+        product = bool(product_records)
+        service = bool(service_records) and not product
+        version = any(_version_candidate(check, record.get("version"))[1] == "VERSION_MATCHED"
+                      for record in versions)
+        assessment_error = False
+        try:
+            assessments = _assess_asset(check, target, records)
+        except Exception:
+            assessments = []
+            assessment_error = True
+        potential = any(item["result_status"] == "POTENTIAL_MATCH" for item in assessments)
+        if product:
+            product_assets.add(target["domain_id"])
+        if service and not product:
+            service_assets.add(target["domain_id"])
+        if version:
+            version_assets.add(target["domain_id"])
+        if not product and not service:
+            no_relevant_assets.add(target["domain_id"])
+        if potential:
+            potential_assets.add(target["domain_id"])
+        if assessment_error:
+            relevance_class = "ASSESSMENT_ERROR"
+        elif potential:
+            relevance_class = "POTENTIAL_CVE_MATCH"
+        elif version:
+            relevance_class = "VERSION_MATCHED_CANDIDATE"
+        elif product:
+            relevance_class = "PRODUCT_MATCHED_CANDIDATE"
+        elif service:
+            relevance_class = "SERVICE_CANDIDATE"
+        else:
+            relevance_class = "NO_RELEVANT_PRODUCT_OR_SERVICE_EVIDENCE"
+        target_relevance.append({
+            **target,
+            "relevance": relevance_class,
+            "product": check["product"] if product else None,
+            "version": versions[0].get("version") if versions else None,
+            "result_statuses": sorted({item["result_status"] for item in assessments})
+                               if assessments else (["ERROR"] if assessment_error else ["INSUFFICIENT_EVIDENCE"]),
+        })
+    return ({
+        "product_matched_candidate_assets": len(product_assets),
+        "service_candidate_assets": len(service_assets),
+        "version_matched_candidate_assets": len(version_assets),
+        "assets_without_relevant_product_or_service_evidence": len(no_relevant_assets),
+        "potential_cve_match_assets": len(potential_assets),
+    }, target_relevance)
 
 
 def _assess_asset(check, target, records):
@@ -490,9 +564,15 @@ def execute_passive(conn, check_id, *, scan_id=None, limit=MAX_TARGETS, dry_run=
         "classification_semantics": "Effective KNOWN/SHADOW at CAPD selection time; not a historical ownership snapshot.",
     }
     if dry_run:
+        evidence_by_domain = _load_evidence(cur, source_scan["scan_id"], preview, check)
+        relevance, target_relevance = _relevance_summary(check, preview, evidence_by_domain)
+        relevance["eligible_inventory_assets"] = selection["eligible_targets"]
+        relevance["selected_inventory_assets"] = len(preview)
+        selection_summary["relevance"] = relevance
         return {
             "dry_run": True, "check": public_check(check), "source_scan": source_scan,
-            "selection": selection_summary, "targets": preview,
+            "selection": selection_summary, "relevance": relevance,
+            "targets": target_relevance,
             "network_requests": 0,
         }
 
@@ -516,9 +596,13 @@ def execute_passive(conn, check_id, *, scan_id=None, limit=MAX_TARGETS, dry_run=
         fresh_summary = _eligibility_summary(cur, fresh_scan["scan_id"])
         targets = _select_targets(cur, fresh_scan["scan_id"], limit)
         evidence_by_domain = _load_evidence(cur, fresh_scan["scan_id"], targets, check)
+        fresh_relevance, _target_relevance = _relevance_summary(check, targets, evidence_by_domain)
+        fresh_relevance["eligible_inventory_assets"] = fresh_summary["eligible_targets"]
+        fresh_relevance["selected_inventory_assets"] = len(targets)
         counts = {status: 0 for status in sorted(RESULT_STATUSES)}
         inserted = 0
         for target in targets:
+            cur.execute("SAVEPOINT capd_target")
             try:
                 assessments = _assess_asset(check, target, evidence_by_domain.get(target["domain_id"], []))
                 seen = set()
@@ -544,21 +628,32 @@ def execute_passive(conn, check_id, *, scan_id=None, limit=MAX_TARGETS, dry_run=
                     if cur.rowcount:
                         counts[result["result_status"]] += 1
                         inserted += 1
+                cur.execute("RELEASE SAVEPOINT capd_target")
             except Exception:
+                # A failed row write can abort the current PostgreSQL transaction.
+                # Roll back only this target before storing a sanitized error result.
+                cur.execute("ROLLBACK TO SAVEPOINT capd_target")
                 identity = _evidence_identity([], target["domain_id"])
                 cur.execute("""
                     INSERT INTO capd_results(
                         run_id,domain_id,domain_snapshot,asset_class_snapshot,evidence_identity,
                         result_status,candidate_classification,evidence,explanation,limitations
-                    ) VALUES (%s,%s,%s,%s,%s,'ERROR','INSUFFICIENT_EVIDENCE','[]'::jsonb,
-                              'CAPD could not evaluate this target.',['Target evidence evaluation failed.']::jsonb)
+                    ) VALUES (%s,%s,%s,%s,%s,'ERROR','INSUFFICIENT_EVIDENCE',%s::jsonb,
+                              %s,%s::jsonb)
                     ON CONFLICT (run_id,domain_id,evidence_identity) DO NOTHING
-                """, (run_id, target["domain_id"], target["domain"], target["asset_class"], identity))
-                counts["ERROR"] += int(bool(cur.rowcount))
-                inserted += int(bool(cur.rowcount))
+                """, (
+                    run_id, target["domain_id"], target["domain"], target["asset_class"], identity,
+                    json.dumps([]), "CAPD could not evaluate this target.",
+                    json.dumps(["Target evidence evaluation failed."]),
+                ))
+                error_inserted = cur.rowcount
+                cur.execute("RELEASE SAVEPOINT capd_target")
+                counts["ERROR"] += int(error_inserted == 1)
+                inserted += int(error_inserted == 1)
         status = "PARTIAL" if counts["ERROR"] or len(targets) < fresh_summary["eligible_targets"] else "SUCCEEDED"
         run_selection = {
             **fresh_summary,
+            "relevance": fresh_relevance,
             "selected_targets": len(targets),
             "eligible_not_selected_due_to_limit": max(0, fresh_summary["eligible_targets"] - len(targets)),
             "no_active_network_authorization_required": True,
@@ -578,7 +673,8 @@ def execute_passive(conn, check_id, *, scan_id=None, limit=MAX_TARGETS, dry_run=
         return {
             "run_id": run_id, "status": status, "check": public_check(check),
             "source_scan": fresh_scan, "selection": run_selection,
-            "counts": counts, "results_persisted": inserted, "network_requests": 0,
+            "relevance": fresh_relevance, "counts": counts,
+            "results_persisted": inserted, "network_requests": 0,
         }
     except Exception:
         conn.rollback()
