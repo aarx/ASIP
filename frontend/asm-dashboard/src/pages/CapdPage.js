@@ -137,6 +137,22 @@ function ResultsTable({ results, query, run, total, page, onPage }) {
   </>;
 }
 
+function RelevanceSummary({ selection }) {
+  const relevance = selection?.relevance;
+  if (!relevance) return null;
+  const metrics = [
+    ["Eligible inventory", relevance.eligible_inventory_assets],
+    ["Selected inventory", relevance.selected_inventory_assets],
+    ["Product-matched", relevance.product_matched_candidate_assets],
+    ["Service candidates", relevance.service_candidate_assets],
+    ["Version-matched", relevance.version_matched_candidate_assets],
+    ["Potential CVE matches", relevance.potential_cve_match_assets],
+    ["No relevant product/service evidence", relevance.assets_without_relevant_product_or_service_evidence],
+  ].filter(([, value]) => value !== null && value !== undefined);
+  if (!metrics.length) return null;
+  return <div className="capd-relevance"><h3>Target relevance breakdown</h3><div>{metrics.map(([label, value]) => <div key={label}><span>{label}</span><strong>{Number(value).toLocaleString()}</strong></div>)}</div><p>Counts are the run’s stored selection summary. Eligible inventory is not the same as CVE-relevant candidates.</p></div>;
+}
+
 export default function CapdPage({ query = "" }) {
   const params = useMemo(() => paramsFrom(query), [query]);
   const checkId = params.get("check_id");
@@ -221,6 +237,7 @@ export default function CapdPage({ query = "" }) {
               <div><span>Eligible / selected / skipped</span><strong>{runData.eligible_target_count ?? "—"} / {runData.selected_target_count ?? "—"} / {runData.skipped_target_count ?? "—"}</strong></div>
               <div><span>Result counts</span><strong>{Object.entries(runData.counts || {}).map(([key, value]) => `${human(key)} ${value}`).join(" · ") || "Not recorded"}</strong></div>
             </div>
+            <RelevanceSummary selection={runData.selection_summary} />
           </Panel>}
           {resultsError ? <Failure error={resultsError} retry={retry} /> : resultsData === null ? <Loading /> : <Panel title="Assessment results" subtitle={`${potentialCount} potential match${potentialCount === 1 ? "" : "es"} on this returned page; ${resultsData.total} total matching results. A passive match requires independent validation.`} className="capd-panel">
             <div className="capd-result-toolbar"><label><span>Result view</span><select aria-label="Assessment result filter" value={resultStatus} onChange={statusChange}><option value="">All assessment results</option><option value="POTENTIAL_MATCH">Potential hosts only</option>{RESULT_STATUSES.filter((status) => status !== "POTENTIAL_MATCH").map((status) => <option value={status} key={status}>{human(status)}</option>)}</select></label><span>{resultsData.total} matching results</span></div>

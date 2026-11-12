@@ -10,7 +10,7 @@ jest.mock("./services/api", () => ({
 const checks = [
   { check_id: "CVE-X", check_revision: "1.2.0", cve_id: "CVE-X", vendor: "Example", product: "Widget", platform: "PHP runtime", category: "remote-code-execution", affected_ranges: [{ branch: "8.2", fixed: "8.2.35" }], version_scheme: "semver", required_evidence: { technology_labels: ["widget"], evidence_types: ["server_header"], minimum_detection_confidence: "medium" }, verification_method: "PASSIVE_VERSION_RANGE_MATCH", advisory_reference: "https://example.invalid/advisory", last_reviewed_at: "2026-10-28", enabled: true, coverage: "partial", limitations: ["Reported version needs independent validation."] },
 ];
-const run = { run_id: "run-001", check_id: "CVE-X", check_revision: "1.2.0", cve_id: "CVE-X", source_scan_id: 19, execution_mode: "passive", status: "SUCCEEDED", started_at: "2026-11-10T10:00:00Z", completed_at: "2026-11-10T10:01:00Z", eligible_target_count: 1, selected_target_count: 1, skipped_target_count: 0, counts: { POTENTIAL_MATCH: 1, INSUFFICIENT_EVIDENCE: 1 } };
+const run = { run_id: "run-001", check_id: "CVE-X", check_revision: "1.2.0", cve_id: "CVE-X", source_scan_id: 19, execution_mode: "passive", status: "SUCCEEDED", started_at: "2026-11-10T10:00:00Z", completed_at: "2026-11-10T10:01:00Z", eligible_target_count: 1, selected_target_count: 1, skipped_target_count: 0, selection_summary: { relevance: { eligible_inventory_assets: 5, selected_inventory_assets: 2, product_matched_candidate_assets: 1, service_candidate_assets: 1, version_matched_candidate_assets: 1, potential_cve_match_assets: 1, assets_without_relevant_product_or_service_evidence: 3 } }, counts: { POTENTIAL_MATCH: 1, INSUFFICIENT_EVIDENCE: 1 } };
 const results = [
   { result_id: 1, run_id: run.run_id, domain_id: 12, domain: "potential.example", asset_class: "KNOWN", result_status: "POTENTIAL_MATCH", candidate_classification: "VERSION_MATCHED", product: "Widget", version: "8.2.1", detection_confidence: "high", match_confidence: "medium", evidence: [{ source: "domain_technology_observations", version: "8.2.1", title: "<img src=x onerror=alert(1)>" }], explanation: "Reported version overlaps an affected range.", limitations: ["Installed patch level is unverified."] },
   { result_id: 2, run_id: run.run_id, domain_id: 13, domain: "unknown.example", asset_class: "SHADOW", result_status: "INSUFFICIENT_EVIDENCE", candidate_classification: "PRODUCT_MATCHED_VERSION_UNKNOWN", product: "Widget", version: null, detection_confidence: "medium", match_confidence: null, evidence: [], explanation: "Product observed; version unavailable.", limitations: [] },
@@ -45,6 +45,9 @@ test("shows actual paginated runs and selected run result categories", async () 
   getCapdRunResults.mockResolvedValue({ run: { run_id: run.run_id, cve_id: run.cve_id, check_revision: run.check_revision, source_scan_id: run.source_scan_id }, page: 1, limit: 20, total: 2, results });
   rerender(<CapdPage query="check_id=CVE-X&run_id=run-001" />);
   expect(await screen.findByText("potential.example")).toBeInTheDocument();
+  expect(screen.getByText("Target relevance breakdown")).toBeInTheDocument();
+  expect(screen.getByText("Eligible inventory").parentElement).toHaveTextContent("5");
+  expect(screen.getByText("Potential CVE matches").parentElement).toHaveTextContent("1");
   expect(screen.getByText("Version unknown")).toBeInTheDocument();
   expect(screen.getAllByText(/CVE-X · revision 1.2.0 · Scan #19/).length).toBe(2);
   expect(screen.getAllByText("Potential Match").length).toBeGreaterThan(0);
