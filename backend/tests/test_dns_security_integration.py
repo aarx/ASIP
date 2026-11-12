@@ -360,6 +360,112 @@ class ApiConnection:
         self.closed = True
 
 
+class AssetNamingFilterTests(unittest.TestCase):
+    @staticmethod
+    def _asset_row(domain_id, domain):
+        return (
+            domain_id, domain, False, "CONFIRMED", 19, 19,
+            None, False, False, "UNKNOWN", None, None, None, None,
+            None, "Unknown", None,
+        )
+
+    def _query_assets(self, rows, classes, **filters):
+        cursor = ApiCursor([rows])
+        conn = ApiConnection(cursor)
+        with mock.patch.object(main, "get_conn", return_value=conn), \
+             mock.patch.object(main, "get_latest_authoritative_scan_id", return_value=19), \
+             mock.patch.object(main, "_current_scan_asset_classes", return_value=classes), \
+             mock.patch.object(main, "_current_scan_risks", return_value=[]):
+            result = main.frontend_v2_assets(**filters)
+        self.assertTrue(conn.closed)
+        return result
+
+    def test_keyword_filter_is_current_known_shadow_distinct_and_paginated(self):
+        rows = [
+            self._asset_row(1, "dev-known.example.test"),
+            self._asset_row(1, "dev-known.example.test"),  # duplicate seed membership
+            self._asset_row(2, "prod-dev.example.test"),
+            self._asset_row(3, "dev-candidate.example.test"),
+            self._asset_row(4, "admin.example.test"),
+            self._asset_row(5, "staging.example.test"),
+        ]
+        classes = {1: "KNOWN", 2: "SHADOW", 3: "CANDIDATE", 4: "EXTERNAL", 5: "SHADOW"}
+        first = self._query_assets(rows, classes, exposure_keyword="DEV", page=1, limit=1)
+        second = self._query_assets(rows, classes, exposure_keyword="dev", page=2, limit=1)
+
+        self.assertEqual((first["scan_id"], first["count"], len(first["assets"])), (19, 2, 1))
+        self.assertEqual(first["assets"][0]["domain"], "dev-known.example.test")
+        self.assertEqual(second["count"], 2)
+        self.assertEqual(second["assets"][0]["domain"], "prod-dev.example.test")
+        self.assertEqual(second["assets"][0]["asset_class"], "SHADOW")
+
+    def test_stage_filter_preserves_stage_staging_distinction(self):
+        rows = [
+            self._asset_row(1, "api-stage.example.test"),
+            self._asset_row(2, "api-staging.example.test"),
+        ]
+        result = self._query_assets(rows, {1: "SHADOW", 2: "KNOWN"}, exposure_keyword="STAGE")
+        self.assertEqual(result["count"], 1)
+        self.assertEqual([item["domain"] for item in result["assets"]], ["api-stage.example.test"])
+
+    def test_invalid_naming_keyword_is_rejected_before_database_access(self):
+        with mock.patch.object(main, "get_conn") as get_conn:
+            with self.assertRaises(main.HTTPException) as raised:
+                main.frontend_v2_assets(exposure_keyword="unbounded")
+        self.assertEqual(raised.exception.status_code, 400)
+        get_conn.assert_not_called()
+
+
+class DnsSecurityHostGroupingTests(unittest.TestCase):
+    def test_outcome_filter_paginates_hosts_but_returns_all_host_checks(self):
+        checks = [
+            (6, 8, "cname_health", "WARNING", "LOW", "MEDIUM", "CNAME",
+             "b.example.test", {"evidence": "second"}, "Review target", "2026-01-02T00:00:00Z"),
+            (6, 7, "cname_health", "POTENTIAL_EXPOSURE", "MEDIUM", "MEDIUM", "CNAME",
+             "a.example.test", {"evidence": "first"}, "Validate target", "2026-01-01T00:00:00Z"),
+        ]
+        hosts = [(6, "affected.example.test", "SHADOW")]
+        cursor = ApiCursor([("SUCCEEDED", {"version": 1, "attempts": []}), (2,), hosts, checks])
+        conn = ApiConnection(cursor)
+        with mock.patch.object(main, "get_conn", return_value=conn):
+            result = main.dns_security_hosts(scan_id=91, outcome="warning", page=2, limit=1)
+
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["page"], 2)
+        self.assertEqual(len(result["hosts"]), 1)
+        host = result["hosts"][0]
+        self.assertEqual(host["domain_id"], 6)
+        self.assertEqual(host["scan_id"], 91)
+        self.assertEqual(host["asset_class"], "SHADOW")
+        self.assertEqual(host["check_count"], 2)
+        self.assertEqual(host["outcome_distribution"], {
+            "WARNING": 1, "POTENTIAL_EXPOSURE": 1,
+        })
+        self.assertEqual(host["assessment_state"], "ASSESSED")
+        self.assertEqual({check["outcome"] for check in host["checks"]}, {
+            "WARNING", "POTENTIAL_EXPOSURE",
+        })
+        self.assertTrue(all(check["scan_id"] == 91 for check in host["checks"]))
+        self.assertEqual(cursor.executions[1][1], (91, "WARNING"))
+        self.assertEqual(cursor.executions[2][1], (91, "WARNING", 1, 1))
+        self.assertEqual(cursor.executions[3][1], (91, [6]))
+        self.assertIn("COUNT(DISTINCT c.domain_id)", cursor.executions[1][0])
+        self.assertIn("EXISTS (SELECT 1 FROM scan_results sr", cursor.executions[1][0])
+        self.assertIn("AND matching.outcome = %s", cursor.executions[1][0])
+        self.assertNotIn("outcome = %s", cursor.executions[3][0])
+        self.assertTrue(conn.closed)
+
+    def test_candidate_filter_and_invalid_pagination_are_rejected(self):
+        with mock.patch.object(main, "get_conn") as get_conn:
+            with self.assertRaises(main.HTTPException) as candidate:
+                main.dns_security_hosts(asset_class="CANDIDATE")
+            with self.assertRaises(main.HTTPException) as pagination:
+                main.dns_security_hosts(page=0)
+        self.assertEqual(candidate.exception.status_code, 400)
+        self.assertEqual(pagination.exception.status_code, 400)
+        get_conn.assert_not_called()
+
+
 class MissingTableError(Exception):
     pgcode = "42P01"
 
@@ -582,6 +688,40 @@ class PostgreSQLDnsSecurityReportingTests(unittest.TestCase):
         self.assertEqual([row["domain_id"] for row in page["findings"]], [6, 3])
         self.assertEqual(len(evidence["checks"]), 2)
         self.assertEqual(evidence["domain_id"], 3)
+
+    def test_real_sql_hosts_keep_all_checks_together_across_pages(self):
+        with mock.patch.object(main, "get_conn", side_effect=self.connect):
+            first = main.dns_security_hosts(scan_id=91, outcome="WARNING", page=1, limit=1)
+            second = main.dns_security_hosts(scan_id=91, outcome="WARNING", page=2, limit=1)
+            unfiltered = main.dns_security_hosts(scan_id=91, limit=20)
+            not_checked = main.dns_security_hosts(scan_id=91, outcome="NOT_CHECKED", limit=20)
+
+        self.assertEqual(first["total"], 2)
+        self.assertEqual(second["total"], 2)
+        self.assertEqual(first["hosts"][0]["domain_id"], 6)
+        self.assertEqual(second["hosts"][0]["domain_id"], 3)
+        self.assertEqual(first["hosts"][0]["check_count"], 2)
+        self.assertEqual(second["hosts"][0]["check_count"], 2)
+        self.assertEqual({item["outcome"] for item in first["hosts"][0]["checks"]}, {
+            "WARNING", "POTENTIAL_EXPOSURE",
+        })
+        self.assertEqual({item["outcome"] for item in second["hosts"][0]["checks"]}, {
+            "CLEAR", "WARNING",
+        })
+        self.assertEqual(unfiltered["total"], 5)
+        self.assertEqual(len({host["domain_id"] for host in unfiltered["hosts"]}), 5)
+        self.assertNotIn(1, {host["domain_id"] for host in unfiltered["hosts"]})
+        self.assertNotIn(7, {host["domain_id"] for host in unfiltered["hosts"]})
+        self.assertNotIn(8, {host["domain_id"] for host in unfiltered["hosts"]})
+        self.assertEqual(not_checked["total"], 2)
+        unchecked_host = next(host for host in not_checked["hosts"] if host["domain_id"] == 4)
+        self.assertEqual(unchecked_host["assessment_state"], "NOT_CHECKED_ONLY")
+        self.assertEqual(unchecked_host["outcome_distribution"], {"NOT_CHECKED": 1})
+        mixed_host = next(host for host in not_checked["hosts"] if host["domain_id"] == 5)
+        self.assertEqual(mixed_host["assessment_state"], "ASSESSED")
+        self.assertEqual(mixed_host["outcome_distribution"], {
+            "NOT_CHECKED": 1, "INCONCLUSIVE": 1,
+        })
 
 if __name__ == "__main__":
     unittest.main()

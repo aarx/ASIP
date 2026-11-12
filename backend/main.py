@@ -21,7 +21,7 @@ from asset_reporting import (
     current_scan_risks,
 )
 from scan_diagnostics import api_diagnostics
-from risk_engine import calculate_scan_risks, get_asset_exposure_keywords
+from risk_engine import ASSET_EXPOSURE_KEYWORDS, calculate_scan_risks, get_asset_exposure_keywords
 from ownership import (
     OWNERSHIP_CONFIRMED,
     OWNERSHIP_EXTERNAL,
@@ -2920,11 +2920,17 @@ def frontend_v2_assets(
     http_status: int = None,
     http_status_group: str = None,
     discovery_source: str = None,
+    exposure_keyword: str = None,
     sort_by: str = None,
     sort_dir: str = None,
 ):
     _validate_asset_metric_filters(http_status, http_status_group)
     discovery_source = _normalize_brand_discovery_filter(discovery_source)
+    exposure_keyword_value = None
+    if exposure_keyword is not None:
+        exposure_keyword_value = exposure_keyword.strip().lower()
+        if exposure_keyword_value not in ASSET_EXPOSURE_KEYWORDS:
+            raise HTTPException(status_code=400, detail="Invalid exposure_keyword")
     page = max(page, 1)
     limit = min(max(limit, 1), 200)
     if sort_by is None and risk_positive is True:
@@ -2994,6 +3000,14 @@ def frontend_v2_assets(
         ) = row
         classification = asset_classes.get(domain_id, "CANDIDATE")
         risk = risk_by_domain.get(domain_id)
+
+        # Naming exposure is organizational review intelligence, not a
+        # Candidate inventory filter or a verified environment attribute.
+        if exposure_keyword_value is not None and (
+            classification not in ("KNOWN", "SHADOW")
+            or exposure_keyword_value.upper() not in get_asset_exposure_keywords(domain)
+        ):
+            continue
 
         if not _frontend_asset_matches(
             domain, ownership_status, classification, asset_provider,
@@ -3842,6 +3856,118 @@ def dns_security_findings(
                 "target": row[9], "evidence": row[10], "remediation": row[11],
                 "checked_at": row[12],
             } for row in rows],
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        if _dns_security_schema_unavailable(exc):
+            return _dns_security_unavailable(scan_id)
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v2/dns-security/hosts")
+def dns_security_hosts(
+    scan_id: int = None, outcome: str = None, asset_class: str = None,
+    page: int = 1, limit: int = 50,
+):
+    """Return paginated hosts with all their persisted DNS checks.
+
+    Outcome filtering selects hosts with at least one matching check, while
+    the returned host includes every persisted check for that scan/domain.
+    """
+    if page < 1 or limit < 1:
+        raise HTTPException(status_code=400, detail="page and limit must be positive")
+    limit = min(limit, 200)
+    outcome_value = _dns_filter_value(outcome, DNS_SECURITY_OUTCOMES, "outcome")
+    class_value = _dns_filter_value(asset_class, {"KNOWN", "SHADOW"}, "asset_class")
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        scan_id, _diagnostics = _dns_security_scan(cur, scan_id)
+        classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
+        filters = [
+            "c.scan_id = %s",
+            "EXISTS (SELECT 1 FROM scan_results sr "
+            "WHERE sr.scan_id = c.scan_id AND sr.domain_id = c.domain_id)",
+            "d.scannable IS TRUE",
+            f"({classification}) IN ('KNOWN','SHADOW')",
+        ]
+        params = [scan_id]
+        if class_value is not None:
+            filters.append(f"({classification}) = %s")
+            params.append(class_value)
+        if outcome_value is not None:
+            filters.append("""EXISTS (
+                SELECT 1 FROM dns_security_checks matching
+                 WHERE matching.scan_id = c.scan_id
+                   AND matching.domain_id = c.domain_id
+                   AND matching.outcome = %s
+            )""")
+            params.append(outcome_value)
+        where = " AND ".join(filters)
+
+        cur.execute(f"""
+            SELECT COUNT(DISTINCT c.domain_id)
+              FROM dns_security_checks c
+              JOIN domains d ON d.id = c.domain_id
+             WHERE {where}
+        """, tuple(params))
+        total = cur.fetchone()[0]
+
+        cur.execute(f"""
+            SELECT DISTINCT d.id, d.domain, ({classification}) AS asset_class
+              FROM dns_security_checks c
+              JOIN domains d ON d.id = c.domain_id
+             WHERE {where}
+             ORDER BY d.domain ASC, d.id ASC
+             LIMIT %s OFFSET %s
+        """, tuple(params + [limit, (page - 1) * limit]))
+        host_rows = cur.fetchall()
+        hosts = {
+            row[0]: {
+                "domain_id": row[0], "domain": row[1],
+                "asset_class": row[2], "scan_id": scan_id,
+                "check_count": 0, "outcome_distribution": {},
+                "assessment_state": "NOT_CHECKED_ONLY", "checks": [],
+            }
+            for row in host_rows
+        }
+
+        if hosts:
+            cur.execute("""
+                SELECT c.domain_id, c.id, c.check_key, c.outcome, c.severity,
+                       c.confidence, c.record_type, c.target_identity, c.evidence,
+                       c.remediation, c.checked_at
+                  FROM dns_security_checks c
+                 WHERE c.scan_id = %s AND c.domain_id = ANY(%s)
+                 ORDER BY c.domain_id ASC, c.checked_at DESC, c.check_key ASC,
+                          c.target_identity ASC, c.record_type ASC, c.id ASC
+            """, (scan_id, list(hosts)))
+            for row in cur.fetchall():
+                host = hosts[row[0]]
+                outcome_name = row[3]
+                host["check_count"] += 1
+                distribution = host["outcome_distribution"]
+                distribution[outcome_name] = distribution.get(outcome_name, 0) + 1
+                if outcome_name != "NOT_CHECKED":
+                    host["assessment_state"] = "ASSESSED"
+                host["checks"].append({
+                    "check_id": row[1], "check_key": row[2],
+                    "outcome": outcome_name, "severity": row[4],
+                    "confidence": row[5], "record_type": row[6],
+                    "target": row[7], "evidence": row[8],
+                    "remediation": row[9], "checked_at": row[10],
+                    "scan_id": scan_id,
+                })
+
+        return {
+            "scan_id": scan_id, "availability_state": "AVAILABLE",
+            "page": page, "limit": limit, "total": total,
+            "hosts": list(hosts.values()),
         }
     except HTTPException:
         raise
@@ -5055,24 +5181,7 @@ def naming_asset_exposure():
 
     reporting_class = reporting_asset_class_sql("d.domain", "d.ownership_status")
 
-    keywords = [
-        "dev",
-        "test",
-        "uat",
-        "qa",
-        "admin",
-        "mail",
-        "temp",
-        "stage",
-        "staging",
-        "sandbox",
-        "preprod",
-        "pre-prod",
-        "nonprod",
-        "non-prod",
-        "lab",
-        "demo"
-    ]
+    keywords = ASSET_EXPOSURE_KEYWORDS
 
     results = []
 
