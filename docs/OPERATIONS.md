@@ -110,7 +110,32 @@ Historical migrations live in `backend/migrations` and must be applied in numeri
 2. `002_add_http_observation_status.sql`
 3. `003_add_ownership_status.sql`
 
-Migrations 001 and 002 are transactional but not safely re-runnable; migration 003 is guarded. There is no migration-version table in v0.1.0. Inspect the target schema and take a verified backup before applying a pending migration. A fresh current-schema database must **not** run these migrations again.
+Migrations 001 and 002 are transactional but not safely re-runnable; migration 003 is guarded. The legacy sequential procedure has no migration-version table. Inspect the target schema and take a verified backup before applying a pending migration. A fresh current-schema database must **not** run these migrations again.
+
+### Explicitly approved optional migrations
+
+Some feature migrations are intentionally optional and may be applied out of numeric order only when the change owner has explicitly approved that migration. The supported optional path is deliberately narrow: `backend/optional_migrations.py` currently allowlists only `015_add_capd_runs`. Migration 014 (Findings Lifecycle) is not optional through this command and must not be applied as a prerequisite for 015. Do not add ordinary sequential migrations to the optional allowlist.
+
+The optional-migration ledger (`public.asip_optional_migration_ledger`) records only migrations applied by this mechanism. It records the stable migration ID, source filename, SHA-256 of the exact SQL file bytes, and PostgreSQL application timestamp. It does not backfill or claim that earlier migrations were applied through this runner. SQL and its receipt are committed in the same PostgreSQL transaction; an error rolls back both. An advisory transaction lock serializes concurrent optional-migration attempts.
+
+The runner is part of the backend release. After that release is available, invoke it inside the Compose backend container so it uses the service's existing database configuration; do not copy credentials into a host shell. Before an approved production change, review a read-only plan against the intended database and verify the source revision and backup:
+
+```bash
+docker compose -p asip exec -T backend \
+  python3 /app/optional_migrations.py plan --migration 015_add_capd_runs
+```
+
+The plan prints the migration ID, filename, checksum, pending/applied state, and whether CAPD objects or the ledger already exist. It does not create the ledger. Stop if the checksum differs from a prior receipt, if CAPD objects exist without a receipt, if the migration is already applied, or if the result is otherwise unexpected. Review the exact SQL and obtain explicit change approval before applying:
+
+```bash
+docker compose -p asip exec -T backend \
+  python3 /app/optional_migrations.py apply --migration 015_add_capd_runs \
+    --approve-sha256 <sha256-from-reviewed-plan>
+```
+
+The exact checksum from the reviewed plan is required as the approval token; if the SQL changes between review and application, the command stops. Only IDs compiled into the optional allowlist are accepted. The runner refuses duplicate application, validates a recorded checksum, and rejects untracked pre-existing CAPD objects. Never use this command to apply migration 014 or to write synthetic receipts for legacy migrations.
+
+After application, retain the printed receipt with the deployment record and independently verify the ledger checksum/timestamp and expected tables. If execution fails, PostgreSQL rolls back the schema changes and receipt together. Confirm that neither CAPD tables nor a receipt were left behind, correct the cause, rerun the read-only plan, and repeat the approval process. Do not manually edit/delete ledger rows or partially created schema. If a connection is lost during commit and outcome is uncertain, query the ledger and schema read-only before retrying; matching receipt means applied, no receipt and no CAPD objects means the transaction rolled back, and any other state requires operator investigation.
 
 ## Inventory, ownership, and authorization
 
