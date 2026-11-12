@@ -498,7 +498,7 @@
 .finding-evidence-list, .finding-limitations { margin: 5px 0 0; padding-left: 17px; color: var(--asip-text-secondary); font-size: 10px; line-height: 1.5; }
 .finding-limitations { color: var(--asip-text-muted); }
 .finding-inferred-note { color: #d5a968 !important; }
-.operations-kpis { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.operations-kpis { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .actionable-kpis { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .risk-http-drilldown { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border: 1px solid var(--asip-border); border-radius: var(--asip-radius); background: var(--asip-surface); }
 .risk-http-drilldown > span:first-child { margin-right: 4px; color: var(--asip-text-muted); font-size: 9px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
@@ -547,6 +547,17 @@
 .risk-assets-table th:nth-child(2) { width: 12%; }
 .risk-assets-table th:nth-child(3) { width: 9%; }
 .risk-assets-table th:last-child { width: 38px; }
+.risk-history-table { min-width: 1120px; }
+.risk-history-table th:first-child { width: 17%; }
+.risk-history-table td:nth-child(4), .risk-history-table td:nth-child(5) { white-space: nowrap; }
+.risk-history-table td:nth-child(7), .risk-history-table td:nth-child(8) { white-space: nowrap; }
+.risk-history-table td:nth-child(7) .asset-secondary { display: block; }
+.risk-history-unavailable { display: flex; flex-wrap: wrap; gap: 5px 12px; align-items: baseline; padding: 11px 12px; border-left: 3px solid #d49a3a; background: rgba(212, 154, 58, .06); color: var(--asip-text-muted); font-size: 10px; line-height: 1.45; }
+.risk-history-unavailable strong { color: var(--asip-text-primary); font-size: 11px; }
+.risk-history-coverage { margin-top: 14px; border-top: 1px solid var(--asip-border); color: var(--asip-text-muted); font-size: 10px; }
+.risk-history-coverage summary { padding: 11px 2px 4px; color: var(--asip-text-secondary); cursor: pointer; font-weight: 700; }
+.risk-history-coverage p { margin: 5px 2px 7px; }
+.risk-history-coverage ul { margin: 0; padding-left: 19px; line-height: 1.5; }
 
 .compact-list { max-height: 390px; overflow: auto; }
 .compact-evidence-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 11px; padding: 12px 5px; border-top: 1px solid rgba(115, 142, 170, .09); }

@@ -130,6 +130,16 @@ export const getV2ReviewIndicators = async () => {
   return res.data;
 };
 
+export const getRiskHistorySummary = async () => {
+  const res = await axios.get(`${API_URL}/v2/risk-history/summary`);
+  return res.data;
+};
+
+export const getRiskHistoryAssets = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/risk-history/assets`, { params });
+  return res.data;
+};
+
 export const getRiskyDomains = async () => {
   const res = await axios.get(`${API_URL}/risky-domains`);
   return res.data;

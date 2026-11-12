@@ -4,6 +4,8 @@ import {
   getFindings,
   getHttpStatus,
   getDnsSecuritySummary,
+  getRiskHistoryAssets,
+  getRiskHistorySummary,
   getSensitiveExposure,
   getV2Assets,
   getV2Overview,
@@ -18,6 +20,7 @@ import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncStat
 import { displayAssetClass, displayHttpStatus, isUsableHttpStatus } from "../utils/presentation";
 
 const PRIORITY_LIMIT = 25;
+const HISTORICAL_HIGH_LIMIT = 10;
 const SENSITIVE_PORT_RESULT_LIMIT = 20;
 const SECONDARY_VIEWS = [
   ["review-indicators", "Needs review"],
@@ -129,6 +132,25 @@ function httpStatusGroups(statuses) {
     .map((group) => ({ group, count: statuses[group] }));
 }
 
+function readPositivePage(query, key) {
+  const value = Number.parseInt(new URLSearchParams(query).get(key), 10);
+  return Number.isInteger(value) && value > 0 ? value : 1;
+}
+
+function historicalScanLabel(scanId, timestamp) {
+  if (!Number.isInteger(scanId)) return "—";
+  if (!timestamp) return `Scan #${scanId}`;
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime())
+    ? `Scan #${scanId}`
+    : `Scan #${scanId} · ${date.toLocaleDateString()}`;
+}
+
+function historicalCoverage(summary) {
+  const perScan = Array.isArray(summary?.per_scan) ? summary.per_scan : [];
+  return perScan.filter((scan) => scan?.coverage_complete === false && Number.isInteger(scan?.scan_id));
+}
+
 export default function RiskExposurePage({ query }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
@@ -137,11 +159,17 @@ export default function RiskExposurePage({ query }) {
   const [priorityData, setPriorityData] = useState(null);
   const [priorityStatus, setPriorityStatus] = useState("loading");
   const [priorityRequestVersion, setPriorityRequestVersion] = useState(0);
+  const [historicalSummary, setHistoricalSummary] = useState(null);
+  const [historicalPage, setHistoricalPage] = useState(() => readPositivePage(query, "historical_page"));
+  const [historicalData, setHistoricalData] = useState(null);
+  const [historicalStatus, setHistoricalStatus] = useState("loading");
   const [secondaryView, setSecondaryView] = useState(() => readSecondaryView(query));
   const secondaryTabRefs = useRef({});
 
   useEffect(() => {
     setSecondaryView(readSecondaryView(query));
+    const requestedPage = readPositivePage(query, "historical_page");
+    setHistoricalPage((currentPage) => currentPage === requestedPage ? currentPage : requestedPage);
   }, [query]);
 
   useEffect(() => {
@@ -153,6 +181,9 @@ export default function RiskExposurePage({ query }) {
     const dnsSecurityRequest = typeof getDnsSecuritySummary === "function"
       ? Promise.resolve(getDnsSecuritySummary()).then((result) => result?.availability_state === "AVAILABLE" ? result : { error: true }).catch(() => ({ error: true }))
       : Promise.resolve({ error: true });
+    const historicalSummaryRequest = typeof getRiskHistorySummary === "function"
+      ? Promise.resolve(getRiskHistorySummary()).catch(() => ({ error: true }))
+      : Promise.resolve({ error: true });
     Promise.all([
       getV2Overview(),
       getFindings(),
@@ -161,9 +192,13 @@ export default function RiskExposurePage({ query }) {
       Promise.resolve(getV2ReviewIndicators()).catch(() => ({ error: true, count: 0, indicators: [] })),
       httpStatusRequest,
       dnsSecurityRequest,
-    ]).then(([overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, dnsSummary]) => {
+      historicalSummaryRequest,
+    ]).then(([overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, dnsSummary, riskHistory]) => {
       if (active) {
-        setData({ overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, dnsSummary });
+        setData({ overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, dnsSummary, riskHistory });
+        setHistoricalSummary(riskHistory);
+        setHistoricalData(null);
+        setHistoricalStatus(riskHistory?.availability_state === "AVAILABLE" ? "loading" : "unavailable");
         setStatus("ready");
       }
     }).catch(() => { if (active) setStatus("error"); });
@@ -190,10 +225,34 @@ export default function RiskExposurePage({ query }) {
   }, [data, priorityPage, priorityRequestVersion, status]);
 
   useEffect(() => {
+    if (status !== "ready" || historicalSummary?.availability_state !== "AVAILABLE") return undefined;
+    if (!Number.isInteger(historicalSummary.historical_unique_high_assets) || historicalSummary.historical_unique_high_assets < 1) {
+      setHistoricalStatus("ready");
+      setHistoricalData({ page: historicalPage, limit: HISTORICAL_HIGH_LIMIT, total: 0, assets: [] });
+      return undefined;
+    }
+    let active = true;
+    setHistoricalStatus("loading");
+    getRiskHistoryAssets({ page: historicalPage, limit: HISTORICAL_HIGH_LIMIT })
+      .then((result) => {
+        if (!active) return;
+        if (result?.availability_state !== "AVAILABLE" || !Array.isArray(result.assets) || !Number.isInteger(result.total)) {
+          setHistoricalStatus("unavailable");
+          setHistoricalData(result || null);
+          return;
+        }
+        setHistoricalData(result);
+        setHistoricalStatus("ready");
+      })
+      .catch(() => { if (active) setHistoricalStatus("error"); });
+    return () => { active = false; };
+  }, [historicalPage, historicalSummary, status]);
+
+  useEffect(() => {
     if (status !== "ready") return;
     const params = new URLSearchParams(query);
     const section = params.get("section") || params.get("view");
-    if (!["sensitive-ports", "review-indicators", "dns-security"].includes(section)) return;
+    if (!["sensitive-ports", "review-indicators", "dns-security", "historical-high-risk"].includes(section)) return;
     document.getElementById(section)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }, [query, status]);
 
@@ -232,14 +291,27 @@ export default function RiskExposurePage({ query }) {
   const portRows = Array.isArray(sensitivePorts) ? sensitivePorts : [];
   const portSummary = sensitivePortSummary(portRows);
   const totalPriorityPages = Math.max(Math.ceil((priorityData?.count || 0) / PRIORITY_LIMIT), 1);
+  const totalHistoricalPages = Math.max(Math.ceil((historicalData?.total || historicalSummary?.historical_unique_high_assets || 0) / HISTORICAL_HIGH_LIMIT), 1);
   const groups = httpStatusGroups(httpStatuses);
+  const historicalAvailable = historicalSummary?.availability_state === "AVAILABLE";
+  const historicalCount = historicalAvailable && Number.isInteger(historicalSummary.historical_unique_high_assets)
+    ? historicalSummary.historical_unique_high_assets
+    : null;
+  const incompleteHistoricalScans = historicalCoverage(historicalSummary);
 
   return (
     <div className="operations-grid">
       <section className="operations-kpis" aria-label="Risk and exposure metrics">
-        <MetricCard label="High risk" value={overview.risk_distribution?.High ?? 0} support="Current scan" accent={RISK_COLORS.High} href="#/assets?priority=High" />
+        <MetricCard label="Current High Risk" value={overview.risk_distribution?.High ?? 0} support="Current scan" accent={RISK_COLORS.High} href="#/assets?priority=High" />
         <MetricCard label="Assets with risk scores" value={priorityData?.count ?? "—"} support="Current scan" accent="#a96f1f" />
         <MetricCard label="HTTP responding" value={exposure.http_responding_domains ?? "—"} support="Current scan" accent="#2f7d5b" href="#/assets?http_live=true" />
+        <MetricCard
+          label="Previously High Risk"
+          value={historicalCount ?? "—"}
+          support={historicalAvailable ? "Distinct historical assets" : "Historical data unavailable"}
+          accent="#7b5bb5"
+          href={historicalCount > 0 ? "#/risk?section=historical-high-risk" : undefined}
+        />
       </section>
 
       <section className="actionable-kpis" aria-label="Actionable evidence">
@@ -289,6 +361,53 @@ export default function RiskExposurePage({ query }) {
               </div>
             )}
           </>
+        )}
+      </Panel>
+
+      <Panel title="Previously High Risk" subtitle="Distinct organizational assets with a persisted High score in a successful scan" meta={historicalCount == null ? "UNAVAILABLE" : `${historicalCount} ASSETS`} className="operation-panel-full historical-high-risk-panel" id="historical-high-risk">
+        {historicalStatus === "loading" && <LoadingState title="Loading historical High Risk" copy="Retrieving persisted High-score history." />}
+        {(historicalStatus === "error" || historicalStatus === "unavailable") && (
+          <div className="risk-history-unavailable" role={historicalStatus === "error" ? "alert" : "status"}>
+            <strong>{historicalStatus === "error" ? "Historical High Risk unavailable" : historicalSummary?.availability_state === "UNAVAILABLE" ? "Historical High Risk unavailable" : "Historical High Risk data incomplete"}</strong>
+            <span>{historicalStatus === "error" ? "The historical asset list could not be loaded." : historicalSummary?.limitations?.[0] || "The backend did not return a complete historical asset contract."}</span>
+          </div>
+        )}
+        {historicalStatus === "ready" && historicalData?.assets?.length === 0 && <div className="detail-empty">No persisted High-score assets were recorded in successful scans.</div>}
+        {historicalStatus === "ready" && historicalData?.assets?.length > 0 && (
+          <>
+            <div className="dense-table-wrap">
+              <table className="dense-table risk-history-table">
+                <thead><tr><th>Asset</th><th>Current class</th><th>Maximum High score</th><th>First High</th><th>Last High</th><th>High observations</th><th>Current score</th><th>Current membership</th><th /></tr></thead>
+                <tbody>{historicalData.assets.map((asset) => (
+                  <tr key={asset.domain_id || asset.domain}>
+                    <td><AssetLink domain={asset.domain} returnTo="risk" returnQuery={`section=historical-high-risk&historical_page=${historicalPage}`} /></td>
+                    <td><StatusBadge value={displayAssetClass(asset.asset_class)} /></td>
+                    <td><span className="risk-score">{asset.maximum_persisted_historical_score ?? "—"}</span></td>
+                    <td>{historicalScanLabel(asset.first_recorded_high_scan_id, asset.first_recorded_high_scan_time)}</td>
+                    <td>{historicalScanLabel(asset.last_recorded_high_scan_id, asset.last_recorded_high_scan_time)}</td>
+                    <td>{Number.isInteger(asset.high_score_observations) ? asset.high_score_observations : "—"}</td>
+                    <td>{asset.current_risk_score ?? "—"}{asset.current_priority ? <span className="asset-secondary">{asset.current_priority}</span> : null}</td>
+                    <td>{asset.current_scan_member === true ? "In current scan" : asset.current_scan_member === false ? "Not in current scan" : "—"}</td>
+                    <td><AssetLink domain={asset.domain} returnTo="risk" returnQuery={`section=historical-high-risk&historical_page=${historicalPage}`} className="row-action">→</AssetLink></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <div className="pagination-bar risk-history-pagination">
+              <span>Page {historicalPage} of {totalHistoricalPages} · {historicalData.total} distinct assets</span>
+              <div>
+                <button type="button" className="secondary-button" disabled={historicalPage <= 1} onClick={() => setHistoricalPage((page) => page - 1)}>Previous</button>
+                <button type="button" className="secondary-button" disabled={historicalPage >= totalHistoricalPages} onClick={() => setHistoricalPage((page) => page + 1)}>Next</button>
+              </div>
+            </div>
+          </>
+        )}
+        {historicalAvailable && incompleteHistoricalScans.length > 0 && (
+          <details className="risk-history-coverage">
+            <summary>Historical coverage details</summary>
+            <p>Missing risk observations are unknown coverage, not Low risk. Historical class-at-scan-time is not stored.</p>
+            <ul>{incompleteHistoricalScans.map((scan) => <li key={scan.scan_id}>Scan #{scan.scan_id}: {scan.assets_with_risk_observation} of {scan.organizational_members} organizational assets had risk observations.</li>)}</ul>
+          </details>
         )}
       </Panel>
 

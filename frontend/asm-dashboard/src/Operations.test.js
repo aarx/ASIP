@@ -5,6 +5,8 @@ import {
   getFindings,
   getDnsSecuritySummary,
   getHttpStatus,
+  getRiskHistoryAssets,
+  getRiskHistorySummary,
   getSensitiveExposure,
   getV2Assets,
   getV2Overview,
@@ -33,6 +35,8 @@ jest.mock("./services/api", () => ({
   getSensitiveExposure: jest.fn(),
   getExposureSummary: jest.fn(),
   getDnsSecuritySummary: jest.fn(),
+  getRiskHistoryAssets: jest.fn(),
+  getRiskHistorySummary: jest.fn(),
 }));
 jest.mock("recharts", () => {
   const actual = jest.requireActual("recharts");
@@ -57,6 +61,8 @@ beforeEach(() => {
     getDnsSecuritySummary,
     getFindings,
     getHttpStatus,
+    getRiskHistoryAssets,
+    getRiskHistorySummary,
     getSensitiveExposure,
     getV2Assets,
     getV2Overview,
@@ -139,7 +145,7 @@ test("risk workspace presents exact metrics and separate review evidence", async
   expect((await screen.findAllByText("critical.example.com"))[0]).toBeInTheDocument();
   const primaryKpis = screen.getByRole("region", { name: "Risk and exposure metrics" });
   expect([...primaryKpis.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
-    "High risk", "Assets with risk scores", "HTTP responding",
+    "Current High Risk", "Assets with risk scores", "HTTP responding", "Previously High Risk",
   ]);
   const actionableKpis = screen.getByRole("region", { name: "Actionable evidence" });
   expect([...actionableKpis.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
@@ -315,6 +321,118 @@ test("priority assets use the exact positive-risk count and paginate the ranked 
   expect(getV2Assets).toHaveBeenLastCalledWith({
     page: 2, limit: 25, risk_positive: true, sort_by: "risk_score", sort_dir: "desc",
   });
+});
+
+test("Risk Overview keeps current High Risk separate from paginated historical High assets", async () => {
+  window.location.hash = "#/risk?section=historical-high-risk";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue([]);
+  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  getHttpStatus.mockResolvedValue(null);
+  getDnsSecuritySummary.mockResolvedValue(null);
+  getRiskHistorySummary.mockResolvedValue({
+    availability_state: "AVAILABLE",
+    latest_successful_scan_id: 19,
+    current_high_assets: 0,
+    historical_unique_high_assets: 19,
+    formerly_high_scoring_assets: 19,
+    current_risk_data_coverage: { organizational_members: 829, assets_with_risk_observation: 829, assets_missing_risk_observation: 0, complete: true },
+    per_scan: [{ scan_id: 12, organizational_members: 197, assets_with_risk_observation: 91, coverage_complete: false }],
+    limitations: ["Missing risk rows are unknown coverage, not Low priority."],
+  });
+  getRiskHistoryAssets.mockResolvedValue({
+    availability_state: "AVAILABLE", latest_successful_scan_id: 19, page: 1, limit: 10, total: 19,
+    assets: [{
+      domain_id: 101, domain: "historical.example.com", asset_class: "SHADOW",
+      first_recorded_high_scan_id: 17, first_recorded_high_scan_time: "2026-11-03T13:00:10.995099",
+      last_recorded_high_scan_id: 17, last_recorded_high_scan_time: "2026-11-03T13:00:10.995099",
+      maximum_persisted_historical_score: 10, high_score_observations: 1,
+      current_scan_member: true, current_risk_score: 3, current_priority: "Low",
+    }],
+  });
+
+  render(<App />);
+
+  expect(await screen.findByRole("link", { name: /Current High Risk/ })).toHaveTextContent("1");
+  const historicalMetric = screen.getByRole("link", { name: /Previously High Risk/ });
+  expect(historicalMetric).toHaveTextContent("19");
+  expect(historicalMetric).toHaveAttribute("href", "#/risk?section=historical-high-risk");
+  expect(await screen.findByText("historical.example.com")).toBeInTheDocument();
+  expect(screen.getByText(/19 distinct assets/)).toBeInTheDocument();
+  expect(screen.getByText("In current scan")).toBeInTheDocument();
+  expect(screen.getByText(/Scan #12: 91 of 197/)).toBeInTheDocument();
+  expect(getRiskHistoryAssets).toHaveBeenCalledWith({ page: 1, limit: 10 });
+  expect(screen.getByRole("link", { name: "Open historical.example.com" })).toHaveAttribute(
+    "href",
+    "#/assets/historical.example.com?return=risk&return_query=section%3Dhistorical-high-risk%26historical_page%3D1"
+  );
+});
+
+test("historical High pagination preserves the exact total and page context", async () => {
+  window.location.hash = "#/risk";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue([]);
+  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  getHttpStatus.mockResolvedValue(null);
+  getDnsSecuritySummary.mockResolvedValue(null);
+  getRiskHistorySummary.mockResolvedValue({ availability_state: "AVAILABLE", historical_unique_high_assets: 19, per_scan: [] });
+  getRiskHistoryAssets
+    .mockResolvedValueOnce({ availability_state: "AVAILABLE", page: 1, limit: 10, total: 19, assets: [{ domain_id: 1, domain: "first.example.com", asset_class: "KNOWN", maximum_persisted_historical_score: 9, high_score_observations: 2 }] })
+    .mockResolvedValueOnce({ availability_state: "AVAILABLE", page: 2, limit: 10, total: 19, assets: [{ domain_id: 2, domain: "last.example.com", asset_class: "SHADOW", maximum_persisted_historical_score: 8, high_score_observations: 1 }] });
+
+  render(<App />);
+
+  expect(await screen.findByText("first.example.com")).toBeInTheDocument();
+  expect(screen.getByText("Page 1 of 2 · 19 distinct assets")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(await screen.findByText("last.example.com")).toBeInTheDocument();
+  expect(getRiskHistoryAssets).toHaveBeenLastCalledWith({ page: 2, limit: 10 });
+  expect(screen.getByText("Page 2 of 2 · 19 distinct assets")).toBeInTheDocument();
+});
+
+test("historical High assets remain unavailable when the response is incomplete", async () => {
+  window.location.hash = "#/risk";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue([]);
+  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  getHttpStatus.mockResolvedValue(null);
+  getDnsSecuritySummary.mockResolvedValue(null);
+  getRiskHistorySummary.mockResolvedValue({ availability_state: "AVAILABLE", historical_unique_high_assets: 19 });
+  getRiskHistoryAssets.mockResolvedValue({ availability_state: "AVAILABLE", page: 1, limit: 10, total: 19, assets: null });
+
+  render(<App />);
+
+  expect(await screen.findByText("Historical High Risk data incomplete")).toBeInTheDocument();
+  expect(screen.queryByText("19 distinct assets")).not.toBeInTheDocument();
+  expect(screen.queryByText("No persisted High-score assets were recorded in successful scans.")).not.toBeInTheDocument();
+});
+
+test("historical High Risk shows unavailable instead of zero when no successful scan exists", async () => {
+  window.location.hash = "#/risk";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue([]);
+  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  getHttpStatus.mockResolvedValue(null);
+  getDnsSecuritySummary.mockResolvedValue(null);
+  getRiskHistorySummary.mockResolvedValue({ availability_state: "UNAVAILABLE", historical_unique_high_assets: 0, limitations: ["No successful scans are available."] });
+
+  render(<App />);
+
+  expect(await screen.findByText("Historical High Risk unavailable")).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /Previously High Risk/ })).not.toBeInTheDocument();
+  expect(getRiskHistoryAssets).not.toHaveBeenCalled();
 });
 
 test("review indicators have truthful empty and isolated failure states", async () => {
