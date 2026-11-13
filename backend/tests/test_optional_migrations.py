@@ -52,7 +52,8 @@ class OptionalMigrationPostgreSQLTests(unittest.TestCase):
             with connection.cursor() as cursor:
                 cursor.execute("""
                     DROP TABLE IF EXISTS public.capd_results,
-                        public.capd_runs, public.asip_optional_migration_ledger CASCADE
+                        public.capd_runs, public.capd_approval_consumptions,
+                        public.asip_optional_migration_ledger CASCADE
                 """)
         connection.close()
 
@@ -162,6 +163,67 @@ class OptionalMigrationPostgreSQLTests(unittest.TestCase):
         with connection.cursor() as cursor:
             cursor.execute("SELECT migration_id FROM public.asip_optional_migration_ledger")
             self.assertEqual(cursor.fetchall(), [("015_add_capd_runs",)])
+        connection.close()
+
+    def test_017_consumption_receipt_migration_is_independent_of_014_015_and_016(self):
+        connection = self.connect()
+        migration = optional_migrations.load_migration(
+            "017_add_capd_approval_consumptions"
+        )
+        result = optional_migrations.apply(
+            connection, migration.migration_id,
+            approval_checksum=migration.checksum,
+        )
+        self.assertEqual(result["state"], "APPLIED")
+        self.assertEqual(result["sha256"], migration.checksum)
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT to_regclass('public.capd_approval_consumptions'),
+                       to_regclass('public.capd_runs'),
+                       to_regclass('public.capd_results'),
+                       to_regclass('public.tracked_security_issues'),
+                       to_regclass('public.tracked_security_issue_history')
+            """)
+            receipt, capd_runs, capd_results, lifecycle, lifecycle_history = cursor.fetchone()
+            self.assertIsNotNone(receipt)
+            self.assertIsNone(capd_runs)
+            self.assertIsNone(capd_results)
+            self.assertIsNone(lifecycle)
+            self.assertIsNone(lifecycle_history)
+            cursor.execute("""
+                SELECT migration_id FROM public.asip_optional_migration_ledger
+                 ORDER BY migration_id
+            """)
+            self.assertEqual(cursor.fetchall(), [("017_add_capd_approval_consumptions",)])
+        connection.close()
+
+    def test_017_failed_ddl_rolls_back_receipt_table_and_ledger(self):
+        connection = self.connect()
+        migration = optional_migrations.load_migration(
+            "017_add_capd_approval_consumptions"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            broken_path = pathlib.Path(directory) / "017_add_capd_approval_consumptions.sql"
+            broken_path.write_text(
+                "BEGIN; CREATE TABLE public.capd_receipt_partial(id integer); "
+                "SELECT definitely_not_valid_sql; COMMIT;",
+                encoding="utf-8",
+            )
+            with mock.patch.dict(optional_migrations.OPTIONAL_MIGRATIONS,
+                                 {migration.migration_id: broken_path}):
+                broken_migration = optional_migrations.load_migration(
+                    migration.migration_id
+                )
+                with self.assertRaises(self.psycopg2.Error):
+                    optional_migrations.apply(
+                        connection, migration.migration_id,
+                        approval_checksum=broken_migration.checksum,
+                    )
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT to_regclass('public.capd_receipt_partial')")
+            self.assertIsNone(cursor.fetchone()[0])
+            cursor.execute("SELECT to_regclass('public.asip_optional_migration_ledger')")
+            self.assertIsNone(cursor.fetchone()[0])
         connection.close()
 
 

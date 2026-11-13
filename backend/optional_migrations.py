@@ -1,7 +1,8 @@
 """Explicit, ledger-backed application of approved optional migrations.
 
-This deliberately supports only migration 015. Sequential historical
-migrations remain governed by the operator procedure in docs/OPERATIONS.md.
+Only explicitly allowlisted optional migrations are supported here.
+Sequential historical migrations remain governed by the operator procedure
+in docs/OPERATIONS.md.
 """
 
 import argparse
@@ -18,6 +19,13 @@ from db import get_conn
 MIGRATION_DIR = Path(__file__).resolve().parent / "migrations"
 OPTIONAL_MIGRATIONS = {
     "015_add_capd_runs": MIGRATION_DIR / "015_add_capd_runs.sql",
+    "017_add_capd_approval_consumptions": MIGRATION_DIR / "017_add_capd_approval_consumptions.sql",
+}
+MIGRATION_OBJECTS = {
+    "015_add_capd_runs": ("public.capd_runs", "public.capd_results"),
+    "017_add_capd_approval_consumptions": (
+        "public.capd_approval_consumptions",
+    ),
 }
 LEDGER = "public.asip_optional_migration_ledger"
 LEDGER_DDL = f"""
@@ -98,9 +106,10 @@ def _read_receipt(cursor, migration):
     return {"sha256": row[0], "source_file": row[1], "applied_at": row[2]}
 
 
-def _capd_objects(cursor):
+def _migration_objects(cursor, migration_id):
+    objects = MIGRATION_OBJECTS[migration_id]
     cursor.execute(
-        "SELECT to_regclass('public.capd_runs'), to_regclass('public.capd_results')"
+        "SELECT " + ", ".join("to_regclass(%s)" for _ in objects), objects
     )
     return cursor.fetchone()
 
@@ -112,7 +121,7 @@ def plan(conn, migration_id):
         cursor.execute("SET TRANSACTION READ ONLY")
         exists = _ledger_exists(cursor)
         receipt = _read_receipt(cursor, migration) if exists else None
-        objects = _capd_objects(cursor)
+        objects = _migration_objects(cursor, migration_id)
     if receipt:
         state = "APPLIED"
     elif any(objects):
@@ -153,7 +162,7 @@ def apply(conn, migration_id, *, approval_checksum=None):
                 raise OptionalMigrationError(
                     f"Migration {migration_id} is already applied"
                 )
-            if any(_capd_objects(cursor)):
+            if any(_migration_objects(cursor, migration_id)):
                 raise OptionalMigrationError(
                     "CAPD objects exist without a receipt; refusing to adopt them"
                 )

@@ -118,8 +118,14 @@ The signed `max_requests: 1` field is a scope limit, not replay prevention.
 The current dry-run does not consume approvals, and replaying a token may
 produce another authorization preview; both previews still perform zero
 network requests and zero writes because no transport is wired. A future live
-path is blocked until it atomically consumes the run ID through unique CAPD
-run persistence before any I/O, revalidates immediately before connecting,
-enforces the one-request budget, and refuses redirects.
+path must call the single-use consumption gate, which revalidates current
+target policy and atomically records a receipt keyed by the signed run ID
+before returning permission to proceed. Migration
+`017_add_capd_approval_consumptions.sql` creates this receipt table through the
+approved optional migration runner; it does not modify CAPD assessment runs
+and is independent of Findings Lifecycle migration 014. A failed request or
+process crash after receipt commit leaves the approval consumed. The transport
+must still make at most one bounded request and refuse redirects. This release
+does not wire or execute that transport.
 An approval token by itself is never evidence that a check was executed or a
 vulnerability was found.

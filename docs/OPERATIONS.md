@@ -114,7 +114,7 @@ Migrations 001 and 002 are transactional but not safely re-runnable; migration 0
 
 ### Explicitly approved optional migrations
 
-Some feature migrations are intentionally optional and may be applied out of numeric order only when the change owner has explicitly approved that migration. The supported optional path is deliberately narrow: `backend/optional_migrations.py` currently allowlists only `015_add_capd_runs`. Migration 014 (Findings Lifecycle) is not optional through this command and must not be applied as a prerequisite for 015. Do not add ordinary sequential migrations to the optional allowlist.
+Some feature migrations are intentionally optional and may be applied out of numeric order only when the change owner has explicitly approved that migration. The supported optional path is deliberately narrow: `backend/optional_migrations.py` allowlists `015_add_capd_runs` and `017_add_capd_approval_consumptions`. Migration 014 (Findings Lifecycle) is not optional through this command and must not be applied as a prerequisite for either CAPD migration. Migration 017 depends only on the existing `scans` and `domains` tables; it does not depend on 015 or 016. Do not add ordinary sequential migrations to the optional allowlist.
 
 The optional-migration ledger (`public.asip_optional_migration_ledger`) records only migrations applied by this mechanism. It records the stable migration ID, source filename, SHA-256 of the exact SQL file bytes, and PostgreSQL application timestamp. It does not backfill or claim that earlier migrations were applied through this runner. SQL and its receipt are committed in the same PostgreSQL transaction; an error rolls back both. An advisory transaction lock serializes concurrent optional-migration attempts.
 
@@ -125,7 +125,14 @@ docker compose -p asip exec -T backend \
   python3 /app/optional_migrations.py plan --migration 015_add_capd_runs
 ```
 
-The plan prints the migration ID, filename, checksum, pending/applied state, and whether CAPD objects or the ledger already exist. It does not create the ledger. Stop if the checksum differs from a prior receipt, if CAPD objects exist without a receipt, if the migration is already applied, or if the result is otherwise unexpected. Review the exact SQL and obtain explicit change approval before applying:
+The plan prints the migration ID, filename, checksum, pending/applied state, and whether that migration's expected objects or the ledger already exist. It does not create the ledger. Stop if the checksum differs from a prior receipt, if expected objects exist without a receipt, if the migration is already applied, or if the result is otherwise unexpected. Migration 017 can be reviewed with:
+
+```bash
+docker compose -p asip exec -T backend \
+  python3 /app/optional_migrations.py plan --migration 017_add_capd_approval_consumptions
+```
+
+Review the exact SQL and obtain explicit change approval before applying:
 
 ```bash
 docker compose -p asip exec -T backend \
@@ -133,7 +140,15 @@ docker compose -p asip exec -T backend \
     --approve-sha256 <sha256-from-reviewed-plan>
 ```
 
-The exact checksum from the reviewed plan is required as the approval token; if the SQL changes between review and application, the command stops. Only IDs compiled into the optional allowlist are accepted. The runner refuses duplicate application, validates a recorded checksum, and rejects untracked pre-existing CAPD objects. Never use this command to apply migration 014 or to write synthetic receipts for legacy migrations.
+For migration 017, use its exact reviewed checksum and stable ID in the same command:
+
+```bash
+docker compose -p asip exec -T backend \
+  python3 /app/optional_migrations.py apply --migration 017_add_capd_approval_consumptions \
+    --approve-sha256 <sha256-from-reviewed-plan>
+```
+
+The exact checksum from the reviewed plan is required as the approval token; if the SQL changes between review and application, the command stops. Only IDs compiled into the optional allowlist are accepted. The runner refuses duplicate application, validates a recorded checksum, and rejects untracked pre-existing objects belonging to the selected migration. Never use this command to apply migration 014 or to write synthetic receipts for legacy migrations.
 
 After application, retain the printed receipt with the deployment record and independently verify the ledger checksum/timestamp and expected tables. If execution fails, PostgreSQL rolls back the schema changes and receipt together. Confirm that neither CAPD tables nor a receipt were left behind, correct the cause, rerun the read-only plan, and repeat the approval process. Do not manually edit/delete ledger rows or partially created schema. If a connection is lost during commit and outcome is uncertain, query the ledger and schema read-only before retrying; matching receipt means applied, no receipt and no CAPD objects means the transaction rolled back, and any other state requires operator investigation.
 
