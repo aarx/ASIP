@@ -37,6 +37,7 @@ from capd_approval_contract import (
 
 
 APPROVER_PATH = Path("/usr/local/libexec/asip-capd-approve")
+SUDO_PATH = Path("/usr/bin/sudo")
 PRIVATE_KEY_PATH = Path("/etc/asip/capd-approval-ed25519.pem")
 PUBLIC_KEY_PATH = Path("/run/secrets/capd-approval-ed25519.pub")
 APPROVER_GROUP = "asip-capd-operator"
@@ -89,6 +90,41 @@ def _safe_root_file(path, *, private=False):
     return path.read_bytes()
 
 
+def _sudo_invoking_identity():
+    # sudo normally sets both real and effective IDs to the target (root).
+    # Therefore getuid() is not the invoking operator. Accept sudo metadata
+    # only when this process is demonstrably the child of the protected sudo
+    # binary, sudo ran as root, and its command metadata names this exact
+    # protected helper. The installation must retain sudo's env_reset and must
+    # not preserve/allow caller-supplied SUDO_* variables (see CAPD_LOCAL_AUTH.md).
+    try:
+        sudo_stat = SUDO_PATH.stat()
+        parent_exe = Path(f"/proc/{os.getppid()}/exe").resolve(strict=True)
+        parent_status = Path(f"/proc/{os.getppid()}/status").read_text()
+        uid_line = next(line for line in parent_status.splitlines() if line.startswith("Uid:"))
+        parent_euid = int(uid_line.split()[2])
+        command = os.environ.get("SUDO_COMMAND", "")
+        command_name = command.split(" ", 1)[0]
+        uid = int(os.environ.get("SUDO_UID", ""))
+        sudo_user = os.environ.get("SUDO_USER", "")
+    except (OSError, ValueError, StopIteration, IndexError) as exc:
+        raise LocalApprovalError("trusted sudo operator identity is unavailable") from exc
+    if (not stat.S_ISREG(sudo_stat.st_mode) or sudo_stat.st_uid != 0
+            or not sudo_stat.st_mode & stat.S_ISUID or sudo_stat.st_mode & 0o022
+            or parent_exe != SUDO_PATH.resolve()
+            or parent_euid != 0
+            or command_name != str(APPROVER_PATH)
+            or uid <= 0):
+        raise LocalApprovalError("invoking identity is not from the protected sudo launcher")
+    try:
+        operator = pwd.getpwuid(uid)
+    except KeyError as exc:
+        raise LocalApprovalError("sudo operator UID is absent from the OS account database") from exc
+    if operator.pw_name != sudo_user:
+        raise LocalApprovalError("sudo operator name does not match the OS account")
+    return uid, operator.pw_name
+
+
 def _verify_protected_installation(executable=None):
     executable = Path(executable or sys.argv[0])
     if executable != APPROVER_PATH:
@@ -105,9 +141,7 @@ def _verify_protected_installation(executable=None):
         current = current.parent
     if os.geteuid() != 0:
         raise LocalApprovalError("host approval helper must run through its restricted root launcher")
-    uid = os.getuid()
-    if uid <= 0:
-        raise LocalApprovalError("container/root identity is not a CAPD operator identity")
+    uid, operator_name = _sudo_invoking_identity()
     try:
         operator = pwd.getpwuid(uid)
         group = grp.getgrnam(APPROVER_GROUP)
@@ -116,7 +150,7 @@ def _verify_protected_installation(executable=None):
         raise LocalApprovalError("dedicated CAPD operator group is not configured") from exc
     if group.gr_gid not in memberships:
         raise LocalApprovalError("local OS identity is not in the CAPD operator group")
-    return uid, operator.pw_name
+    return uid, operator_name
 
 
 def _read_private_key(path=PRIVATE_KEY_PATH):

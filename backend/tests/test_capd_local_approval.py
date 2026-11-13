@@ -3,6 +3,7 @@ import json
 import pathlib
 import stat
 import sys
+import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
 import capd_local_approval as approval  # noqa: E402
+import capd_cli  # noqa: E402
 from capd_approval_contract import (  # noqa: E402
     APACHE_CHECK_ID, APACHE_CHECK_REVISION, CAPD_HTTP_HEADER_VERIFY,
 )
@@ -26,6 +28,11 @@ from apache_version_verification import create_authorization_context  # noqa: E4
 class TTYInput(io.StringIO):
     def isatty(self):
         return True
+
+
+class ApprovalInput:
+    def __init__(self, document):
+        self.buffer = io.BytesIO(document.encode("utf-8"))
 
 
 class CapdLocalApprovalTests(unittest.TestCase):
@@ -130,7 +137,7 @@ class CapdLocalApprovalTests(unittest.TestCase):
         with mock.patch.object(approval, "APPROVER_PATH", executable), \
                 mock.patch.object(approval.Path, "lstat", autospec=True, side_effect=lambda self: fake_stat(self)), \
                 mock.patch.object(approval.os, "geteuid", return_value=0), \
-                mock.patch.object(approval.os, "getuid", return_value=1001), \
+                mock.patch.object(approval, "_sudo_invoking_identity", return_value=(1001, "approved")), \
                 mock.patch.object(approval.pwd, "getpwuid", return_value=operator), \
                 mock.patch.object(approval.grp, "getgrnam", return_value=group), \
                 mock.patch.object(approval.os, "getgrouplist", return_value=[1001, 9001]), \
@@ -139,14 +146,14 @@ class CapdLocalApprovalTests(unittest.TestCase):
         with mock.patch.object(approval, "APPROVER_PATH", executable), \
                 mock.patch.object(approval.Path, "lstat", autospec=True, side_effect=lambda self: fake_stat(self)), \
                 mock.patch.object(approval.os, "geteuid", return_value=0), \
-                mock.patch.object(approval.os, "getuid", return_value=0), \
+                mock.patch.object(approval, "_sudo_invoking_identity", side_effect=approval.LocalApprovalError("not sudo")), \
                 mock.patch.object(approval.sys, "argv", [str(executable)]), \
                 self.assertRaises(approval.LocalApprovalError):
             approval._verify_protected_installation()
         with mock.patch.object(approval, "APPROVER_PATH", executable), \
                 mock.patch.object(approval.Path, "lstat", autospec=True, side_effect=lambda self: fake_stat(self)), \
                 mock.patch.object(approval.os, "geteuid", return_value=0), \
-                mock.patch.object(approval.os, "getuid", return_value=1002), \
+                mock.patch.object(approval, "_sudo_invoking_identity", return_value=(1002, "other")), \
                 mock.patch.object(approval.pwd, "getpwuid", return_value=operator), \
                 mock.patch.object(approval.grp, "getgrnam", return_value=group), \
                 mock.patch.object(approval.os, "getgrouplist", return_value=[1001]), \
@@ -161,6 +168,131 @@ class CapdLocalApprovalTests(unittest.TestCase):
                 mock.patch.object(approval.sys, "argv", [str(executable)]), \
                 self.assertRaises(approval.LocalApprovalError):
             approval._verify_protected_installation()
+
+    def test_sudo_identity_uses_verified_sudo_metadata_when_real_uid_is_root(self):
+        sudo_stat = SimpleNamespace(
+            st_mode=stat.S_IFREG | stat.S_ISUID | 0o755, st_uid=0,
+        )
+        status = "Name:\tsudo\nUid:\t1001\t0\t0\t0\n"
+        with mock.patch.object(approval.Path, "stat", autospec=True, return_value=sudo_stat), \
+                mock.patch.object(approval.Path, "resolve", autospec=True, side_effect=lambda self, **_kw: pathlib.Path("/usr/bin/sudo") if str(self).endswith("/exe") else pathlib.Path("/usr/bin/sudo")), \
+                mock.patch.object(approval.os, "getppid", return_value=55), \
+                mock.patch.object(approval.os, "getuid", return_value=0), \
+                mock.patch.object(approval.Path, "read_text", return_value=status), \
+                mock.patch.dict(os.environ, {
+                    "SUDO_UID": "1001", "SUDO_USER": "approved",
+                    "SUDO_COMMAND": "/usr/local/libexec/asip-capd-approve --asset-id 11",
+                }), \
+                mock.patch.object(approval.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="approved")):
+            self.assertEqual(approval._sudo_invoking_identity(), (1001, "approved"))
+
+    def test_sudo_identity_rejects_forged_environment_or_untrusted_parent(self):
+        sudo_stat = SimpleNamespace(st_mode=stat.S_IFREG | stat.S_ISUID | 0o755, st_uid=0)
+        with mock.patch.object(approval.Path, "stat", autospec=True, return_value=sudo_stat), \
+                mock.patch.object(approval.Path, "resolve", autospec=True, side_effect=lambda self, **_kw: pathlib.Path("/tmp/fake") if str(self).startswith("/proc/") else pathlib.Path("/usr/bin/sudo")), \
+                mock.patch.object(approval.os, "getppid", return_value=55), \
+                mock.patch.object(approval.Path, "read_text", return_value="Uid:\t1001\t0\t0\t0\n"), \
+                mock.patch.dict(os.environ, {
+                    "SUDO_UID": "1001", "SUDO_USER": "approved",
+                    "SUDO_COMMAND": "/usr/local/libexec/asip-capd-approve",
+                }), \
+                self.assertRaises(approval.LocalApprovalError):
+            approval._sudo_invoking_identity()
+
+    def test_complete_signed_cli_dry_run_rechecks_target_and_never_performs_io(self):
+        argv = [
+            "--run-id", self.payload["run_id"], "--scan-id", "19", "--asset-id", "11",
+            "--domain", "web.example.test", "--origin", "https://web.example.test/",
+        ]
+        token_out = io.StringIO()
+        with mock.patch.object(approval, "_verify_protected_installation", return_value=(1001, "approved")), \
+                mock.patch.object(approval, "_read_private_key", return_value=self.private_key), \
+                mock.patch.object(approval.sys, "stdin", TTYInput("APPROVE 11\n")), \
+                mock.patch.object(approval.sys, "stdout", token_out), \
+                mock.patch.object(approval.sys, "stderr", io.StringIO()):
+            self.assertEqual(approval.issue_main(argv), 0)
+        document = token_out.getvalue().strip()
+        target = {
+            "domain_id": 11, "domain": "web.example.test", "asset_class": "SHADOW",
+            "scannable": True, "inventory_eligible": True,
+            "classification": "VERSION_UNKNOWN",
+            "evidence": [{
+                "source": "domain_technology_observations", "technology": "apache",
+                "evidence_type": "server_header", "observed_url": "https://web.example.test/",
+            }],
+        }
+        preview = {
+            "source_scan": {"scan_id": 19, "status": "SUCCEEDED"},
+            "product": {"name": "Apache HTTP Server"},
+            "selection": {"limit": 10}, "populations": {"eligible_inventory": 1},
+            "targets": [target],
+        }
+        conn = mock.MagicMock()
+        conn.cursor.return_value = object()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": CAPD_HTTP_HEADER_VERIFY}), \
+                mock.patch.object(capd_cli, "get_conn", return_value=conn), \
+                mock.patch.object(capd_cli, "preview_product_targets", return_value=preview), \
+                mock.patch.object(capd_cli, "_read_public_key", return_value=self.public_key), \
+                mock.patch.object(capd_cli, "recheck_apache_target_from_inventory", return_value={"inventory_policy_passed": True, "reason_codes": []}) as fresh_check, \
+                mock.patch.object(capd_cli.sys, "stdin", ApprovalInput(document)), \
+                mock.patch.object(capd_cli.sys, "stdout", stdout), \
+                mock.patch.object(capd_cli.sys, "stderr", stderr):
+            # Replaying a token remains a dry-run only; no transport is wired.
+            for _ in range(2):
+                stdout.seek(0)
+                stdout.truncate(0)
+                capd_cli.sys.stdin.buffer.seek(0)
+                self.assertEqual(capd_cli.main([
+                    "apache-version", "--dry-run", "--scan-id", "19",
+                    "--asset-id", "11", "--approval-stdin",
+                ]), 0, stderr.getvalue())
+                result = json.loads(stdout.getvalue())
+                self.assertEqual(result["authorization"]["state"], "AUTHORIZED")
+                self.assertEqual(result["network_requests"], 0)
+                self.assertEqual(result["database_writes"], 0)
+                self.assertFalse(result["live_execution_enabled"])
+            self.assertEqual(fresh_check.call_count, 4)
+            conn.close.assert_called()
+
+    def test_cli_dry_run_denies_revoked_scope_or_disabled_operation(self):
+        current_payload = approval.build_approval_payload(
+            run_id=str(uuid.uuid4()), source_scan_id=19, asset_id=11,
+            domain="web.example.test", origin="https://web.example.test/",
+            operator_uid=1001, operator_name="approved",
+        )
+        document = self.signed(current_payload)
+        target = {
+            "domain_id": 11, "domain": "web.example.test", "asset_class": "SHADOW",
+            "scannable": True, "inventory_eligible": True,
+            "classification": "VERSION_UNKNOWN",
+            "evidence": [{
+                "source": "domain_technology_observations", "technology": "apache",
+                "evidence_type": "server_header", "observed_url": "https://web.example.test/",
+            }],
+        }
+        preview = {
+            "source_scan": {"scan_id": 19, "status": "SUCCEEDED"},
+            "product": {}, "selection": {}, "populations": {}, "targets": [target],
+        }
+        for enabled, fresh in ((CAPD_HTTP_HEADER_VERIFY, False), ("HTTP_TLS_OBSERVATION", True)):
+            conn, stdout = mock.MagicMock(), io.StringIO()
+            with self.subTest(enabled=enabled, fresh=fresh), \
+                    mock.patch.dict(os.environ, {"ASIP_DEFAULT_SCAN_OPERATIONS": enabled}), \
+                    mock.patch.object(capd_cli, "get_conn", return_value=conn), \
+                    mock.patch.object(capd_cli, "preview_product_targets", return_value=preview), \
+                    mock.patch.object(capd_cli, "_read_public_key", return_value=self.public_key), \
+                    mock.patch.object(capd_cli, "recheck_apache_target_from_inventory", return_value={"inventory_policy_passed": fresh, "reason_codes": []}), \
+                    mock.patch.object(capd_cli.sys, "stdin", ApprovalInput(document)), \
+                    mock.patch.object(capd_cli.sys, "stdout", stdout), \
+                    mock.patch.object(capd_cli.sys, "stderr", io.StringIO()):
+                self.assertEqual(capd_cli.main([
+                    "apache-version", "--dry-run", "--scan-id", "19",
+                    "--asset-id", "11", "--approval-stdin",
+                ]), 0, "see captured CLI error")
+                result = json.loads(stdout.getvalue())
+                self.assertEqual(result["authorization"]["state"], "NOT_AUTHORIZED")
+                self.assertEqual(result["network_requests"], 0)
 
     def test_interactive_host_confirmation_emits_signed_document_only_after_confirmation(self):
         argv = [

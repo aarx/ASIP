@@ -12,13 +12,20 @@ small shared contract module at `capd_approval_contract.py`. Install both
 root-owned in `/usr/local/libexec/`, placing the helper at
 `/usr/local/libexec/asip-capd-approve` and the contract module beside it. The
 helper must not be writable by group or others. The helper refuses to issue approvals unless it
-runs with effective UID 0, its real UID is a non-root user in the
-`asip-capd-operator` OS group, the installed path and all parent directories
-are root-protected, and the Ed25519 private key at
+runs with effective UID 0 through `/usr/bin/sudo`, the protected sudo binary
+is the helper's parent process, and sudo identifies a non-root invoking user
+in the `asip-capd-operator` OS group. Sudo normally sets both real and
+effective UIDs to the target root account, so `os.getuid()` is not the
+invoking-user identity. The helper checks sudo's `SUDO_UID`, `SUDO_USER`, and
+`SUDO_COMMAND` against the OS account database, protected sudo process, and
+exact installed helper path. The sudo binary and installed path and all parent
+directories must be root-protected, and the Ed25519 private key at
 `/etc/asip/capd-approval-ed25519.pem` is root-owned and mode 0400 or 0600.
-Identity comes from the kernel real UID and the host group database; no
-`SUDO_UID`, username argument, environment variable, client header, or
-container-root identity is trusted.
+The sudoers rule must retain `env_reset`, must not preserve `SUDO_*`, must not
+grant `SETENV`, and must permit only this exact helper. These requirements
+establish the provenance of sudo-provided identity metadata; arbitrary
+`SUDO_UID` or `SUDO_USER` values without that boundary are rejected. No
+username argument, client header, or container-root identity is trusted.
 
 The backend receives only the public key, mounted read-only at
 `/run/secrets/capd-approval-ed25519.pub`. The host private key must never be
@@ -54,7 +61,10 @@ are intentionally not executed by this source-only milestone:
    chmod 0444 /etc/asip/capd-approval-ed25519.pub
    ```
 
-   The host helper also requires Python `cryptography` to be installed. Bind
+   The host helper also requires Python `cryptography` to be installed. Verify
+   it with `/usr/bin/python3 -c 'import cryptography'`. The helper imports the
+   adjacent protected `capd_approval_contract.py` from its script directory.
+   Bind
    mount the public file read-only as
    `/run/secrets/capd-approval-ed25519.pub` in the backend service.
 3. Install the helper as
@@ -63,10 +73,13 @@ are intentionally not executed by this source-only milestone:
    `install -o root -g root -m 0644 backend/capd_approval_contract.py /usr/local/libexec/capd_approval_contract.py`.
    Keep parent directories root-owned and non-writable by group or others.
 4. Add a narrowly reviewed sudoers rule using `visudo -f
-   /etc/sudoers.d/asip-capd-operator`, for example:
-   `%asip-capd-operator ALL=(root) NOPASSWD: /usr/local/libexec/asip-capd-approve`.
-   The helper validates every argument, checks the real UID/group, and
-   interactively confirms the one target before signing.
+   /etc/sudoers.d/asip-capd-operator`. Retain `env_reset`; do not add
+   `SUDO_*` to `env_keep`, enable `SETENV`, or allow command selection. Permit
+   only `/usr/local/libexec/asip-capd-approve` for the operator group. Confirm
+   the installed sudo exports `SUDO_UID`, `SUDO_USER`, and `SUDO_COMMAND`.
+   The helper validates their provenance, OS account and group membership,
+   validates every argument, and interactively confirms the one target before
+   signing.
 5. Apply migration `016_add_capd_http_header_verify_operation.sql` through the
    approved optional migration process before storing operation-specific exclusions.
    It extends only the existing operation constraint and does not alter
@@ -101,8 +114,12 @@ sudo /usr/local/libexec/asip-capd-approve \
     --dry-run --scan-id SCAN_ID --asset-id ASSET_ID --approval-stdin
 ```
 
-When a live path is separately approved, it must consume the run ID through
-the existing unique CAPD run persistence before any I/O, revalidate immediately
-before connecting, enforce the signed one-request budget, and refuse redirects.
+The signed `max_requests: 1` field is a scope limit, not replay prevention.
+The current dry-run does not consume approvals, and replaying a token may
+produce another authorization preview; both previews still perform zero
+network requests and zero writes because no transport is wired. A future live
+path is blocked until it atomically consumes the run ID through unique CAPD
+run persistence before any I/O, revalidates immediately before connecting,
+enforces the one-request budget, and refuses redirects.
 An approval token by itself is never evidence that a check was executed or a
 vulnerability was found.
