@@ -52,6 +52,12 @@ def build_parser():
     results.add_argument("--status")
     results.add_argument("--page", type=int, default=1)
     results.add_argument("--limit", type=int, default=50)
+    apache = commands.add_parser(
+        "apache-version", help="preview a future Apache version-header check; dry-run only"
+    )
+    apache.add_argument("--scan-id", type=int)
+    apache.add_argument("--limit", type=int, default=MAX_TARGETS)
+    apache.add_argument("--dry-run", action="store_true", required=True)
     return parser
 
 
@@ -68,6 +74,46 @@ def main(argv=None):
             conn = get_conn()
             try:
                 _json(preview_product_targets(conn, args.product, scan_id=args.scan_id, limit=args.limit))
+                return 0
+            finally:
+                conn.close()
+        if args.command == "apache-version":
+            conn = get_conn()
+            try:
+                preview = preview_product_targets(
+                    conn, "apache", scan_id=args.scan_id, limit=args.limit
+                )
+                candidates = [
+                    target for target in preview["targets"]
+                    if target["classification"] in {"VERSION_KNOWN", "VERSION_UNKNOWN"}
+                ]
+                _json({
+                    "mode": "dry-run",
+                    "source_scan": preview["source_scan"],
+                    "product": preview["product"],
+                    "selection": preview["selection"],
+                    "populations": preview["populations"],
+                    "candidate_count": len(candidates),
+                    "planned_requests": [
+                        {
+                            "domain_id": target["domain_id"],
+                            "domain": target["domain"],
+                            "asset_class": target["asset_class"],
+                            "classification": target["classification"],
+                            "plan": "bounded GET to stored Apache observation origin",
+                        }
+                        for target in candidates
+                    ],
+                    "network_requests": 0,
+                    "database_writes": 0,
+                    "live_execution_enabled": False,
+                    "authorization": {
+                        "operation": "ADHOC_CHECK",
+                        "state": "NOT_EVALUATED_DRY_RUN_ONLY",
+                        "required_before_live_execution": True,
+                        "requires_fresh_target_revalidation": True,
+                    },
+                })
                 return 0
             finally:
                 conn.close()

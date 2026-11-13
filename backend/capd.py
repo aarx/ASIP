@@ -248,7 +248,11 @@ def _select_targets(cur, scan_id, limit):
          ORDER BY d.domain, d.id
          LIMIT %s
     """, (scan_id, int(limit)))
-    return [{"domain_id": row[0], "domain": row[1], "asset_class": row[2]} for row in cur.fetchall()]
+    # These fields document that this exact row passed the inventory
+    # eligibility query. They are not a substitute for a fresh operation-level
+    # authorization check before any future live CAPD request.
+    return [{"domain_id": row[0], "domain": row[1], "asset_class": row[2],
+             "scannable": True, "inventory_eligible": True} for row in cur.fetchall()]
 
 
 def preview_targets(conn, check_id, *, scan_id=None, limit=MAX_TARGETS):

@@ -320,6 +320,8 @@ class CapdPostgreSQLTests(unittest.TestCase):
             self.assertEqual(counts["insufficient_evidence"], 1)
             self.assertEqual({row["classification"] for row in preview["targets"]},
                              {"VERSION_KNOWN", "VERSION_UNKNOWN", "SERVICE_ONLY_CANDIDATE"})
+            self.assertTrue(all(row["scannable"] and row["inventory_eligible"]
+                                for row in preview["targets"]))
             self.assertFalse(preview["version_verification_preview"]["enabled"])
             self.assertEqual(preview["version_verification_preview"]["network_requests"], 0)
             self.assertEqual(preview["version_verification_preview"]["database_writes"], 0)
