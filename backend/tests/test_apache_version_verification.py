@@ -13,6 +13,9 @@ sys.path.insert(0, str(BACKEND))
 
 import apache_version_verification as verification  # noqa: E402
 from capd_cli import main as capd_cli_main  # noqa: E402
+from capd_approval_contract import CAPD_HTTP_HEADER_VERIFY  # noqa: E402
+import capd_local_approval as local_approval  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
 
 
 def target(**overrides):
@@ -93,10 +96,10 @@ class ApacheVersionVerificationTests(unittest.TestCase):
                 fresh_target_recheck=recheck, now=now,
             )
         self.assertEqual(denied["decision"], "NOT_AUTHORIZED")
-        self.assertIn("ADHOC_CHECK_OPERATION_DISABLED", denied["reason_codes"])
+        self.assertIn("CAPD_HTTP_HEADER_VERIFY_OPERATION_DISABLED", denied["reason_codes"])
         approval.assert_not_called()
 
-        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "ADHOC_CHECK"}):
+        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "CAPD_HTTP_HEADER_VERIFY"}):
             allowed = verification.authorize_apache_target(
                 context, selected_target, trusted_operator_approval=approval,
                 fresh_target_recheck=recheck, now=now,
@@ -104,7 +107,7 @@ class ApacheVersionVerificationTests(unittest.TestCase):
         self.assertEqual(allowed["decision"], "AUTHORIZED")
         approval.assert_called_once_with(context, selected_target)
         self.assertEqual(recheck.call_count, 2)
-        recheck.assert_called_with(context, selected_target, testing_level="ADHOC_CHECK")
+        recheck.assert_called_with(context, selected_target, testing_level="CAPD_HTTP_HEADER_VERIFY")
 
     def test_run_context_requires_trusted_approval_and_fresh_target_recheck(self):
         now = datetime(2026, 11, 13, tzinfo=timezone.utc)
@@ -112,7 +115,7 @@ class ApacheVersionVerificationTests(unittest.TestCase):
             verification.APACHE_CHECK_ID, verification.APACHE_CHECK_REVISION, 19, now=now
         )
         selected_target = {**target(), "source_scan_id": 19}
-        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "ADHOC_CHECK"}):
+        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "CAPD_HTTP_HEADER_VERIFY"}):
             denied = verification.evaluate_apache_authorization(
                 context, selected_target, now=now
             )
@@ -128,7 +131,7 @@ class ApacheVersionVerificationTests(unittest.TestCase):
             )
             self.assertEqual(accepted["decision"], "AUTHORIZED")
             approval.assert_called_once_with(context, selected_target)
-            recheck.assert_called_once_with(context, selected_target, testing_level="ADHOC_CHECK")
+            recheck.assert_called_once_with(context, selected_target, testing_level="CAPD_HTTP_HEADER_VERIFY")
 
             stale = verification.evaluate_apache_authorization(
                 context, selected_target, trusted_operator_approval=approval,
@@ -147,7 +150,7 @@ class ApacheVersionVerificationTests(unittest.TestCase):
         context = verification.create_authorization_context(
             verification.APACHE_CHECK_ID, verification.APACHE_CHECK_REVISION, 19, now=now
         )
-        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "ADHOC_CHECK"}):
+        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "CAPD_HTTP_HEADER_VERIFY"}):
             for candidate in (
                 {**target(asset_class="CANDIDATE"), "source_scan_id": 19},
                 {**target(asset_class="EXTERNAL"), "source_scan_id": 19},
@@ -175,7 +178,7 @@ class ApacheVersionVerificationTests(unittest.TestCase):
                 context, {**target(), "source_scan_id": 19}, now=now
             )
         self.assertEqual(decision["decision"], "NOT_AUTHORIZED")
-        self.assertIn("ADHOC_CHECK_OPERATION_DISABLED", decision["reason_codes"])
+        self.assertIn("CAPD_HTTP_HEADER_VERIFY_OPERATION_DISABLED", decision["reason_codes"])
 
     def test_response_adapter_parses_server_header_without_following_redirects(self):
         response = mock.Mock(status_code=200, headers={"sErVeR": "Apache/2.4.58 (Unix)"})
@@ -226,7 +229,7 @@ class ApacheVersionVerificationTests(unittest.TestCase):
         }
         connection = mock.Mock()
         inventory_check = mock.Mock(return_value={
-            "inventory_policy_passed": False, "reason_codes": ["ADHOC_CHECK_OPERATION_DISABLED"],
+            "inventory_policy_passed": False, "reason_codes": ["CAPD_HTTP_HEADER_VERIFY_OPERATION_DISABLED"],
         })
         output = io.StringIO()
         with mock.patch("capd_cli.get_conn", return_value=connection), \
@@ -236,7 +239,7 @@ class ApacheVersionVerificationTests(unittest.TestCase):
                 contextlib.redirect_stdout(output):
             self.assertEqual(capd_cli_main(["apache-version", "--dry-run", "--scan-id", "19"]), 0)
         select.assert_called_once_with(connection, "apache", scan_id=19, limit=1000)
-        inventory_check.assert_called_once()
+        self.assertEqual(inventory_check.call_count, 2)
         connection.close.assert_called_once()
         rendered = json.loads(output.getvalue())
         self.assertEqual(rendered["network_requests"], 0)
@@ -250,9 +253,57 @@ class ApacheVersionVerificationTests(unittest.TestCase):
         self.assertTrue(rendered["authorization"]["inventory_target_recheck_evaluated"])
         self.assertFalse(rendered["authorization"]["full_authorization_grant_evaluated"])
         self.assertIn(
-            "ADHOC_CHECK_OPERATION_DISABLED",
+            "CAPD_HTTP_HEADER_VERIFY_OPERATION_DISABLED",
             rendered["authorization"]["reason_counts"],
         )
+
+    def test_cli_valid_local_approval_is_bound_to_one_target_and_still_dry_run(self):
+        now = datetime.now(timezone.utc)
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key()
+        run_id = "2296b8e8-719b-463d-91f2-41ce97db4201"
+        payload = local_approval.build_approval_payload(
+            run_id=run_id, source_scan_id=19, asset_id=11,
+            domain="web.example.test", origin="https://web.example.test/",
+            operator_uid=1001, operator_name="capd-operator", now=now,
+        )
+        document = local_approval.sign_approval(payload, private_key).encode()
+        selected = {
+            **target(), "domain_id": 11, "source_scan_id": 19,
+        }
+        preview = {
+            "source_scan": {"scan_id": 19, "status": "SUCCEEDED"},
+            "product": "Apache HTTP Server", "selection": {}, "populations": {},
+            "targets": [selected],
+        }
+        connection = mock.Mock()
+        recheck = mock.Mock(return_value={
+            "inventory_policy_passed": True,
+            "reason_codes": ["INVENTORY_AND_OPERATION_POLICY_PASSED"],
+        })
+        output = io.StringIO()
+        fake_stdin = mock.Mock()
+        fake_stdin.buffer = io.BytesIO(document)
+        with mock.patch("capd_cli.get_conn", return_value=connection), \
+                mock.patch("capd_cli.preview_product_targets", return_value=preview), \
+                mock.patch("capd_cli.recheck_apache_target_from_inventory", recheck), \
+                mock.patch("capd_cli._read_public_key", return_value=public_key), \
+                mock.patch("capd_cli.sys.stdin", fake_stdin), \
+                mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": CAPD_HTTP_HEADER_VERIFY}), \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(capd_cli_main([
+                "apache-version", "--dry-run", "--scan-id", "19", "--asset-id", "11",
+                "--approval-stdin",
+            ]), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["authorization"]["state"], "AUTHORIZED")
+        self.assertEqual(result["authorization"]["approved_target_count"], 1)
+        self.assertEqual(result["authorization"]["operation"], CAPD_HTTP_HEADER_VERIFY)
+        self.assertEqual(result["network_requests"], 0)
+        self.assertEqual(result["database_writes"], 0)
+        self.assertFalse(result["live_execution_enabled"])
+        self.assertEqual(recheck.call_count, 2)
+        connection.close.assert_called_once()
 
     def test_cli_requires_dry_run_flag_and_has_no_live_mode(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

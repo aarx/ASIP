@@ -3,7 +3,7 @@
 This module deliberately has no HTTP client, resolver, or socket dependency.
 It validates a future request plan and classifies a supplied response. Live
 verification remains unavailable until a separately approved CAPD execution
-path binds the ADHOC_CHECK recheck to a trusted transport.
+path binds CAPD_HTTP_HEADER_VERIFY to a trusted transport.
 """
 
 from __future__ import annotations
@@ -17,18 +17,29 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from apache_version_evidence import parse_apache_server_header
 from authorization_policy import default_operation_enabled
+from capd_approval_contract import (
+    APACHE_CHECK_ID,
+    APACHE_CHECK_REVISION,
+    CAPD_HTTP_HEADER_VERIFY,
+    validate_apache_origin as _contract_validated_origin,
+)
 
 
 DEFAULT_TIMEOUT_SECONDS = 3.0
 MAX_TIMEOUT_SECONDS = 5.0
 AUTHORIZATION_CONTEXT_TTL = timedelta(minutes=5)
-APACHE_CHECK_ID = "APACHE_HTTP_VERSION"
-APACHE_CHECK_REVISION = "1.0.0"
 APACHE_EVIDENCE_SOURCE = "domain_technology_observations"
 
 
 class ApacheVerificationError(ValueError):
     """Unsafe target, request plan, or authorization state."""
+
+
+def _validated_origin(url, approved_domain):
+    try:
+        return _contract_validated_origin(url, approved_domain)
+    except ValueError as exc:
+        raise ApacheVerificationError(str(exc)) from exc
 
 
 @dataclass(frozen=True)
@@ -62,7 +73,8 @@ class CapdAuthorizationContext:
             raise ApacheVerificationError("Invalid CAPD authorization context lifetime")
 
 
-def create_authorization_context(check_id, check_revision, source_scan_id, *, now=None):
+def create_authorization_context(check_id, check_revision, source_scan_id, *, now=None,
+                                 run_id=None, expires_at=None):
     """Create an ephemeral context for one explicit local CLI dry-run/run."""
     check_id = str(check_id or "").strip()
     check_revision = str(check_revision or "").strip()
@@ -79,10 +91,13 @@ def create_authorization_context(check_id, check_revision, source_scan_id, *, no
     issued_at = now or datetime.now(timezone.utc)
     if issued_at.tzinfo is None:
         issued_at = issued_at.replace(tzinfo=timezone.utc)
+    expires_at = expires_at or issued_at + AUTHORIZATION_CONTEXT_TTL
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
     return CapdAuthorizationContext(
-        run_id=str(uuid.uuid4()), check_id=check_id,
+        run_id=str(run_id or uuid.uuid4()), check_id=check_id,
         check_revision=check_revision, source_scan_id=source_scan_id,
-        issued_at=issued_at, expires_at=issued_at + AUTHORIZATION_CONTEXT_TTL,
+        issued_at=issued_at, expires_at=expires_at,
     )
 
 
@@ -127,9 +142,9 @@ def evaluate_apache_authorization(
         except ApacheVerificationError:
             reasons.append("TARGET_DESTINATION_NOT_BOUND_TO_STORED_EVIDENCE")
             structural_ok = False
-    operation_enabled = default_operation_enabled("ADHOC_CHECK")
+    operation_enabled = default_operation_enabled(CAPD_HTTP_HEADER_VERIFY)
     if not operation_enabled:
-        reasons.append("ADHOC_CHECK_OPERATION_DISABLED")
+        reasons.append("CAPD_HTTP_HEADER_VERIFY_OPERATION_DISABLED")
 
     if not callable(trusted_operator_approval):
         reasons.append("TRUSTED_CAPD_OPERATOR_APPROVAL_UNAVAILABLE")
@@ -145,9 +160,9 @@ def evaluate_apache_authorization(
     elif structural_ok:
         try:
             if fresh_target_recheck(
-                context, target, testing_level="ADHOC_CHECK"
+                context, target, testing_level=CAPD_HTTP_HEADER_VERIFY
             ) is not True:
-                reasons.append("TARGET_NOT_AUTHORIZED_FOR_ADHOC_CHECK")
+                reasons.append("TARGET_NOT_AUTHORIZED_FOR_CAPD_HTTP_HEADER_VERIFY")
         except Exception:
             reasons.append("TARGET_AUTHORIZATION_RECHECK_FAILED")
 
@@ -160,7 +175,7 @@ def evaluate_apache_authorization(
         "source_scan_id": context.source_scan_id if isinstance(context, CapdAuthorizationContext) else None,
         "asset_id": target.get("domain_id") if isinstance(target, dict) else None,
         "asset_domain": target.get("domain") if isinstance(target, dict) else None,
-        "operation": "ADHOC_CHECK",
+        "operation": CAPD_HTTP_HEADER_VERIFY,
         "reason_codes": reasons or ["ALL_REQUIRED_GATES_PASSED"],
     }
 
@@ -198,27 +213,6 @@ def _apache_observed_url(target):
                 and row.get("observed_url")):
             return row["observed_url"]
     raise ApacheVerificationError("Apache candidate has no stored observed origin")
-
-
-def _validated_origin(url, approved_domain):
-    try:
-        parsed = urlsplit(str(url))
-        port = parsed.port
-    except (TypeError, ValueError) as exc:
-        raise ApacheVerificationError("Invalid observed HTTP origin") from exc
-    host = _canonical_host(parsed.hostname)
-    if (parsed.scheme.lower() not in {"http", "https"}
-            or not host
-            or host != _canonical_host(approved_domain)
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-            or parsed.path not in {"", "/"}
-            or (port is not None and not 1 <= port <= 65535)):
-        raise ApacheVerificationError("Request origin is outside the selected asset boundary")
-    netloc = host if port is None else f"{host}:{port}"
-    return urlunsplit((parsed.scheme.lower(), netloc, "/", "", ""))
 
 
 def validate_public_destination(url, approved_domain, resolved_addresses):
@@ -287,7 +281,7 @@ def build_apache_dry_run(target, *, timeout=DEFAULT_TIMEOUT_SECONDS):
         "network_requests": 0,
         "database_writes": 0,
         "live_execution_enabled": False,
-        "authorization_required": "ADHOC_CHECK plus fresh per-target authorization revalidation",
+        "authorization_required": "CAPD_HTTP_HEADER_VERIFY plus signed local approval and fresh per-target authorization revalidation",
     }
 
 

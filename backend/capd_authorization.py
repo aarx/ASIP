@@ -1,8 +1,7 @@
 """Run-scoped CAPD authorization checks over completed inventory evidence.
 
-This module contains no transport. It reuses the current ADHOC_CHECK policy
-and deliberately leaves trusted operator approval to a future approved local
-execution boundary.
+This module contains no transport. Apache header verification has a distinct
+CAPD_HTTP_HEADER_VERIFY operation gate and requires a verified local approval.
 """
 
 from __future__ import annotations
@@ -15,6 +14,7 @@ from apache_version_verification import (
     _validated_origin,
 )
 from authorization_policy import (
+    CAPD_HTTP_HEADER_VERIFY,
     active_scope_exclusion_sql,
     default_operation_policy_sql,
 )
@@ -22,7 +22,7 @@ from ownership import reporting_asset_class_sql, trusted_boundary_sql
 
 
 def recheck_apache_target_from_inventory(cur, context, target, *, now=None):
-    """Freshly recheck source membership and ADHOC_CHECK eligibility.
+    """Freshly recheck source membership and CAPD header-check eligibility.
 
     Unlike ``recheck_active_authorization`` this CAPD-specific check does not
     require a RUNNING recon scan. It requires membership in the selected
@@ -51,8 +51,8 @@ def recheck_apache_target_from_inventory(cur, context, target, *, now=None):
 
     class_sql = reporting_asset_class_sql("d.domain", "d.ownership_status")
     boundary_sql = trusted_boundary_sql("d.domain")
-    exclusion_sql = active_scope_exclusion_sql("d", "ADHOC_CHECK")
-    operation_sql = default_operation_policy_sql("ADHOC_CHECK")
+    exclusion_sql = active_scope_exclusion_sql("d", CAPD_HTTP_HEADER_VERIFY)
+    operation_sql = default_operation_policy_sql(CAPD_HTTP_HEADER_VERIFY)
     try:
         cur.execute(f"""
             SELECT scan.status,
@@ -112,9 +112,9 @@ def recheck_apache_target_from_inventory(cur, context, target, *, now=None):
     if not not_rejected:
         reasons.append("TARGET_MANUALLY_REJECTED")
     if not operation_enabled:
-        reasons.append("ADHOC_CHECK_OPERATION_DISABLED")
+        reasons.append("CAPD_HTTP_HEADER_VERIFY_OPERATION_DISABLED")
     if not scope_allowed:
-        reasons.append("ADHOC_CHECK_SCOPE_EXCLUDED_OR_REVOKED")
+        reasons.append("CAPD_HTTP_HEADER_VERIFY_SCOPE_EXCLUDED_OR_REVOKED")
     if not apache_evidence_current:
         reasons.append("APACHE_SERVICE_EVIDENCE_MISSING_OR_STALE")
     return {
@@ -126,5 +126,5 @@ def recheck_apache_target_from_inventory(cur, context, target, *, now=None):
         "source_scan_id": context.source_scan_id,
         "asset_id": target["domain_id"],
         "asset_class": asset_class,
-        "operation": "ADHOC_CHECK",
+        "operation": CAPD_HTTP_HEADER_VERIFY,
     }

@@ -1,0 +1,37 @@
+BEGIN;
+
+DO $$
+DECLARE
+    constraint_definition text;
+BEGIN
+    SELECT pg_get_constraintdef(oid)
+      INTO constraint_definition
+      FROM pg_constraint
+     WHERE conrelid = 'public.active_scan_scopes'::regclass
+       AND conname = 'active_scan_scopes_testing_level';
+
+    IF constraint_definition IS NULL THEN
+        RAISE EXCEPTION
+            'active_scan_scopes_testing_level constraint is missing';
+    END IF;
+
+    IF constraint_definition NOT LIKE '%CAPD_HTTP_HEADER_VERIFY%' THEN
+        ALTER TABLE public.active_scan_scopes
+            DROP CONSTRAINT active_scan_scopes_testing_level;
+
+        ALTER TABLE public.active_scan_scopes
+            ADD CONSTRAINT active_scan_scopes_testing_level CHECK (
+                testing_level IN (
+                    'TECHNOLOGY_HTTP',
+                    'PORT_SCAN',
+                    'ADHOC_CHECK',
+                    'HTTP_TLS_OBSERVATION',
+                    'DNS_SECURITY',
+                    'ASN_METADATA',
+                    'CAPD_HTTP_HEADER_VERIFY'
+                )
+            );
+    END IF;
+END $$;
+
+COMMIT;

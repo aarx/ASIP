@@ -17,7 +17,10 @@ from urllib.parse import urlparse
 from php_cve_intelligence import PHP_CVE_ADVISORIES, evaluate_php_cve_applicability
 from apache_version_evidence import parse_apache_server_header
 from ownership import reporting_asset_class_sql, trusted_boundary_sql
-from authorization_policy import active_scope_exclusion_sql
+from authorization_policy import (
+    CAPD_HTTP_HEADER_VERIFY,
+    active_scope_exclusion_sql,
+)
 
 
 CHECKS_PATH = Path(__file__).with_name("capd_checks.json")
@@ -170,16 +173,16 @@ def _validate_source_scan(cur, scan_id=None):
     return {"scan_id": row[0], "status": row[1], "completed_at": _iso(row[2])}
 
 
-def _eligibility_sql():
+def _eligibility_sql(testing_level="ADHOC_CHECK"):
     return (
         reporting_asset_class_sql("d.domain", "d.ownership_status"),
         trusted_boundary_sql("d.domain"),
-        active_scope_exclusion_sql("d", "ADHOC_CHECK"),
+        active_scope_exclusion_sql("d", testing_level),
     )
 
 
-def _eligibility_summary(cur, scan_id):
-    class_sql, boundary_sql, exclusion_sql = _eligibility_sql()
+def _eligibility_summary(cur, scan_id, testing_level="ADHOC_CHECK"):
+    class_sql, boundary_sql, exclusion_sql = _eligibility_sql(testing_level)
     cur.execute(f"""
         WITH members AS (
             SELECT DISTINCT sr.domain_id, d.ownership_status, d.scannable,
@@ -233,8 +236,8 @@ def _eligibility_summary(cur, scan_id):
     }
 
 
-def _select_targets(cur, scan_id, limit):
-    class_sql, boundary_sql, exclusion_sql = _eligibility_sql()
+def _select_targets(cur, scan_id, limit, testing_level="ADHOC_CHECK"):
+    class_sql, boundary_sql, exclusion_sql = _eligibility_sql(testing_level)
     cur.execute(f"""
         SELECT DISTINCT d.id, d.domain, ({class_sql}) AS asset_class
           FROM scan_results sr JOIN domains d ON d.id = sr.domain_id
@@ -288,8 +291,12 @@ def preview_product_targets(conn, product, *, scan_id=None, limit=MAX_TARGETS):
     cur.execute("SET LOCAL statement_timeout = 10000")
     cur.execute("SET LOCAL lock_timeout = 1000")
     scan = _validate_source_scan(cur, scan_id)
-    selection = _eligibility_summary(cur, scan["scan_id"])
-    targets = _select_targets(cur, scan["scan_id"], limit)
+    selection = _eligibility_summary(
+        cur, scan["scan_id"], CAPD_HTTP_HEADER_VERIFY
+    )
+    targets = _select_targets(
+        cur, scan["scan_id"], limit, CAPD_HTTP_HEADER_VERIFY
+    )
     product_definition = {
         "required_evidence": {
             "technology_labels": ["apache"],
@@ -358,7 +365,7 @@ def preview_product_targets(conn, product, *, scan_id=None, limit=MAX_TARGETS):
         "version_verification_preview": {
             "enabled": False, "network_requests": 0, "database_writes": 0,
             "request": "One bounded GET to the already-observed approved origin; redirects disabled.",
-            "authorization_required": "ADHOC_CHECK plus current per-target authorization revalidation.",
+            "authorization_required": "CAPD_HTTP_HEADER_VERIFY plus signed local approval and current per-target revalidation.",
             "targets": "Apache product-matched candidates only; generic HTTP services are excluded.",
         },
         "targets": rows,

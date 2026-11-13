@@ -696,6 +696,31 @@ class PostgreSQLMembershipTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_capd_http_header_operation_migration_is_independent_and_idempotent(self):
+        migration = (BACKEND / 'migrations' / '016_add_capd_http_header_verify_operation.sql').read_text()
+        connection = self.connect()
+        try:
+            with connection:
+                with connection.cursor() as cur:
+                    cur.execute("SELECT count(*) FROM active_scan_scopes")
+                    before = cur.fetchone()[0]
+                    cur.execute(migration)
+                    cur.execute(migration)
+                    cur.execute("SELECT count(*) FROM active_scan_scopes")
+                    after = cur.fetchone()[0]
+                    self.assertEqual(after, before)
+                    cur.execute("""
+                        INSERT INTO active_scan_scopes(
+                            scope_domain,include_subdomains,testing_level,approved_by
+                        ) VALUES ('example',TRUE,'CAPD_HTTP_HEADER_VERIFY','test') RETURNING id
+                    """)
+                    scope_id = cur.fetchone()[0]
+                    cur.execute("DELETE FROM active_scan_scopes WHERE id=%s", (scope_id,))
+                    cur.execute("SELECT to_regclass('public.tracked_security_issues')")
+                    self.assertIsNone(cur.fetchone()[0])
+        finally:
+            connection.close()
+
     def _run_shared_san_children(self, completion_order, existing_child=False):
         parent_a = self.domain('parent-a.example', 42)
         parent_b = self.domain('parent-b.example', 42)

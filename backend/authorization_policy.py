@@ -4,6 +4,7 @@ import os
 import re
 
 from ownership import is_within_trusted_boundary, trusted_boundary_sql
+from capd_approval_contract import CAPD_HTTP_HEADER_VERIFY
 
 
 SCOPE_STATUS_ACTIVE = "ACTIVE"
@@ -13,6 +14,7 @@ SCOPE_TESTING_LEVELS = frozenset({
     "PORT_SCAN",
     "ADHOC_CHECK",
     "HTTP_TLS_OBSERVATION",
+    "CAPD_HTTP_HEADER_VERIFY",
     "DNS_SECURITY",
     "ASN_METADATA",
 })

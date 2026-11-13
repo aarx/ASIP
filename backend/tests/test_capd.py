@@ -19,10 +19,19 @@ from apache_version_evidence import parse_apache_server_header  # noqa: E402
 from apache_version_verification import (  # noqa: E402
     APACHE_CHECK_ID, APACHE_CHECK_REVISION, create_authorization_context,
 )
+from authorization_policy import CAPD_HTTP_HEADER_VERIFY  # noqa: E402
 _remediation_fixture = importlib.import_module("test_remediation_package_2d1c")
 
 
 class CapdDefinitionTests(unittest.TestCase):
+    def test_apache_preview_uses_separate_operation_without_changing_passive_capd(self):
+        passive_exclusions = capd._eligibility_sql()[2]
+        apache_exclusions = capd._eligibility_sql(CAPD_HTTP_HEADER_VERIFY)[2]
+        self.assertIn("ADHOC_CHECK", passive_exclusions)
+        self.assertNotIn("CAPD_HTTP_HEADER_VERIFY", passive_exclusions)
+        self.assertIn("CAPD_HTTP_HEADER_VERIFY", apache_exclusions)
+        self.assertNotIn("ADHOC_CHECK", apache_exclusions)
+
     def test_apache_header_parser_requires_specific_product_evidence(self):
         versioned = parse_apache_server_header("Apache/2.4.58 (Unix)")
         self.assertEqual(versioned["outcome"], "VERSION_IDENTIFIED")
@@ -370,7 +379,7 @@ class CapdPostgreSQLTests(unittest.TestCase):
             }],
         }
 
-        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "ADHOC_CHECK"}):
+        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "CAPD_HTTP_HEADER_VERIFY"}):
             connection = self.connect()
             try:
                 allowed = recheck_apache_target_from_inventory(
@@ -378,7 +387,7 @@ class CapdPostgreSQLTests(unittest.TestCase):
                 )
                 self.assertTrue(allowed["inventory_policy_passed"])
                 self.assertEqual(allowed["source_scan_id"], 19)
-                self.assertEqual(allowed["operation"], "ADHOC_CHECK")
+                self.assertEqual(allowed["operation"], "CAPD_HTTP_HEADER_VERIFY")
             finally:
                 connection.close()
 
@@ -423,7 +432,7 @@ class CapdPostgreSQLTests(unittest.TestCase):
                     connection.cursor(), context, selected, now=now
                 )
                 self.assertFalse(denied["inventory_policy_passed"])
-                self.assertIn("ADHOC_CHECK_OPERATION_DISABLED", denied["reason_codes"])
+                self.assertIn("CAPD_HTTP_HEADER_VERIFY_OPERATION_DISABLED", denied["reason_codes"])
             finally:
                 connection.close()
 

@@ -1,6 +1,7 @@
 """Explicit local CLI for passive CAPD assessment; no scheduled entry point."""
 
 import argparse
+from datetime import datetime
 import json
 import sys
 
@@ -21,10 +22,20 @@ from db import get_conn
 from apache_version_verification import (
     APACHE_CHECK_ID,
     APACHE_CHECK_REVISION,
+    _apache_observed_url,
     create_authorization_context,
     evaluate_apache_authorization,
 )
-from capd_authorization import recheck_apache_target_from_inventory
+from capd_authorization import (
+    CAPD_HTTP_HEADER_VERIFY,
+    recheck_apache_target_from_inventory,
+)
+from capd_local_approval import (
+    LocalApprovalError,
+    _read_public_key,
+    approval_matches_target,
+    verify_approval,
+)
 
 
 def _json(value):
@@ -64,6 +75,8 @@ def build_parser():
     )
     apache.add_argument("--scan-id", type=int)
     apache.add_argument("--limit", type=int, default=MAX_TARGETS)
+    apache.add_argument("--asset-id", type=int)
+    apache.add_argument("--approval-stdin", action="store_true")
     apache.add_argument("--dry-run", action="store_true", required=True)
     return parser
 
@@ -85,35 +98,86 @@ def main(argv=None):
             finally:
                 conn.close()
         if args.command == "apache-version":
+            approval = None
+            if args.approval_stdin:
+                if not args.asset_id:
+                    raise CapdError("--approval-stdin requires one --asset-id")
+                try:
+                    approval = verify_approval(
+                        sys.stdin.buffer.read(8193), _read_public_key()
+                    )
+                except LocalApprovalError as exc:
+                    raise CapdError(f"CAPD local approval denied: {exc}") from exc
+                if args.scan_id is not None and args.scan_id != approval["source_scan_id"]:
+                    raise CapdError("CAPD local approval source scan does not match --scan-id")
+            if args.asset_id is not None and args.asset_id <= 0:
+                raise CapdError("--asset-id must be positive")
             conn = get_conn()
             try:
-                preview = preview_product_targets(
-                    conn, "apache", scan_id=args.scan_id, limit=args.limit
+                selected_scan_id = (
+                    approval["source_scan_id"] if approval is not None else args.scan_id
                 )
+                preview = preview_product_targets(
+                    conn, "apache", scan_id=selected_scan_id, limit=args.limit
+                )
+                if (approval is not None
+                        and preview["source_scan"]["scan_id"] != approval["source_scan_id"]):
+                    raise CapdError("CAPD local approval source scan is no longer authoritative")
                 candidates = [
                     target for target in preview["targets"]
                     if target["classification"] in {"VERSION_KNOWN", "VERSION_UNKNOWN"}
                 ]
+                if args.asset_id is not None:
+                    candidates = [
+                        target for target in candidates
+                        if target["domain_id"] == args.asset_id
+                    ]
                 context = create_authorization_context(
                     APACHE_CHECK_ID, APACHE_CHECK_REVISION,
-                    preview["source_scan"]["scan_id"],
+                    approval["source_scan_id"] if approval is not None else preview["source_scan"]["scan_id"],
+                    run_id=approval["run_id"] if approval is not None else None,
+                    now=datetime.fromisoformat(approval["issued_at"]) if approval is not None else None,
+                    expires_at=datetime.fromisoformat(approval["expires_at"]) if approval is not None else None,
                 )
                 decisions = []
+                request_preview = None
                 for target in candidates:
                     scoped_target = {
                         **target, "source_scan_id": preview["source_scan"]["scan_id"],
                     }
+                    observed_origin = _apache_observed_url(scoped_target)
                     inventory_recheck = recheck_apache_target_from_inventory(
                         conn.cursor(), context, scoped_target,
                     )
                     decision = evaluate_apache_authorization(
                         context, scoped_target,
-                        fresh_target_recheck=lambda _context, _target, testing_level, result=inventory_recheck: (
-                            testing_level == "ADHOC_CHECK" and result["inventory_policy_passed"]
+                        trusted_operator_approval=(
+                            (lambda _context, _target: approval_matches_target(
+                                approval, _context, _target
+                            )) if approval is not None else None
+                        ),
+                        fresh_target_recheck=lambda _context, _target, testing_level: (
+                            testing_level == CAPD_HTTP_HEADER_VERIFY
+                            and recheck_apache_target_from_inventory(
+                                conn.cursor(), _context, _target
+                            )["inventory_policy_passed"]
                         ),
                     )
                     decision["inventory_recheck"] = inventory_recheck
                     decisions.append(decision)
+                    if args.asset_id == target["domain_id"]:
+                        request_preview = {
+                            "run_id": context.run_id,
+                            "check_id": APACHE_CHECK_ID,
+                            "check_revision": APACHE_CHECK_REVISION,
+                            "source_scan_id": context.source_scan_id,
+                            "asset_id": target["domain_id"],
+                            "domain": target["domain"],
+                            "origin": observed_origin,
+                            "method": "GET",
+                            "max_requests": 1,
+                            "expires_at": context.expires_at.isoformat(),
+                        }
                 reason_counts = {}
                 for decision in decisions:
                     all_reasons = list(decision["reason_codes"])
@@ -122,6 +186,8 @@ def main(argv=None):
                     )
                     for reason in set(all_reasons):
                         reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                if args.asset_id is not None and not candidates:
+                    reason_counts["ASSET_NOT_APACHE_PRODUCT_CANDIDATE"] = 1
                 _json({
                     "mode": "dry-run",
                     "authorization_context": {
@@ -137,6 +203,7 @@ def main(argv=None):
                     "selection": preview["selection"],
                     "populations": preview["populations"],
                     "candidate_count": len(candidates),
+                    "approval_request": request_preview,
                     "planned_requests": [
                         {
                             "domain_id": target["domain_id"],
@@ -151,9 +218,15 @@ def main(argv=None):
                     "database_writes": 0,
                     "live_execution_enabled": False,
                     "authorization": {
-                        "operation": "ADHOC_CHECK",
-                        "state": "NOT_AUTHORIZED" if candidates else "NO_TARGETS",
-                        "authorization_evaluated": False,
+                        "operation": CAPD_HTTP_HEADER_VERIFY,
+                        "state": (
+                            "AUTHORIZED" if decisions and all(
+                                decision["decision"] == "AUTHORIZED"
+                                for decision in decisions
+                            ) else "NOT_AUTHORIZED" if candidates or approval is not None
+                            or args.asset_id is not None else "NO_TARGETS"
+                        ),
+                        "authorization_evaluated": approval is not None,
                         "inventory_policy_gates_evaluated": True,
                         "approved_target_count": sum(
                             decision["decision"] == "AUTHORIZED" for decision in decisions
@@ -162,9 +235,9 @@ def main(argv=None):
                             decision["decision"] == "NOT_AUTHORIZED" for decision in decisions
                         ),
                         "reason_counts": reason_counts,
-                        "trusted_operator_approval_evaluated": False,
+                        "trusted_operator_approval_evaluated": approval is not None,
                         "inventory_target_recheck_evaluated": bool(candidates),
-                        "full_authorization_grant_evaluated": False,
+                        "full_authorization_grant_evaluated": bool(approval is not None and decisions),
                         "required_before_live_execution": True,
                         "requires_fresh_target_revalidation": True,
                     },
