@@ -327,20 +327,20 @@ test("shows no-authoritative-scan state without fabricating values", async () =>
   expect(screen.queryByText("alpha.example")).not.toBeInTheDocument();
 });
 
-test("redirects the legacy Needs Attention overview route to the Security Review queue", async () => {
+test("redirects the legacy Needs Attention overview route to Prioritized Assets", async () => {
   window.location.hash = "#/overview/needs-attention";
   getV2Overview.mockResolvedValue(overview);
   getV2Assets.mockResolvedValue(rankedAssetPage);
   render(<App />);
 
   expect(await screen.findByText("alpha.example")).toBeInTheDocument();
-  expect(screen.getByText("The same positive-score ranking, shown as a compact review queue")).toBeInTheDocument();
+  expect(screen.getByText("Current positive-score assets ranked by deterministic risk")).toBeInTheDocument();
   expect(screen.getByText("1 RANKED ASSETS")).toBeInTheDocument();
   expect(screen.getByText("alpha.example").closest("a")).toHaveAttribute(
-    "href", "#/assets/alpha.example?return=risk%2Fsecurity-review&return_query=page%3D1%26limit%3D10%26tab%3Dreview-queue"
+    "href", "#/assets/alpha.example?return=risk%2Fsecurity-review&return_query=tab%3Dprioritized-assets%26priority_page%3D1"
   );
-  expect(window.location.hash).toBe("#/risk/security-review?tab=review-queue");
-  expect(screen.getByRole("tab", { name: "Review Queue" })).toHaveAttribute("aria-selected", "true");
+  expect(window.location.hash).toBe("#/risk/security-review?tab=prioritized-assets");
+  expect(screen.getByRole("tab", { name: "Prioritized Assets" })).toHaveAttribute("aria-selected", "true");
   expect(getV2Overview).toHaveBeenCalledTimes(1);
 });
 
@@ -363,87 +363,33 @@ test("redirects the legacy Risk Distribution route to Risk Overview", async () =
   expect(getV2Overview).toHaveBeenCalledTimes(1);
 });
 
-test("redirects the direct legacy Needs Attention route to Security Review", async () => {
+test("redirects the direct legacy Needs Attention route to Prioritized Assets", async () => {
   window.location.hash = "#/risk/needs-attention";
   getV2Overview.mockResolvedValue(overview);
   getV2Assets.mockResolvedValue(rankedAssetPage);
   render(<App />);
 
-  expect(await screen.findByText("Needs attention")).toBeInTheDocument();
-  expect(screen.queryByText("Risk distribution")).not.toBeInTheDocument();
-  expect(window.location.hash).toBe("#/risk/security-review?tab=review-queue");
-  expect(screen.getByRole("tab", { name: "Review Queue" })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByText("Prioritized assets")).toBeInTheDocument();
+  expect(window.location.hash).toBe("#/risk/security-review?tab=prioritized-assets");
+  expect(screen.getByRole("tab", { name: "Prioritized Assets" })).toHaveAttribute("aria-selected", "true");
 });
 
-test("paginates the ranked Needs Attention queue with stable backend ordering", async () => {
-  window.location.hash = "#/risk/security-review?tab=review-queue";
+test("redirects the legacy Review Queue URL to Prioritized Assets with compatible pagination", async () => {
+  window.location.hash = "#/risk/security-review?tab=review-queue&page=2&limit=25";
   getV2Overview.mockResolvedValue(overview);
-  getV2Assets
-    .mockResolvedValueOnce({ ...rankedAssetPage, count: 51 })
-    .mockResolvedValueOnce({ ...rankedAssetPage, limit: 25, count: 51 })
-    .mockResolvedValueOnce({ ...rankedAssetPage, page: 2, limit: 25, count: 51 })
-    .mockResolvedValueOnce({ ...rankedAssetPage, limit: 25, count: 51 });
+  getV2Assets.mockResolvedValue({ ...rankedAssetPage, page: 2, limit: 25, count: 51 });
   render(<App />);
 
   expect(await screen.findByText("51 RANKED ASSETS")).toBeInTheDocument();
   expect(getV2Assets).toHaveBeenCalledWith({
-    page: 1,
-    limit: 10,
-    risk_positive: true,
-    sort_by: "risk_score",
-    sort_dir: "desc",
-  });
-  expect(screen.getByLabelText("Rows per page")).toHaveValue("10");
-  expect(screen.getByRole("option", { name: "50" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
-  expect(getV2Assets).toHaveBeenCalledTimes(1);
-
-  fireEvent.change(screen.getByLabelText("Rows per page"), { target: { value: "25" } });
-  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 1,
-    limit: 25,
-    risk_positive: true,
-    sort_by: "risk_score",
-    sort_dir: "desc",
-  }));
-  expect(window.location.hash).toBe("#/risk/security-review?page=1&limit=25&tab=review-queue");
-
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
     page: 2,
     limit: 25,
     risk_positive: true,
     sort_by: "risk_score",
     sort_dir: "desc",
-  }));
-  expect(window.location.hash).toBe("#/risk/security-review?page=2&limit=25&tab=review-queue");
-  expect(screen.getByRole("button", { name: "Previous" })).toBeEnabled();
-
-  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
-  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 1,
-    limit: 25,
-    risk_positive: true,
-    sort_by: "risk_score",
-    sort_dir: "desc",
-  }));
-  expect(window.location.hash).toBe("#/risk/security-review?page=1&limit=25&tab=review-queue");
-});
-
-test("shows honest ranked queue empty and error states", async () => {
-  window.location.hash = "#/risk/security-review?tab=review-queue";
-  getV2Overview.mockResolvedValue(overview);
-  getV2Assets.mockResolvedValue({ ...rankedAssetPage, count: 0, assets: [] });
-  const { unmount } = render(<App />);
-
-  expect(await screen.findByText("No ranked assets")).toBeInTheDocument();
-  unmount();
-
-  getV2Assets.mockRejectedValue(new Error("offline"));
-  render(<App />);
-  expect(await screen.findByText("Ranked assets unavailable")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Retry request" })).toBeInTheDocument();
+  });
+  expect(window.location.hash).toBe("#/risk/security-review?tab=prioritized-assets&priority_page=2");
+  expect(screen.getByRole("tab", { name: "Prioritized Assets" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("Security Review keeps stable accessible tabs and preserves tab navigation", async () => {
@@ -456,10 +402,9 @@ test("Security Review keeps stable accessible tabs and preserves tab navigation"
 
   const prioritized = await screen.findByRole("tab", { name: "Prioritized Assets" });
   const evidence = screen.getByRole("tab", { name: "Evidence & Signals" });
-  const queue = screen.getByRole("tab", { name: "Review Queue" });
   expect(prioritized).toHaveAttribute("aria-selected", "true");
   expect(evidence).toHaveAttribute("aria-selected", "false");
-  expect(queue).toHaveAttribute("aria-selected", "false");
+  expect(screen.queryByRole("tab", { name: "Review Queue" })).not.toBeInTheDocument();
   expect(screen.getByText("alpha.example")).toBeInTheDocument();
   expect(getV2Assets).toHaveBeenLastCalledWith({
     page: 1, limit: 25, risk_positive: true, sort_by: "risk_score", sort_dir: "desc",
@@ -471,11 +416,11 @@ test("Security Review keeps stable accessible tabs and preserves tab navigation"
   expect(evidence).toHaveAttribute("aria-selected", "true");
 
   fireEvent.keyDown(evidence, { key: "ArrowRight" });
-  expect(window.location.hash).toBe("#/risk/security-review?tab=review-queue");
-  expect(await screen.findByText("Needs attention")).toBeInTheDocument();
-  expect(queue).toHaveAttribute("aria-selected", "true");
+  expect(window.location.hash).toBe("#/risk/security-review?tab=prioritized-assets");
+  expect(await screen.findByText("Prioritized assets")).toBeInTheDocument();
+  expect(prioritized).toHaveAttribute("aria-selected", "true");
   expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 1, limit: 10, risk_positive: true, sort_by: "risk_score", sort_dir: "desc",
+    page: 1, limit: 25, risk_positive: true, sort_by: "risk_score", sort_dir: "desc",
   });
 });
 

@@ -1,12 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import PriorityAssetsPanel from "../components/ui/PriorityAssetsPanel";
-import RiskNeedsAttentionPage from "./RiskNeedsAttentionPage";
 import SecurityFindingsPage from "./SecurityFindingsPage";
 
 const TABS = [
   ["prioritized-assets", "Prioritized Assets"],
   ["evidence-signals", "Evidence & Signals"],
-  ["review-queue", "Review Queue"],
 ];
 
 function readTab(query) {
@@ -79,9 +77,6 @@ export default function SecurityReviewPage({ query = "" }) {
       </div>
       <div id="evidence-signals" role="tabpanel" aria-labelledby="evidence-signals-tab" hidden={tab !== "evidence-signals"}>
         {tab === "evidence-signals" && <SecurityFindingsPage query={query} routePrefix="risk/security-review" />}
-      </div>
-      <div id="review-queue" role="tabpanel" aria-labelledby="review-queue-tab" hidden={tab !== "review-queue"}>
-        {tab === "review-queue" && <RiskNeedsAttentionPage query={query} embedded routePrefix="risk/security-review" showDistribution={false} />}
       </div>
     </div>
   );

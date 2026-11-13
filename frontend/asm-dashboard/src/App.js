@@ -21,7 +21,7 @@ const ROUTES = {
   overview: ["Overview", "Attack surface operations", "Authoritative exposure, change, and priority signals."],
   assets: ["Assets", "Inventory", "Explore current organizational and perimeter assets."],
   risk: ["Risk Overview", "Prioritization", "Review deterministic risk and exposure evidence."],
-  "risk-security-review": ["Security Review", "Risk & Exposure", "Review prioritized assets, evidence signals, and the review queue."],
+  "risk-security-review": ["Security Review", "Risk & Exposure", "Review prioritized assets and evidence signals."],
   "risk-findings": ["Security Findings", "Risk & Exposure", "Review source-recorded observations and exposure signals."],
   "risk-needs-attention": ["Needs Attention", "Risk & Exposure", "Top deterministic risk scores followed by canonical risk distribution."],
   "risk-dns-security": ["DNS Security", "Risk & Exposure", "Read-only DNS assessment evidence from the current authoritative scan."],
@@ -51,7 +51,7 @@ function locationFromHash() {
   }
   if (segments[0] === "overview" && segments[1] === "needs-attention") {
     const params = new URLSearchParams(query);
-    params.set("tab", "review-queue");
+    normalizePrioritizedQuery(params);
     const nextQuery = params.toString();
     window.history.replaceState(null, "", `#/risk/security-review${nextQuery ? `?${nextQuery}` : ""}`);
     return { route: "risk-security-review", domain: null, query: nextQuery };
@@ -73,7 +73,14 @@ function locationFromHash() {
   }
   if (segments[0] === "risk" && segments[1] === "needs-attention") {
     const params = new URLSearchParams(query);
-    params.set("tab", "review-queue");
+    normalizePrioritizedQuery(params);
+    const nextQuery = params.toString();
+    window.history.replaceState(null, "", `#/risk/security-review?${nextQuery}`);
+    return { route: "risk-security-review", domain: null, query: nextQuery };
+  }
+  if (segments[0] === "risk" && segments[1] === "security-review" && new URLSearchParams(query).get("tab") === "review-queue") {
+    const params = new URLSearchParams(query);
+    normalizePrioritizedQuery(params);
     const nextQuery = params.toString();
     window.history.replaceState(null, "", `#/risk/security-review?${nextQuery}`);
     return { route: "risk-security-review", domain: null, query: nextQuery };
@@ -92,6 +99,15 @@ function locationFromHash() {
     ? decodeURIComponent(segments.slice(1).join("/"))
     : null;
   return { route, domain, query };
+}
+
+function normalizePrioritizedQuery(params) {
+  const page = Number(params.get("page"));
+  const limit = Number(params.get("limit"));
+  params.delete("page");
+  params.delete("limit");
+  if (limit === 25 && Number.isInteger(page) && page > 0) params.set("priority_page", String(page));
+  params.set("tab", "prioritized-assets");
 }
 
 function App() {
