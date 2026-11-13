@@ -25,6 +25,7 @@ from risk_engine import ASSET_EXPOSURE_KEYWORDS, calculate_scan_risks, get_asset
 from ownership import (
     OWNERSHIP_CONFIRMED,
     OWNERSHIP_EXTERNAL,
+    normalize_hostname,
     normalize_ownership_status,
     reporting_asset_class_sql,
 )
@@ -2159,6 +2160,198 @@ def cert_expiry():
         }
         for r in rows
     ]
+
+
+def _assessment_host_search(search, search_mode):
+    """Build a bounded, parameterized hostname predicate for coverage views."""
+    mode = (search_mode or "domain").strip().lower()
+    if mode not in {"domain", "exact", "fragment"}:
+        raise HTTPException(status_code=400, detail="search_mode must be domain, exact, or fragment")
+    if search is None or not str(search).strip():
+        return None, []
+    value = str(search).strip()
+    if len(value) > 253:
+        raise HTTPException(status_code=400, detail="search is too long")
+    if mode in {"domain", "exact"}:
+        normalized = normalize_hostname(value, require_fqdn=True)
+        if normalized is None:
+            raise HTTPException(status_code=400, detail="search must be a valid hostname")
+        if mode == "exact":
+            return "LOWER(d.domain) = %s", [normalized]
+        # Dot-boundary suffix matching avoids matching notexample.com or
+        # example.com.evil.test when searching for example.com.
+        return "(LOWER(d.domain) = %s OR RIGHT(LOWER(d.domain), CHAR_LENGTH(%s) + 1) = '.' || %s)", [
+            normalized, normalized, normalized,
+        ]
+    if len(value) < 2:
+        raise HTTPException(status_code=400, detail="fragment search must contain at least 2 characters")
+    return "POSITION(%s IN LOWER(d.domain)) > 0", [value.lower()]
+
+
+def _assessment_paging(page, limit):
+    if page < 1 or limit < 1:
+        raise HTTPException(status_code=400, detail="page and limit must be positive")
+    return min(limit, 200), (page - 1) * min(limit, 200)
+
+
+def _assessment_resolve_scan(cur, scan_id):
+    scan_id = scan_id or get_latest_authoritative_scan_id(cur)
+    if scan_id is None:
+        return None
+    cur.execute("SELECT status FROM scans WHERE id = %s", (scan_id,))
+    row = cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    if row[0] != "SUCCEEDED":
+        raise HTTPException(status_code=409, detail="Assessment coverage requires a successful scan")
+    return scan_id
+
+
+@app.get("/v2/certificates/hosts")
+def certificate_assessment_hosts(
+    scan_id: int = None, search: str = None, search_mode: str = "domain",
+    page: int = 1, limit: int = 50, include_unobserved: bool = False,
+):
+    """Paginated certificate observations, one result per eligible host.
+
+    include_unobserved adds eligible scan members with no certificate row as
+    NO_PERSISTED_OBSERVATION; it does not imply an assessed or clear result.
+    """
+    bounded_limit, offset = _assessment_paging(page, limit)
+    search_sql, search_params = _assessment_host_search(search, search_mode)
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        scan_id = _assessment_resolve_scan(cur, scan_id)
+        if scan_id is None:
+            return {"scan_id": None, "page": page, "limit": bounded_limit, "total": 0,
+                    "assessment_coverage": "UNKNOWN", "hosts": []}
+        classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
+        member = "EXISTS (SELECT 1 FROM scan_results sr WHERE sr.scan_id = %s AND sr.domain_id = d.id)"
+        source = "LEFT JOIN domain_cert dc ON dc.scan_id = %s AND dc.domain_id = d.id"
+        where = [member, f"({classification}) IN ('KNOWN','SHADOW')"]
+        params = [scan_id]
+        if not include_unobserved:
+            where.append("dc.domain_id IS NOT NULL")
+        if search_sql:
+            where.append(search_sql)
+            params.extend(search_params)
+        where_sql = " AND ".join(where)
+        cur.execute(f"""
+            SELECT COUNT(DISTINCT d.id)
+              FROM domains d {source}
+             WHERE {where_sql}
+        """, tuple([scan_id] + params))
+        total = cur.fetchone()[0]
+        cur.execute(f"""
+            SELECT DISTINCT d.id, d.domain, ({classification}) AS asset_class
+              FROM domains d {source}
+             WHERE {where_sql}
+             ORDER BY d.domain ASC, d.id ASC
+             LIMIT %s OFFSET %s
+        """, tuple([scan_id] + params + [bounded_limit, offset]))
+        rows = cur.fetchall()
+        hosts = {row[0]: {
+            "asset_id": row[0], "domain_id": row[0], "hostname": row[1],
+            "domain": row[1], "asset_class": row[2], "scan_id": scan_id,
+            "source": "domain_cert", "assessment_state": "NO_PERSISTED_OBSERVATION",
+            "evidence_count": 0, "certificates": [],
+        } for row in rows}
+        if hosts:
+            cur.execute("""
+                SELECT dc.domain_id, dc.expiry_date, dc.days_to_expiry, dc.cert_status
+                  FROM domain_cert dc
+                 WHERE dc.scan_id = %s AND dc.domain_id = ANY(%s)
+                 ORDER BY dc.domain_id, dc.expiry_date ASC NULLS LAST, dc.cert_status
+            """, (scan_id, list(hosts)))
+            for row in cur.fetchall():
+                host = hosts[row[0]]
+                host["assessment_state"] = "OBSERVATION_RECORDED"
+                host["evidence_count"] += 1
+                host["certificates"].append({
+                    "expiry": row[1].isoformat() if row[1] else None,
+                    "days_to_expiry_at_scan": row[2], "status": row[3],
+                    "observed_at": None, "scan_id": scan_id,
+                })
+        return {"scan_id": scan_id, "page": page, "limit": bounded_limit,
+                "total": total, "assessment_coverage": "OBSERVATION_COVERAGE_ONLY",
+                "coverage_note": "Absence of a certificate row is not evidence that TLS was assessed or is safe.",
+                "hosts": list(hosts.values())}
+    except HTTPException:
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v2/sensitive-ports/hosts")
+def sensitive_port_assessment_hosts(
+    scan_id: int = None, search: str = None, search_mode: str = "domain",
+    page: int = 1, limit: int = 50,
+):
+    """Paginated hosts with positive sensitive-port observations only."""
+    bounded_limit, offset = _assessment_paging(page, limit)
+    search_sql, search_params = _assessment_host_search(search, search_mode)
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        scan_id = _assessment_resolve_scan(cur, scan_id)
+        if scan_id is None:
+            return {"scan_id": None, "page": page, "limit": bounded_limit, "total": 0,
+                    "assessment_coverage": "UNKNOWN", "hosts": []}
+        classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
+        where = ["dp.scan_id = %s",
+                 "EXISTS (SELECT 1 FROM scan_results sr WHERE sr.scan_id = dp.scan_id AND sr.domain_id = dp.domain_id)",
+                 f"({classification}) IN ('KNOWN','SHADOW')"]
+        params = [scan_id]
+        if search_sql:
+            where.append(search_sql)
+            params.extend(search_params)
+        where_sql = " AND ".join(where)
+        joins = "FROM domain_ports dp JOIN domains d ON d.id = dp.domain_id JOIN sensitive_ports sp ON sp.port = dp.port"
+        cur.execute(f"SELECT COUNT(DISTINCT d.id) {joins} WHERE {where_sql}", tuple(params))
+        total = cur.fetchone()[0]
+        cur.execute(f"""
+            SELECT DISTINCT d.id, d.domain, ({classification}) AS asset_class
+              {joins}
+             WHERE {where_sql}
+             ORDER BY d.domain ASC, d.id ASC
+             LIMIT %s OFFSET %s
+        """, tuple(params + [bounded_limit, offset]))
+        rows = cur.fetchall()
+        hosts = {row[0]: {
+            "asset_id": row[0], "domain_id": row[0], "hostname": row[1],
+            "domain": row[1], "asset_class": row[2], "scan_id": scan_id,
+            "source": "domain_ports+sensitive_ports", "assessment_state": "POSITIVE_OBSERVATION",
+            "evidence_count": 0, "ports": [],
+        } for row in rows}
+        if hosts:
+            cur.execute("""
+                SELECT dp.domain_id, dp.port, dp.service, sp.risk, sp.description
+                  FROM domain_ports dp
+                  JOIN sensitive_ports sp ON sp.port = dp.port
+                 WHERE dp.scan_id = %s AND dp.domain_id = ANY(%s)
+                 ORDER BY dp.domain_id, dp.port, dp.service
+            """, (scan_id, list(hosts)))
+            for row in cur.fetchall():
+                host = hosts[row[0]]
+                host["evidence_count"] += 1
+                host["ports"].append({"port": row[1], "service": row[2],
+                                      "source_risk": row[3], "description": row[4],
+                                      "scan_id": scan_id})
+        return {"scan_id": scan_id, "page": page, "limit": bounded_limit,
+                "total": total, "assessment_coverage": "UNKNOWN",
+                "coverage_note": "Only positive sensitive-port observations are listed; assessment coverage is not recorded by this evidence source.",
+                "hosts": list(hosts.values())}
+    except HTTPException:
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 _SECURITY_FINDING_CATEGORIES = {"FINDING", "NEEDS_VERIFICATION", "EXPOSURE_SIGNAL"}
@@ -4459,7 +4652,8 @@ def dns_security_findings(
 @app.get("/v2/dns-security/hosts")
 def dns_security_hosts(
     scan_id: int = None, outcome: str = None, asset_class: str = None,
-    page: int = 1, limit: int = 50,
+    page: int = 1, limit: int = 50, search: str = None,
+    search_mode: str = "domain", include_unassessed: bool = False,
 ):
     """Return paginated hosts with all their persisted DNS checks.
 
@@ -4469,6 +4663,7 @@ def dns_security_hosts(
     if page < 1 or limit < 1:
         raise HTTPException(status_code=400, detail="page and limit must be positive")
     limit = min(limit, 200)
+    search_sql, search_params = _assessment_host_search(search, search_mode)
     outcome_value = _dns_filter_value(outcome, DNS_SECURITY_OUTCOMES, "outcome")
     class_value = _dns_filter_value(asset_class, {"KNOWN", "SHADOW"}, "asset_class")
 
@@ -4478,13 +4673,13 @@ def dns_security_hosts(
         scan_id, _diagnostics = _dns_security_scan(cur, scan_id)
         classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
         filters = [
-            "c.scan_id = %s",
-            "EXISTS (SELECT 1 FROM scan_results sr "
-            "WHERE sr.scan_id = c.scan_id AND sr.domain_id = c.domain_id)",
+            "sr.scan_id = %s",
             "d.scannable IS TRUE",
             f"({classification}) IN ('KNOWN','SHADOW')",
         ]
         params = [scan_id]
+        if not include_unassessed:
+            filters.append("c.id IS NOT NULL")
         if class_value is not None:
             filters.append(f"({classification}) = %s")
             params.append(class_value)
@@ -4496,20 +4691,28 @@ def dns_security_hosts(
                    AND matching.outcome = %s
             )""")
             params.append(outcome_value)
+        if search_sql:
+            filters.append(search_sql)
+            params.extend(search_params)
         where = " AND ".join(filters)
+        host_source = """
+            FROM (SELECT DISTINCT scan_id, domain_id FROM scan_results) sr
+            JOIN domains d ON d.id = sr.domain_id
+            LEFT JOIN dns_security_checks c
+              ON c.scan_id = sr.scan_id AND c.domain_id = sr.domain_id
+        """
 
         cur.execute(f"""
-            SELECT COUNT(DISTINCT c.domain_id)
-              FROM dns_security_checks c
-              JOIN domains d ON d.id = c.domain_id
+            SELECT COUNT(DISTINCT d.id)
+              {host_source}
              WHERE {where}
         """, tuple(params))
         total = cur.fetchone()[0]
 
         cur.execute(f"""
-            SELECT DISTINCT d.id, d.domain, ({classification}) AS asset_class
-              FROM dns_security_checks c
-              JOIN domains d ON d.id = c.domain_id
+            SELECT DISTINCT d.id, d.domain, ({classification}) AS asset_class,
+                   COUNT(c.id) OVER (PARTITION BY d.id) AS check_count
+              {host_source}
              WHERE {where}
              ORDER BY d.domain ASC, d.id ASC
              LIMIT %s OFFSET %s
@@ -4519,8 +4722,10 @@ def dns_security_hosts(
             row[0]: {
                 "domain_id": row[0], "domain": row[1],
                 "asset_class": row[2], "scan_id": scan_id,
-                "check_count": 0, "outcome_distribution": {},
-                "assessment_state": "NOT_CHECKED_ONLY", "checks": [],
+                "source": "dns_security_checks", "check_count": 0,
+                "evidence_count": 0, "outcome_distribution": {},
+                "assessment_state": "NOT_ASSESSED" if row[3] == 0 else "NOT_CHECKED_ONLY",
+                "checks": [],
             }
             for row in host_rows
         }
@@ -4539,6 +4744,7 @@ def dns_security_hosts(
                 host = hosts[row[0]]
                 outcome_name = row[3]
                 host["check_count"] += 1
+                host["evidence_count"] += 1
                 distribution = host["outcome_distribution"]
                 distribution[outcome_name] = distribution.get(outcome_name, 0) + 1
                 if outcome_name != "NOT_CHECKED":
@@ -4555,6 +4761,7 @@ def dns_security_hosts(
         return {
             "scan_id": scan_id, "availability_state": "AVAILABLE",
             "page": page, "limit": limit, "total": total,
+            "include_unassessed": include_unassessed,
             "hosts": list(hosts.values()),
         }
     except HTTPException:

@@ -424,7 +424,7 @@ class DnsSecurityHostGroupingTests(unittest.TestCase):
             (6, 7, "cname_health", "POTENTIAL_EXPOSURE", "MEDIUM", "MEDIUM", "CNAME",
              "a.example.test", {"evidence": "first"}, "Validate target", "2026-01-01T00:00:00Z"),
         ]
-        hosts = [(6, "affected.example.test", "SHADOW")]
+        hosts = [(6, "affected.example.test", "SHADOW", 2)]
         cursor = ApiCursor([("SUCCEEDED", {"version": 1, "attempts": []}), (2,), hosts, checks])
         conn = ApiConnection(cursor)
         with mock.patch.object(main, "get_conn", return_value=conn):
@@ -449,8 +449,8 @@ class DnsSecurityHostGroupingTests(unittest.TestCase):
         self.assertEqual(cursor.executions[1][1], (91, "WARNING"))
         self.assertEqual(cursor.executions[2][1], (91, "WARNING", 1, 1))
         self.assertEqual(cursor.executions[3][1], (91, [6]))
-        self.assertIn("COUNT(DISTINCT c.domain_id)", cursor.executions[1][0])
-        self.assertIn("EXISTS (SELECT 1 FROM scan_results sr", cursor.executions[1][0])
+        self.assertIn("COUNT(DISTINCT d.id)", cursor.executions[1][0])
+        self.assertIn("FROM (SELECT DISTINCT scan_id, domain_id FROM scan_results) sr", cursor.executions[1][0])
         self.assertIn("AND matching.outcome = %s", cursor.executions[1][0])
         self.assertNotIn("outcome = %s", cursor.executions[3][0])
         self.assertTrue(conn.closed)
@@ -722,6 +722,26 @@ class PostgreSQLDnsSecurityReportingTests(unittest.TestCase):
         self.assertEqual(mixed_host["outcome_distribution"], {
             "NOT_CHECKED": 1, "INCONCLUSIVE": 1,
         })
+
+    def test_real_sql_host_search_and_optional_unassessed_population(self):
+        with mock.patch.object(main, "get_conn", side_effect=self.connect):
+            parent = main.dns_security_hosts(scan_id=91, search="example.test", limit=20)
+            searched = main.dns_security_hosts(
+                scan_id=91, search="multi.example.test", search_mode="exact", limit=20
+            )
+            all_eligible = main.dns_security_hosts(
+                scan_id=91, search="example.test", include_unassessed=True, limit=20
+            )
+
+        self.assertEqual(parent["total"], 5)
+        self.assertEqual(searched["total"], 1)
+        self.assertEqual(searched["hosts"][0]["domain_id"], 3)
+        self.assertEqual(searched["hosts"][0]["check_count"], 2)
+        self.assertEqual(all_eligible["total"], 6)
+        zero_evidence = next(host for host in all_eligible["hosts"] if host["domain_id"] == 1)
+        self.assertEqual(zero_evidence["assessment_state"], "NOT_ASSESSED")
+        self.assertEqual(zero_evidence["checks"], [])
+        self.assertEqual(zero_evidence["evidence_count"], 0)
 
 if __name__ == "__main__":
     unittest.main()
