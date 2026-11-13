@@ -13,8 +13,12 @@ sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
 
 import capd  # noqa: E402
+from capd_authorization import recheck_apache_target_from_inventory  # noqa: E402
 from capd_cli import main as capd_cli_main  # noqa: E402
 from apache_version_evidence import parse_apache_server_header  # noqa: E402
+from apache_version_verification import (  # noqa: E402
+    APACHE_CHECK_ID, APACHE_CHECK_REVISION, create_authorization_context,
+)
 _remediation_fixture = importlib.import_module("test_remediation_package_2d1c")
 
 
@@ -338,6 +342,90 @@ class CapdPostgreSQLTests(unittest.TestCase):
             self.assertEqual(limited["populations"]["selected_candidate_counts"]["product_matched_candidates"], 1)
         finally:
             connection.close()
+
+    def test_independent_apache_authorization_rechecks_completed_scan_membership(self):
+        observed_url = "https://known.example/"
+        connection = self.connect()
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO domain_technology_observations(
+                        scan_id,domain_id,technology,version,confidence,evidence_type,
+                        sanitized_evidence,observed_url,detector_version
+                    ) VALUES (19,701,'apache',NULL,'medium','server_header',
+                              'marker=apache',%s,'fixture')
+                """, (observed_url,))
+        connection.close()
+
+        from datetime import datetime, timezone
+        now = datetime(2026, 11, 13, tzinfo=timezone.utc)
+        context = create_authorization_context(APACHE_CHECK_ID, APACHE_CHECK_REVISION, 19, now=now)
+        selected = {
+            "domain_id": 701, "domain": "known.example", "asset_class": "KNOWN",
+            "scannable": True, "inventory_eligible": True,
+            "classification": "VERSION_UNKNOWN", "source_scan_id": 19,
+            "evidence": [{
+                "source": "domain_technology_observations", "technology": "apache",
+                "evidence_type": "server_header", "observed_url": observed_url,
+            }],
+        }
+
+        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "ADHOC_CHECK"}):
+            connection = self.connect()
+            try:
+                allowed = recheck_apache_target_from_inventory(
+                    connection.cursor(), context, selected, now=now
+                )
+                self.assertTrue(allowed["inventory_policy_passed"])
+                self.assertEqual(allowed["source_scan_id"], 19)
+                self.assertEqual(allowed["operation"], "ADHOC_CHECK")
+            finally:
+                connection.close()
+
+            connection = self.connect()
+            with connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("UPDATE domains SET scannable=FALSE WHERE id=701")
+            connection.close()
+            connection = self.connect()
+            try:
+                denied = recheck_apache_target_from_inventory(
+                    connection.cursor(), context, selected, now=now
+                )
+                self.assertFalse(denied["inventory_policy_passed"])
+                self.assertIn("TARGET_NOT_SCANNABLE", denied["reason_codes"])
+            finally:
+                connection.close()
+
+            connection = self.connect()
+            with connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("UPDATE domains SET scannable=TRUE WHERE id=701")
+                    cursor.execute(
+                        "UPDATE domain_technology_observations SET observed_url=%s WHERE scan_id=19 AND domain_id=701 AND technology='apache'",
+                        ("https://other.example/",),
+                    )
+            connection.close()
+            connection = self.connect()
+            try:
+                stale = recheck_apache_target_from_inventory(
+                    connection.cursor(), context, selected, now=now
+                )
+                self.assertFalse(stale["inventory_policy_passed"])
+                self.assertIn("APACHE_SERVICE_EVIDENCE_MISSING_OR_STALE", stale["reason_codes"])
+            finally:
+                connection.close()
+
+        with mock.patch.dict("os.environ", {}, clear=True):
+            connection = self.connect()
+            try:
+                denied = recheck_apache_target_from_inventory(
+                    connection.cursor(), context, selected, now=now
+                )
+                self.assertFalse(denied["inventory_policy_passed"])
+                self.assertIn("ADHOC_CHECK_OPERATION_DISABLED", denied["reason_codes"])
+            finally:
+                connection.close()
 
     def test_unknown_ownership_is_not_counted_as_eligible(self):
         connection = self.connect()

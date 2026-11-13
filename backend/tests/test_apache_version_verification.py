@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+from datetime import datetime, timedelta, timezone
 import pathlib
 import sys
 import unittest
@@ -78,25 +79,103 @@ class ApacheVersionVerificationTests(unittest.TestCase):
             with self.subTest(url=invalid_url), self.assertRaises(verification.ApacheVerificationError):
                 verification.validate_public_destination(invalid_url, "web.example.test", addresses)
 
-    def test_authorization_requires_enabled_adhoc_and_fresh_target_recheck(self):
-        callback = mock.Mock(return_value=True)
+    def test_authorization_adapter_requires_operation_and_both_run_scoped_gates(self):
+        now = datetime(2026, 11, 13, tzinfo=timezone.utc)
+        context = verification.create_authorization_context(
+            verification.APACHE_CHECK_ID, verification.APACHE_CHECK_REVISION, 19, now=now
+        )
+        selected_target = {**target(), "source_scan_id": 19}
+        approval = mock.Mock(return_value=True)
+        recheck = mock.Mock(return_value=True)
         with mock.patch.dict("os.environ", {}, clear=True):
-            with self.assertRaises(verification.ApacheVerificationError):
-                verification.authorize_apache_target(target(), callback)
-        callback.assert_not_called()
+            denied = verification.authorize_apache_target(
+                context, selected_target, trusted_operator_approval=approval,
+                fresh_target_recheck=recheck, now=now,
+            )
+        self.assertEqual(denied["decision"], "NOT_AUTHORIZED")
+        self.assertIn("ADHOC_CHECK_OPERATION_DISABLED", denied["reason_codes"])
+        approval.assert_not_called()
 
         with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "ADHOC_CHECK"}):
-            with self.assertRaises(verification.ApacheVerificationError):
-                verification.authorize_apache_target(target(), None)
-            callback.return_value = False
-            with self.assertRaises(verification.ApacheVerificationError):
-                verification.authorize_apache_target(target(), callback)
-            callback.assert_called_with(target(), testing_level="ADHOC_CHECK")
-            callback.return_value = True
-            self.assertEqual(
-                verification.authorize_apache_target(target(), callback),
-                "https://web.example.test/",
+            allowed = verification.authorize_apache_target(
+                context, selected_target, trusted_operator_approval=approval,
+                fresh_target_recheck=recheck, now=now,
             )
+        self.assertEqual(allowed["decision"], "AUTHORIZED")
+        approval.assert_called_once_with(context, selected_target)
+        self.assertEqual(recheck.call_count, 2)
+        recheck.assert_called_with(context, selected_target, testing_level="ADHOC_CHECK")
+
+    def test_run_context_requires_trusted_approval_and_fresh_target_recheck(self):
+        now = datetime(2026, 11, 13, tzinfo=timezone.utc)
+        context = verification.create_authorization_context(
+            verification.APACHE_CHECK_ID, verification.APACHE_CHECK_REVISION, 19, now=now
+        )
+        selected_target = {**target(), "source_scan_id": 19}
+        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "ADHOC_CHECK"}):
+            denied = verification.evaluate_apache_authorization(
+                context, selected_target, now=now
+            )
+            self.assertEqual(denied["decision"], "NOT_AUTHORIZED")
+            self.assertIn("TRUSTED_CAPD_OPERATOR_APPROVAL_UNAVAILABLE", denied["reason_codes"])
+            self.assertIn("FRESH_TARGET_AUTHORIZATION_RECHECK_UNAVAILABLE", denied["reason_codes"])
+
+            approval = mock.Mock(return_value=True)
+            recheck = mock.Mock(return_value=True)
+            accepted = verification.evaluate_apache_authorization(
+                context, selected_target, trusted_operator_approval=approval,
+                fresh_target_recheck=recheck, now=now,
+            )
+            self.assertEqual(accepted["decision"], "AUTHORIZED")
+            approval.assert_called_once_with(context, selected_target)
+            recheck.assert_called_once_with(context, selected_target, testing_level="ADHOC_CHECK")
+
+            stale = verification.evaluate_apache_authorization(
+                context, selected_target, trusted_operator_approval=approval,
+                fresh_target_recheck=recheck, now=now + timedelta(minutes=6),
+            )
+            self.assertEqual(stale["decision"], "NOT_AUTHORIZED")
+            self.assertIn("AUTHORIZATION_CONTEXT_EXPIRED_OR_STALE", stale["reason_codes"])
+            changed_scan = verification.evaluate_apache_authorization(
+                context, {**selected_target, "source_scan_id": 18},
+                trusted_operator_approval=approval, fresh_target_recheck=recheck, now=now,
+            )
+            self.assertIn("SOURCE_SCAN_CONTEXT_MISMATCH", changed_scan["reason_codes"])
+
+    def test_run_context_rejects_untrusted_and_non_service_targets(self):
+        now = datetime(2026, 11, 13, tzinfo=timezone.utc)
+        context = verification.create_authorization_context(
+            verification.APACHE_CHECK_ID, verification.APACHE_CHECK_REVISION, 19, now=now
+        )
+        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": "ADHOC_CHECK"}):
+            for candidate in (
+                {**target(asset_class="CANDIDATE"), "source_scan_id": 19},
+                {**target(asset_class="EXTERNAL"), "source_scan_id": 19},
+                {**target(scannable=False), "source_scan_id": 19},
+                {**target(classification="SERVICE_ONLY_CANDIDATE"), "source_scan_id": 19},
+                {**target(), "source_scan_id": 18},
+                {**target(evidence=[{
+                    "source": "domain_technology_observations", "technology": "apache",
+                    "evidence_type": "server_header", "observed_url": "https://other.example/",
+                }]), "source_scan_id": 19},
+            ):
+                decision = verification.evaluate_apache_authorization(
+                    context, candidate, trusted_operator_approval=lambda *_: True,
+                    fresh_target_recheck=lambda *_args, **_kwargs: True, now=now,
+                )
+                self.assertEqual(decision["decision"], "NOT_AUTHORIZED")
+
+    def test_disabled_adhoc_operation_fails_closed_without_callbacks(self):
+        now = datetime(2026, 11, 13, tzinfo=timezone.utc)
+        context = verification.create_authorization_context(
+            verification.APACHE_CHECK_ID, verification.APACHE_CHECK_REVISION, 19, now=now
+        )
+        with mock.patch.dict("os.environ", {}, clear=True):
+            decision = verification.evaluate_apache_authorization(
+                context, {**target(), "source_scan_id": 19}, now=now
+            )
+        self.assertEqual(decision["decision"], "NOT_AUTHORIZED")
+        self.assertIn("ADHOC_CHECK_OPERATION_DISABLED", decision["reason_codes"])
 
     def test_response_adapter_parses_server_header_without_following_redirects(self):
         response = mock.Mock(status_code=200, headers={"sErVeR": "Apache/2.4.58 (Unix)"})
@@ -140,26 +219,40 @@ class ApacheVersionVerificationTests(unittest.TestCase):
             "product": "Apache HTTP Server", "selection": {"eligible_targets": 829},
             "populations": {"selected_candidate_counts": {"product_matched_candidates": 12}},
             "targets": [
-                {"domain_id": 1, "domain": "web.example.test", "asset_class": "KNOWN",
-                 "classification": "VERSION_UNKNOWN"},
+                {**target(), "domain_id": 1, "classification": "VERSION_UNKNOWN"},
                 {"domain_id": 2, "domain": "service.example.test", "asset_class": "SHADOW",
                  "classification": "SERVICE_ONLY_CANDIDATE"},
             ],
         }
         connection = mock.Mock()
+        inventory_check = mock.Mock(return_value={
+            "inventory_policy_passed": False, "reason_codes": ["ADHOC_CHECK_OPERATION_DISABLED"],
+        })
         output = io.StringIO()
         with mock.patch("capd_cli.get_conn", return_value=connection), \
                 mock.patch("capd_cli.preview_product_targets", return_value=preview) as select, \
+                mock.patch("capd_cli.recheck_apache_target_from_inventory", inventory_check), \
+                mock.patch.dict("os.environ", {}, clear=True), \
                 contextlib.redirect_stdout(output):
             self.assertEqual(capd_cli_main(["apache-version", "--dry-run", "--scan-id", "19"]), 0)
         select.assert_called_once_with(connection, "apache", scan_id=19, limit=1000)
+        inventory_check.assert_called_once()
         connection.close.assert_called_once()
         rendered = json.loads(output.getvalue())
         self.assertEqual(rendered["network_requests"], 0)
         self.assertEqual(rendered["database_writes"], 0)
         self.assertFalse(rendered["live_execution_enabled"])
         self.assertEqual(rendered["candidate_count"], 1)
-        self.assertEqual(rendered["authorization"]["state"], "NOT_EVALUATED_DRY_RUN_ONLY")
+        self.assertEqual(rendered["authorization"]["state"], "NOT_AUTHORIZED")
+        self.assertEqual(rendered["authorization"]["approved_target_count"], 0)
+        self.assertEqual(rendered["authorization"]["blocked_target_count"], 1)
+        self.assertFalse(rendered["authorization"]["authorization_evaluated"])
+        self.assertTrue(rendered["authorization"]["inventory_target_recheck_evaluated"])
+        self.assertFalse(rendered["authorization"]["full_authorization_grant_evaluated"])
+        self.assertIn(
+            "ADHOC_CHECK_OPERATION_DISABLED",
+            rendered["authorization"]["reason_counts"],
+        )
 
     def test_cli_requires_dry_run_flag_and_has_no_live_mode(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

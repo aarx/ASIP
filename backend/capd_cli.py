@@ -18,6 +18,13 @@ from capd import (
     public_check,
 )
 from db import get_conn
+from apache_version_verification import (
+    APACHE_CHECK_ID,
+    APACHE_CHECK_REVISION,
+    create_authorization_context,
+    evaluate_apache_authorization,
+)
+from capd_authorization import recheck_apache_target_from_inventory
 
 
 def _json(value):
@@ -87,8 +94,44 @@ def main(argv=None):
                     target for target in preview["targets"]
                     if target["classification"] in {"VERSION_KNOWN", "VERSION_UNKNOWN"}
                 ]
+                context = create_authorization_context(
+                    APACHE_CHECK_ID, APACHE_CHECK_REVISION,
+                    preview["source_scan"]["scan_id"],
+                )
+                decisions = []
+                for target in candidates:
+                    scoped_target = {
+                        **target, "source_scan_id": preview["source_scan"]["scan_id"],
+                    }
+                    inventory_recheck = recheck_apache_target_from_inventory(
+                        conn.cursor(), context, scoped_target,
+                    )
+                    decision = evaluate_apache_authorization(
+                        context, scoped_target,
+                        fresh_target_recheck=lambda _context, _target, testing_level, result=inventory_recheck: (
+                            testing_level == "ADHOC_CHECK" and result["inventory_policy_passed"]
+                        ),
+                    )
+                    decision["inventory_recheck"] = inventory_recheck
+                    decisions.append(decision)
+                reason_counts = {}
+                for decision in decisions:
+                    all_reasons = list(decision["reason_codes"])
+                    all_reasons.extend(
+                        decision.get("inventory_recheck", {}).get("reason_codes", [])
+                    )
+                    for reason in set(all_reasons):
+                        reason_counts[reason] = reason_counts.get(reason, 0) + 1
                 _json({
                     "mode": "dry-run",
+                    "authorization_context": {
+                        "run_id": context.run_id,
+                        "check_id": context.check_id,
+                        "check_revision": context.check_revision,
+                        "source_scan_id": context.source_scan_id,
+                        "invocation_source": context.invocation_source,
+                        "expires_at": context.expires_at.isoformat(),
+                    },
                     "source_scan": preview["source_scan"],
                     "product": preview["product"],
                     "selection": preview["selection"],
@@ -109,10 +152,23 @@ def main(argv=None):
                     "live_execution_enabled": False,
                     "authorization": {
                         "operation": "ADHOC_CHECK",
-                        "state": "NOT_EVALUATED_DRY_RUN_ONLY",
+                        "state": "NOT_AUTHORIZED" if candidates else "NO_TARGETS",
+                        "authorization_evaluated": False,
+                        "inventory_policy_gates_evaluated": True,
+                        "approved_target_count": sum(
+                            decision["decision"] == "AUTHORIZED" for decision in decisions
+                        ),
+                        "blocked_target_count": sum(
+                            decision["decision"] == "NOT_AUTHORIZED" for decision in decisions
+                        ),
+                        "reason_counts": reason_counts,
+                        "trusted_operator_approval_evaluated": False,
+                        "inventory_target_recheck_evaluated": bool(candidates),
+                        "full_authorization_grant_evaluated": False,
                         "required_before_live_execution": True,
                         "requires_fresh_target_revalidation": True,
                     },
+                    "target_authorization_decisions": decisions,
                 })
                 return 0
             finally:
