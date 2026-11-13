@@ -223,7 +223,7 @@ function HostCoveragePanel({ filters, query, onChange, onRetry, onClose, request
         <span>Scan #{data?.scan_id ?? "—"}</span>
         {category === "dns" && <span>{filters.dnsIncludeUnassessed ? "Assessed and unassessed hosts are shown separately." : "Showing hosts with persisted DNS check records."}</span>}
         {category === "certificates" && <span>{filters.certificatesIncludeUnobserved ? "No observation is not a successful TLS assessment." : "Showing certificate-observed hosts."}</span>}
-        {category === "ports" && <span>No positive observations recorded. Assessment coverage unknown.</span>}
+        {category === "ports" && <span>{total === 0 && !filters.coverageSearch ? "No positive observations recorded. Assessment coverage unknown." : filters.coverageSearch && total === 0 ? "No positive observations match this search. Assessment coverage unknown." : "Assessment coverage unknown."}</span>}
       </div>
       {status === "loading" && <LoadingState title={`Loading ${categoryTitle}`} copy="Searching current-scan hosts." />}
       {status === "error" && <ErrorState title={`${categoryTitle} unavailable`} copy="The host results could not be loaded." onRetry={onRetry} />}

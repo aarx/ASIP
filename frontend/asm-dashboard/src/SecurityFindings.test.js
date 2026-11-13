@@ -102,7 +102,7 @@ test("renders live category counts, separate coverage, and the default attention
   expect(screen.getByText("2 assessed / 829 eligible")).toBeInTheDocument();
   expect(screen.getByText("827 unassessed")).toBeInTheDocument();
   expect(screen.getByText("37 observed assets")).toBeInTheDocument();
-  expect(screen.getByText("Assessment coverage unknown.")).toBeInTheDocument();
+  expect(screen.getAllByText("Assessment coverage unknown.").length).toBeGreaterThan(0);
   expect(screen.getByRole("combobox", { name: "Finding view" })).toHaveValue("attention");
   expect(getSecurityFindings).toHaveBeenCalledWith({ page: 1, limit: 25, view: "attention" });
   expect(screen.queryByText("Candidate")).not.toBeInTheDocument();
@@ -156,6 +156,23 @@ test("sensitive-port empty results preserve unknown coverage semantics", async (
   expect(await screen.findByText("No positive observations recorded. Assessment coverage unknown.")).toBeInTheDocument();
   expect(screen.getByText(/No matching sensitive-port observation hosts/)).toBeInTheDocument();
   expect(getSensitivePortHosts).toHaveBeenCalledWith({ page: 1, limit: 25 });
+});
+
+test("certificate and positive port evidence display recorded fields without inventing freshness", async () => {
+  getCertificateHosts.mockResolvedValue({ scan_id: 19, page: 1, limit: 25, total: 1, hosts: [{ domain_id: 12, domain: "cert.example.com", asset_class: "KNOWN", scan_id: 19, assessment_state: "OBSERVATION_RECORDED", certificates: [{ status: "EXPIRED", expiry: "2026-10-30", days_to_expiry_at_scan: -14, observed_at: null, scan_id: 19 }] }] });
+  getSensitivePortHosts.mockResolvedValue({ scan_id: 19, page: 1, limit: 25, total: 1, assessment_coverage: "UNKNOWN", hosts: [{ domain_id: 13, domain: "service.example.com", asset_class: "SHADOW", scan_id: 19, assessment_state: "OBSERVATION_RECORDED", ports: [{ port: 22, service: "SSH", source_risk: 4, description: "Remote administration service", scan_id: 19 }] }] });
+  render(<App />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Certificates/ }));
+  expect(await screen.findByText("EXPIRED")).toBeInTheDocument();
+  expect(screen.getByText("Expiry: 2026-10-30")).toBeInTheDocument();
+  expect(screen.getByText("Days to expiry at scan: -14")).toBeInTheDocument();
+  expect(screen.queryByText(/observed at/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Sensitive ports/ }));
+  expect(await screen.findByText("SSH · port 22")).toBeInTheDocument();
+  expect(screen.getByText("Remote administration service")).toBeInTheDocument();
+  expect(screen.getByText("Source risk 4 · scan #19")).toBeInTheDocument();
+  expect(screen.getAllByText("Assessment coverage unknown.").length).toBeGreaterThan(0);
 });
 
 test("maps source labels, null severity, inferred environment, and nested evidence in details", async () => {
