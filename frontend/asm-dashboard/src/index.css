@@ -18,6 +18,15 @@
   --asip-sidebar-width: 252px;
   --asip-radius: 7px;
   --asip-shadow: 0 8px 24px rgba(31, 45, 61, .08);
+  --asip-content-max: 1680px;
+  --asip-page-gutter: clamp(14px, 2.5vw, 38px);
+  --asip-page-block: clamp(22px, 2vw, 30px);
+  --asip-section-gap: 18px;
+  --asip-card-gap: 12px;
+  --asip-card-padding: clamp(16px, 1.35vw, 21px);
+  --asip-type-body: 14px;
+  --asip-type-table: 12px;
+  --asip-type-meta: 11px;
   --asip-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --asip-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   color-scheme: light;
@@ -25,7 +34,7 @@
 
 * { box-sizing: border-box; }
 html { min-width: 320px; background: var(--asip-bg); }
-body { margin: 0; background: var(--asip-bg); color: var(--asip-text-primary); font-family: var(--asip-font-sans); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+body { margin: 0; background: var(--asip-bg); color: var(--asip-text-primary); font-family: var(--asip-font-sans); font-size: var(--asip-type-body); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
 button, input, textarea, select { font: inherit; }
 code { font-family: var(--asip-font-mono); }
 ::selection { background: rgba(70, 85, 166, .18); color: #172130; }
@@ -39,9 +48,9 @@ code { font-family: var(--asip-font-mono); }
   border-radius: 4px;
   background: #f1f4f8;
   color: #526174;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 750;
-  letter-spacing: .08em;
+  letter-spacing: .05em;
   text-transform: uppercase;
 }
 

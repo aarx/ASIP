@@ -111,6 +111,11 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByText("Loading authoritative state")).toBeInTheDocument();
   expect(await screen.findByText("Brand discovery")).toBeInTheDocument();
   expect(screen.getByText("ShadowRecon")).toBeInTheDocument();
+  const pageHeaderContent = document.querySelector(".page-context-inner");
+  const pageBodyContent = document.querySelector(".page-content-overview");
+  expect(pageHeaderContent).toHaveClass("page-layout-container");
+  expect(pageBodyContent).toHaveClass("page-layout-container");
+  expect(pageHeaderContent.parentElement).toHaveClass("page-context-overview");
   const overviewMetrics = screen.getByRole("region", { name: "Overview metrics" });
   const coveragePanel = screen.getByRole("heading", { name: "Asset Coverage" }).closest("section");
   expect(overviewMetrics.querySelectorAll(".panel")).toHaveLength(2);

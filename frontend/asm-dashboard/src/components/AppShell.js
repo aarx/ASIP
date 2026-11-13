@@ -130,13 +130,15 @@ export default function AppShell({ activeRoute, routeMeta, children }) {
 
       <main className="app-main">
         <header className={`page-context page-context-${activeRoute}`}>
-          <div>
-            <div className="page-eyebrow">{routeMeta.eyebrow}</div>
-            <h1 className="page-title">{routeMeta.title}</h1>
-            <p className="page-description">{routeMeta.description}</p>
+          <div className="page-layout-container page-context-inner">
+            <div>
+              <div className="page-eyebrow">{routeMeta.eyebrow}</div>
+              <h1 className="page-title">{routeMeta.title}</h1>
+              <p className="page-description">{routeMeta.description}</p>
+            </div>
           </div>
         </header>
-        <div className={`page-content page-content-${activeRoute}`}>{children}</div>
+        <div className={`page-layout-container page-content page-content-${activeRoute}`}>{children}</div>
       </main>
     </div>
   );
