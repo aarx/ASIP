@@ -14,12 +14,14 @@ import AdhocChecksPage from "./pages/AdhocChecksPage";
 import DnsSecurityPage from "./pages/DnsSecurityPage";
 import SecurityFindingsPage from "./pages/SecurityFindingsPage";
 import CapdPage from "./pages/CapdPage";
+import SecurityReviewPage from "./pages/SecurityReviewPage";
 import "./App.css";
 
 const ROUTES = {
   overview: ["Overview", "Attack surface operations", "Authoritative exposure, change, and priority signals."],
   assets: ["Assets", "Inventory", "Explore current organizational and perimeter assets."],
   risk: ["Risk Overview", "Prioritization", "Review deterministic risk and exposure evidence."],
+  "risk-security-review": ["Security Review", "Risk & Exposure", "Review prioritized assets, evidence signals, and the review queue."],
   "risk-findings": ["Security Findings", "Risk & Exposure", "Review source-recorded observations and exposure signals."],
   "risk-needs-attention": ["Needs Attention", "Risk & Exposure", "Top deterministic risk scores followed by canonical risk distribution."],
   "risk-dns-security": ["DNS Security", "Risk & Exposure", "Read-only DNS assessment evidence from the current authoritative scan."],
@@ -41,13 +43,40 @@ function locationFromHash() {
     return { route: "overview", domain: null, query: "" };
   }
   if (segments[0] === "overview" && ["needs-attention", "risk-distribution"].includes(segments[1])) {
-    window.history.replaceState(null, "", `#/risk/needs-attention${query ? `?${query}` : ""}`);
-    return { route: "risk-needs-attention", domain: null, query };
+    const params = new URLSearchParams(query);
+    params.set("tab", "review-queue");
+    const nextQuery = params.toString();
+    window.history.replaceState(null, "", `#/risk/security-review${nextQuery ? `?${nextQuery}` : ""}`);
+    return { route: "risk-security-review", domain: null, query: nextQuery };
+  }
+  if (segments[0] === "risk" && !segments[1] && new URLSearchParams(query).get("section") === "priority-assets") {
+    const params = new URLSearchParams(query);
+    params.delete("section");
+    params.set("tab", "prioritized-assets");
+    const nextQuery = params.toString();
+    window.history.replaceState(null, "", `#/risk/security-review${nextQuery ? `?${nextQuery}` : ""}`);
+    return { route: "risk-security-review", domain: null, query: nextQuery };
+  }
+  if (segments[0] === "risk" && segments[1] === "findings") {
+    const params = new URLSearchParams(query);
+    params.set("tab", "evidence-signals");
+    const nextQuery = params.toString();
+    window.history.replaceState(null, "", `#/risk/security-review?${nextQuery}`);
+    return { route: "risk-security-review", domain: null, query: nextQuery };
+  }
+  if (segments[0] === "risk" && segments[1] === "needs-attention") {
+    const params = new URLSearchParams(query);
+    params.set("tab", "review-queue");
+    const nextQuery = params.toString();
+    window.history.replaceState(null, "", `#/risk/security-review?${nextQuery}`);
+    return { route: "risk-security-review", domain: null, query: nextQuery };
   }
   const riskSubroute = segments[0] === "risk" && segments[1] === "needs-attention"
     ? "risk-needs-attention"
     : segments[0] === "risk" && segments[1] === "findings"
       ? "risk-findings"
+    : segments[0] === "risk" && segments[1] === "security-review"
+      ? "risk-security-review"
     : segments[0] === "risk" && segments[1] === "dns-security"
       ? "risk-dns-security"
       : null;
@@ -81,6 +110,7 @@ function App() {
       : <AssetExplorerPage query={query} />;
   }
   if (route === "risk") page = <RiskExposurePage query={query} />;
+  if (route === "risk-security-review") page = <SecurityReviewPage query={query} />;
   if (route === "risk-findings") page = <SecurityFindingsPage query={query} />;
   if (route === "risk-needs-attention") page = <RiskNeedsAttentionPage query={query} />;
   if (route === "risk-dns-security") page = <DnsSecurityPage query={query} />;

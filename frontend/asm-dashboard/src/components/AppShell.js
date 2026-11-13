@@ -4,9 +4,7 @@ const DIRECT_NAV_ITEMS = [
   ["overview", "OV", "Overview"],
 ];
 
-const TRAILING_NAV_ITEMS = [
-  ["investigate", "IN", "Investigate"],
-];
+const TRAILING_NAV_ITEMS = [];
 
 const NAV_GROUPS = [
   {
@@ -21,11 +19,15 @@ const NAV_GROUPS = [
     label: "Risk & Exposure",
     items: [
       ["risk", "RX", "Risk Overview"],
-      ["risk-findings", "FI", "Findings", "risk/findings"],
-      ["risk-needs-attention", "NA", "Needs Attention", "risk/needs-attention"],
-      ["risk-dns-security", "DNS", "DNS Security", "risk/dns-security"],
+      ["risk-security-review", "SR", "Security Review", "risk/security-review"],
       ["brand", "BP", "Brand Exposure"],
     ],
+  },
+  {
+    key: "analytics",
+    symbol: "AN",
+    label: "Analytics",
+    items: [["investigate", "AI", "Asset Analysis"], ["risk-dns-security", "DNS", "DNS Security", "risk/dns-security"]],
   },
   {
     key: "scans",

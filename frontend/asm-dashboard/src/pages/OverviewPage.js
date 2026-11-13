@@ -279,7 +279,7 @@ export default function OverviewPage() {
         />
         <DiscoverySourcesPanel value={data.discoverySources} status={data.discoverySourcesStatus} />
         <div className="overview-secondary-kpis overview-risk-kpis">
-          <MetricCard label="Current High Risk" value={highRisk ?? "Unavailable"} support={`Current scan #${data.current_scan_id} · canonical priority`} accent={RISK_COLORS.High} href="#/risk?section=priority-assets" />
+          <MetricCard label="Current High Risk" value={highRisk ?? "Unavailable"} support={`Current scan #${data.current_scan_id} · canonical priority`} accent={RISK_COLORS.High} href="#/risk/security-review?tab=prioritized-assets" />
           <MetricCard label="Previously High Risk" value={historicalHighRisk ?? "Unavailable"} support={historicalHighRisk == null ? "Historical data unavailable" : `Historical successful scans · latest #${data.riskHistory.latest_successful_scan_id ?? data.current_scan_id}`} accent="#7b5bb5" href={historicalHighRisk == null ? undefined : "#/risk?section=historical-high-risk"} />
           <MetricCard label="New Assets" value={data.changes?.new_assets ?? 0} support="Since previous successful scan" accent="#327d80" href="#/changes?view=new" />
           <MetricCard label="Assets with IP Addresses" value={currentScanIpCount ?? "Unavailable"} support="Current scan" accent="#2f7d5b" href="#/assets?has_ip=true" />

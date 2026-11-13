@@ -28,16 +28,6 @@ const SECONDARY_VIEWS = [
   ["dns-security", "DNS assessments"],
 ];
 
-function reasons(reasonsList) {
-  return (
-    <div className="reason-list">
-      {(reasonsList || []).map((reason) => (
-        <span className="reason-token" key={reason}>{reason.replaceAll("_", " ")}</span>
-      ))}
-    </div>
-  );
-}
-
 function readSecondaryView(query) {
   const params = new URLSearchParams(query);
   const requested = params.get("view") || params.get("section");
@@ -155,10 +145,8 @@ export default function RiskExposurePage({ query }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
   const [requestVersion, setRequestVersion] = useState(0);
-  const [priorityPage, setPriorityPage] = useState(() => readPositivePage(query, "priority_page"));
   const [priorityData, setPriorityData] = useState(null);
   const [priorityStatus, setPriorityStatus] = useState("loading");
-  const [priorityRequestVersion, setPriorityRequestVersion] = useState(0);
   const [historicalSummary, setHistoricalSummary] = useState(null);
   const [historicalPage, setHistoricalPage] = useState(() => readPositivePage(query, "historical_page"));
   const [historicalData, setHistoricalData] = useState(null);
@@ -168,8 +156,6 @@ export default function RiskExposurePage({ query }) {
 
   useEffect(() => {
     setSecondaryView(readSecondaryView(query));
-    const requestedPriorityPage = readPositivePage(query, "priority_page");
-    setPriorityPage((currentPage) => currentPage === requestedPriorityPage ? currentPage : requestedPriorityPage);
     const requestedPage = readPositivePage(query, "historical_page");
     setHistoricalPage((currentPage) => currentPage === requestedPage ? currentPage : requestedPage);
   }, [query]);
@@ -212,7 +198,7 @@ export default function RiskExposurePage({ query }) {
     let active = true;
     setPriorityStatus("loading");
     getV2Assets({
-      page: priorityPage,
+      page: 1,
       limit: PRIORITY_LIMIT,
       risk_positive: true,
       sort_by: "risk_score",
@@ -224,7 +210,7 @@ export default function RiskExposurePage({ query }) {
       }
     }).catch(() => { if (active) setPriorityStatus("error"); });
     return () => { active = false; };
-  }, [data, priorityPage, priorityRequestVersion, status]);
+  }, [data, status]);
 
   useEffect(() => {
     if (status !== "ready" || historicalSummary?.availability_state !== "AVAILABLE") return undefined;
@@ -257,13 +243,6 @@ export default function RiskExposurePage({ query }) {
     if (!["priority-assets", "sensitive-ports", "review-indicators", "dns-security", "historical-high-risk"].includes(section)) return;
     document.getElementById(section)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }, [query, status]);
-
-  const movePriorityPage = (page) => {
-    const params = new URLSearchParams(query);
-    params.set("section", "priority-assets");
-    params.set("priority_page", String(page));
-    window.location.hash = `#/risk?${params.toString()}`;
-  };
 
   const moveSecondaryTab = (currentView, direction) => {
     const currentIndex = SECONDARY_VIEWS.findIndex(([view]) => view === currentView);
@@ -299,7 +278,6 @@ export default function RiskExposurePage({ query }) {
   const { overview, findings, sensitivePorts, exposure, reviewIndicators, httpStatuses, dnsSummary } = data;
   const portRows = Array.isArray(sensitivePorts) ? sensitivePorts : [];
   const portSummary = sensitivePortSummary(portRows);
-  const totalPriorityPages = Math.max(Math.ceil((priorityData?.count || 0) / PRIORITY_LIMIT), 1);
   const totalHistoricalPages = Math.max(Math.ceil((historicalData?.total || historicalSummary?.historical_unique_high_assets || 0) / HISTORICAL_HIGH_LIMIT), 1);
   const groups = httpStatusGroups(httpStatuses);
   const historicalAvailable = historicalSummary?.availability_state === "AVAILABLE";
@@ -324,7 +302,7 @@ export default function RiskExposurePage({ query }) {
       </section>
 
       <section className="actionable-kpis" aria-label="Actionable evidence">
-        <MetricCard label="Findings" value={findings.length} support="Source-recorded observations" accent="#b43d4a" href="#/risk/findings" />
+        <MetricCard label="Findings" value={findings.length} support="Source-recorded observations" accent="#b43d4a" href="#/risk/security-review?tab=evidence-signals" />
         <MetricCard label="Observed sensitive-port exposures" value={portSummary.value} support={portSummary.support} accent="#a96f1f" href="#/risk?section=sensitive-ports" />
         <MetricCard label="Review Indicators" value={reviewIndicators.count ?? "—"} support="Review only · not findings" accent="#9a79d6" href="#/risk?section=review-indicators" />
       </section>
@@ -340,37 +318,8 @@ export default function RiskExposurePage({ query }) {
         </nav>
       )}
 
-      <Panel title="Priority assets" subtitle="Current assets with risk scores above zero" meta={`${priorityData?.count ?? "—"} ASSETS`} className="operation-panel-full priority-assets-panel" id="priority-assets">
-        {priorityStatus === "loading" && <LoadingState title="Loading priority assets" copy="Retrieving the current risk-ranked asset queue." />}
-        {priorityStatus === "error" && <ErrorState title="Priority assets unavailable" copy="The current risk-ranked asset queue could not be loaded." onRetry={() => setPriorityRequestVersion((value) => value + 1)} />}
-        {priorityStatus === "ready" && priorityData.assets.length === 0 && <div className="detail-empty">No assets have a risk score above zero in this scan.</div>}
-        {priorityStatus === "ready" && priorityData.assets.length > 0 && (
-          <>
-            <div className="dense-table-wrap">
-              <table className="dense-table risk-assets-table">
-                <thead><tr><th>Asset</th><th>Priority</th><th>Score</th><th>Evidence</th><th /></tr></thead>
-                <tbody>{priorityData.assets.map((asset) => (
-                  <tr key={asset.domain}>
-                    <td><AssetLink domain={asset.domain} returnTo="risk" returnQuery={`section=priority-assets&priority_page=${priorityPage}`} /></td>
-                    <td><StatusBadge value={asset.risk?.priority} /></td>
-                    <td><span className="risk-score">{asset.risk?.score ?? "—"}</span></td>
-                    <td>{reasons(asset.risk?.reasons)}</td>
-                    <td><AssetLink domain={asset.domain} returnTo="risk" returnQuery={`section=priority-assets&priority_page=${priorityPage}`} className="row-action">→</AssetLink></td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
-            {priorityData.count > 0 && (
-              <div className="pagination-bar">
-                <span>Page {priorityPage} of {totalPriorityPages}</span>
-                <div>
-                  <button type="button" className="secondary-button" disabled={priorityPage <= 1} onClick={() => movePriorityPage(priorityPage - 1)}>Previous</button>
-                  <button type="button" className="secondary-button" disabled={priorityPage >= totalPriorityPages} onClick={() => movePriorityPage(priorityPage + 1)}>Next</button>
-                </div>
-              </div>
-            )}
-          </>
-        )}
+      <Panel title="Priority assets" subtitle="The current ranked asset queue now lives in Security Review." meta={priorityStatus === "ready" ? `${priorityData?.count ?? "—"} ASSETS` : "CURRENT QUEUE"} className="operation-panel-full priority-assets-panel" id="priority-assets">
+        <a className="context-link" href="#/risk/security-review?tab=prioritized-assets">Open Prioritized Assets in Security Review →</a>
       </Panel>
 
       <Panel title="Previously High Risk" subtitle="Distinct organizational assets with a persisted High score in a successful scan" meta={historicalCount == null ? "UNAVAILABLE" : `${historicalCount} ASSETS`} className="operation-panel-full historical-high-risk-panel" id="historical-high-risk">

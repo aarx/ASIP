@@ -174,12 +174,11 @@ test("risk workspace presents exact metrics and separate review evidence", async
   expect(screen.getAllByText("Review only · not a vulnerability conclusion")).toHaveLength(2);
   expect(screen.getByText("Redirect does not establish ownership or authorization")).toBeInTheDocument();
   const actionable = screen.getByRole("region", { name: "Actionable evidence" });
-  expect(actionable.querySelector('a[href="#/risk/findings"]')).toBeInTheDocument();
+  expect(actionable.querySelector('a[href="#/risk/security-review?tab=evidence-signals"]')).toBeInTheDocument();
   expect(actionable.querySelector('a[href="#/risk?section=sensitive-ports"]')).toBeInTheDocument();
   expect(actionable.querySelector('a[href="#/risk?section=review-indicators"]')).toBeInTheDocument();
   expect(document.getElementById("review-indicators")).toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: "Findings" })).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Findings" })).toHaveAttribute("href", "#/risk/findings");
   const sensitivePortsTab = screen.getByRole("tab", { name: "Sensitive ports" });
   fireEvent.keyDown(needsReviewTab, { key: "ArrowRight" });
   expect(sensitivePortsTab).toHaveAttribute("aria-selected", "true");
@@ -191,8 +190,10 @@ test("risk workspace presents exact metrics and separate review evidence", async
   expect(screen.getByText("https://external.example/login")).toBeInTheDocument();
   expect(scrollIntoView).toHaveBeenCalled();
   const criticalAssetLinks = screen.getAllByRole("link", { name: "Open critical.example.com" });
-  expect(criticalAssetLinks.some((link) => link.getAttribute("href") === "#/assets/critical.example.com?return=risk&return_query=section%3Dpriority-assets%26priority_page%3D1")).toBe(true);
   expect(criticalAssetLinks.some((link) => link.getAttribute("href") === "#/assets/critical.example.com?return=risk")).toBe(true);
+  expect(screen.getByRole("link", { name: /Open Prioritized Assets/ })).toHaveAttribute(
+    "href", "#/risk/security-review?tab=prioritized-assets"
+  );
 });
 
 test("Risk Overview exposes DNS coverage without treating partial evidence as a vulnerability verdict", async () => {
@@ -292,8 +293,8 @@ test("Risk Overview labels DNS evidence from a non-authoritative scan as histori
   expect(screen.getAllByText("Not Assessed").length).toBeGreaterThan(0);
 });
 
-test("priority assets use the exact positive-risk count and paginate the ranked queue", async () => {
-  window.location.hash = "#/risk";
+test("Security Review prioritizes the exact positive-risk count and paginates the ranked queue", async () => {
+  window.location.hash = "#/risk/security-review?tab=prioritized-assets";
   getV2Overview.mockResolvedValue(overview);
   getFindings.mockResolvedValue([]);
   getSensitiveExposure.mockResolvedValue([]);
@@ -312,7 +313,7 @@ test("priority assets use the exact positive-risk count and paginate the ranked 
 
   render(<App />);
 
-  expect(await screen.findByText("51 ASSETS")).toBeInTheDocument();
+  expect(await screen.findByText("51 RANKED ASSETS")).toBeInTheDocument();
   expect(getV2Assets).toHaveBeenCalledWith({
     page: 1, limit: 25, risk_positive: true, sort_by: "risk_score", sort_dir: "desc",
   });
@@ -371,10 +372,8 @@ test("Risk Overview keeps current High Risk separate from paginated historical H
   );
 });
 
-test("priority asset page and section survive asset detail navigation and restore from the URL", async () => {
-  window.location.hash = "#/risk?section=priority-assets&priority_page=2";
-  const scrollIntoView = jest.fn();
-  Element.prototype.scrollIntoView = scrollIntoView;
+test("Security Review priority asset page survives detail navigation and restores from the URL", async () => {
+  window.location.hash = "#/risk/security-review?tab=prioritized-assets&priority_page=2";
   getV2Overview.mockResolvedValue(overview);
   getV2Assets
     .mockResolvedValueOnce({ scan_id: 42, page: 2, limit: 25, count: 51, assets: [{ domain: "page-two.example.com", risk: { score: 5, priority: "Elevated", reasons: ["http_exposed"] } }] })
@@ -391,19 +390,18 @@ test("priority asset page and section survive asset detail navigation and restor
 
   expect(await screen.findByText("page-two.example.com")).toBeInTheDocument();
   expect(getV2Assets).toHaveBeenCalledWith({ page: 2, limit: 25, risk_positive: true, sort_by: "risk_score", sort_dir: "desc" });
-  expect(scrollIntoView).toHaveBeenCalled();
   expect(screen.getByRole("link", { name: "Open page-two.example.com" })).toHaveAttribute(
     "href",
-    "#/assets/page-two.example.com?return=risk&return_query=section%3Dpriority-assets%26priority_page%3D2"
+    "#/assets/page-two.example.com?return=risk%2Fsecurity-review&return_query=tab%3Dprioritized-assets%26priority_page%3D2"
   );
 
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  expect(window.location.hash).toBe("#/risk?section=priority-assets&priority_page=3");
+  expect(window.location.hash).toBe("#/risk/security-review?tab=prioritized-assets&priority_page=3");
   expect(await screen.findByText("page-three.example.com")).toBeInTheDocument();
   expect(getV2Assets).toHaveBeenLastCalledWith({ page: 3, limit: 25, risk_positive: true, sort_by: "risk_score", sort_dir: "desc" });
   expect(screen.getByRole("link", { name: "Open page-three.example.com" })).toHaveAttribute(
     "href",
-    "#/assets/page-three.example.com?return=risk&return_query=section%3Dpriority-assets%26priority_page%3D3"
+    "#/assets/page-three.example.com?return=risk%2Fsecurity-review&return_query=tab%3Dprioritized-assets%26priority_page%3D3"
   );
 });
 

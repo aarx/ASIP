@@ -89,7 +89,7 @@ test("Overview metrics and attention assets lead into analyst workflows", async 
   render(<App />);
 
   expect(await screen.findByText("attention.example")).toBeInTheDocument();
-  expect(screen.getByText("attention.example").closest("a")).toHaveAttribute("href", "#/assets/attention.example?return=risk%2Fneeds-attention&return_query=page%3D1%26limit%3D10");
+  expect(screen.getByText("attention.example").closest("a")).toHaveAttribute("href", "#/assets/attention.example?return=risk%2Fsecurity-review&return_query=page%3D1%26limit%3D10%26tab%3Dreview-queue");
   expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("href", "#/overview");
   expect(screen.getByRole("link", { name: "Risk Overview" })).toHaveAttribute("href", "#/risk");
 });

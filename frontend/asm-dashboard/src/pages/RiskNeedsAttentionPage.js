@@ -14,13 +14,16 @@ function readQueuePaging(query) {
   return { page: Math.max(Number(params.get("page")) || 1, 1), pageSize };
 }
 
-function queueHash({ page, pageSize }) {
+function queueHash({ page, pageSize }, routePrefix = "risk/needs-attention") {
   const params = new URLSearchParams({ page: String(page), limit: String(pageSize) });
-  return `#/risk/needs-attention?${params}`;
+  if (routePrefix === "risk/security-review") params.set("tab", "review-queue");
+  return `#/${routePrefix}?${params}`;
 }
 
-function queueReturnQuery({ page, pageSize }) {
-  return new URLSearchParams({ page: String(page), limit: String(pageSize) }).toString();
+function queueReturnQuery({ page, pageSize }, routePrefix = "risk/needs-attention") {
+  const params = new URLSearchParams({ page: String(page), limit: String(pageSize) });
+  if (routePrefix === "risk/security-review") params.set("tab", "review-queue");
+  return params.toString();
 }
 
 function attentionAsset(asset) {
@@ -32,7 +35,7 @@ function attentionAsset(asset) {
   };
 }
 
-export default function RiskNeedsAttentionPage({ query = "" }) {
+export default function RiskNeedsAttentionPage({ query = "", embedded = false, routePrefix = "risk/needs-attention", showDistribution = true }) {
   const initialPaging = useMemo(() => readQueuePaging(query), [query]);
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
@@ -76,7 +79,7 @@ export default function RiskNeedsAttentionPage({ query = "" }) {
   }, [data?.current_scan_id, paging.page, paging.pageSize, queueRequestVersion, status]);
 
   const updatePaging = (nextPaging) => {
-    window.location.hash = queueHash(nextPaging);
+    window.location.hash = queueHash(nextPaging, routePrefix);
   };
 
   if (status === "loading") return <LoadingState title="Loading Needs Attention" copy="Retrieving the bounded deterministic risk queue." />;
@@ -89,17 +92,14 @@ export default function RiskNeedsAttentionPage({ query = "" }) {
 
   return (
     <div className="operations-grid risk-needs-attention-page">
-      <a className="overview-subpage-context operation-panel-full" href="#/scans">
+      {!embedded && <a className="overview-subpage-context operation-panel-full" href="#/scans">
         <span>Current authoritative scan</span>
         <strong>#{data.current_scan_id}</strong>
         <span aria-hidden="true">View scans →</span>
-      </a>
-      <Panel title="Risk distribution" subtitle="Canonical priorities across confirmed organizational assets" meta={`SCAN #${data.current_scan_id}`} className="operation-panel-full">
-        <RiskDistributionChart
-          distribution={data.risk_distribution}
-          priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}`}
-        />
-      </Panel>
+      </a>}
+      {showDistribution && <Panel title="Risk distribution" subtitle="Canonical priorities across confirmed organizational assets" meta={`SCAN #${data.current_scan_id}`} className="operation-panel-full">
+        <RiskDistributionChart distribution={data.risk_distribution} priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}`} />
+      </Panel>}
       <Panel title="Needs attention" subtitle="Positive-score assets ranked by deterministic risk" meta={`${totalCount} RANKED ASSETS`} className="operation-panel-full">
         {queueStatus === "loading" && <LoadingState title="Loading ranked assets" copy="Retrieving the current positive-score population." />}
         {queueStatus === "error" && <ErrorState title="Ranked assets unavailable" copy="The current positive-score asset queue could not be loaded." onRetry={() => setQueueRequestVersion((value) => value + 1)} />}
@@ -108,8 +108,8 @@ export default function RiskNeedsAttentionPage({ query = "" }) {
           <>
             <AttentionTable
               assets={queueAssets}
-              returnTo="risk/needs-attention"
-              returnQuery={queueReturnQuery(paging)}
+              returnTo={routePrefix}
+              returnQuery={queueReturnQuery(paging, routePrefix)}
             />
             <div className="pagination-bar risk-queue-pagination">
               <label className="risk-page-size">

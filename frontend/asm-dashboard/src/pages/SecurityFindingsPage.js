@@ -58,8 +58,9 @@ function readFilters(query) {
   };
 }
 
-function queryForFilters(filters) {
+function queryForFilters(filters, tab = null) {
   const params = new URLSearchParams();
+  if (tab) params.set("tab", tab);
   if (filters.page > 1) params.set("page", String(filters.page));
   if (filters.pageSize !== 25) params.set("limit", String(filters.pageSize));
   if (filters.view !== "attention") params.set("view", filters.view);
@@ -75,14 +76,14 @@ function queryForFilters(filters) {
   return params.toString();
 }
 
-function updateFilters(filters) {
-  const query = queryForFilters(filters);
-  window.location.hash = `#/risk/findings${query ? `?${query}` : ""}`;
+function updateFilters(filters, routePrefix = "risk/findings", tab = null) {
+  const query = queryForFilters(filters, tab);
+  window.location.hash = `#/${routePrefix}${query ? `?${query}` : ""}`;
 }
 
-function updateCoverageFilters(filters) {
-  const query = queryForFilters(filters);
-  window.location.hash = `#/risk/findings${query ? `?${query}` : ""}`;
+function updateCoverageFilters(filters, routePrefix = "risk/findings", tab = null) {
+  const query = queryForFilters(filters, tab);
+  window.location.hash = `#/${routePrefix}${query ? `?${query}` : ""}`;
 }
 
 function sourceLabel(source) {
@@ -150,13 +151,13 @@ function FindingsCoverage({ summary, status, selected, onSelect }) {
 
 const COVERAGE_PAGE_SIZE = 25;
 
-function HostCoveragePanel({ filters, query, onChange, onRetry, onClose, requestVersion }) {
+function HostCoveragePanel({ filters, query, routePrefix, onChange, onRetry, onClose, requestVersion }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
   const [draftSearch, setDraftSearch] = useState(filters.coverageSearch);
   const category = filters.coverageCategory;
   const categoryTitle = category === "dns" ? "DNS Security hosts" : category === "certificates" ? "Certificate hosts" : "Sensitive port hosts";
-  const returnQuery = queryForFilters(filters);
+  const returnQuery = queryForFilters(filters, routePrefix === "risk/security-review" ? "evidence-signals" : null);
 
   useEffect(() => { setDraftSearch(filters.coverageSearch); }, [filters.coverageSearch]);
 
@@ -235,7 +236,7 @@ function HostCoveragePanel({ filters, query, onChange, onRetry, onClose, request
             const unassessed = host.assessment_state === "NOT_ASSESSED" || host.assessment_state === "NO_PERSISTED_OBSERVATION";
             return <article className="coverage-host-row" key={`${host.domain_id || domain}-${host.scan_id}`}>
               <div className="coverage-host-heading">
-                <div><AssetLink domain={domain} returnTo="risk/findings" returnQuery={returnQuery} /><span className="coverage-host-class">{host.asset_class || "Unknown class"} · scan #{host.scan_id ?? data.scan_id}</span></div>
+                <div><AssetLink domain={domain} returnTo={routePrefix} returnQuery={returnQuery} /><span className="coverage-host-class">{host.asset_class || "Unknown class"} · scan #{host.scan_id ?? data.scan_id}</span></div>
                 <span className={`coverage-assessment-state${unassessed ? " unassessed" : ""}`}>{unassessed ? (category === "dns" ? "UNASSESSED · NO CHECKS" : "NO OBSERVATION") : (category === "dns" ? "ASSESSED · CHECKS RECORDED" : "OBSERVATION RECORDED")}</span>
               </div>
               {category === "dns" && !unassessed && <>
@@ -253,13 +254,13 @@ function HostCoveragePanel({ filters, query, onChange, onRetry, onClose, request
   );
 }
 
-function FindingDetail({ finding, query }) {
+function FindingDetail({ finding, query, returnTo }) {
   const returnQuery = query || "";
   return (
     <Panel title="Finding details" meta={sourceLabel(finding.source)} className="operation-panel-full finding-detail-panel" id="finding-detail">
       <div className="finding-detail-grid">
         <section><span className="finding-detail-label">What</span><h3>{finding.title}</h3><p>{categoryLabel(finding.category)} · {displayOptional(finding.finding_type, "Observation type not recorded")}</p></section>
-        <section><span className="finding-detail-label">Where</span><AssetLink domain={finding.asset_domain} returnTo="risk/findings" returnQuery={returnQuery} /><p><StatusBadge value={finding.asset_class} /> · scan #{finding.scan_id}</p></section>
+        <section><span className="finding-detail-label">Where</span><AssetLink domain={finding.asset_domain} returnTo={returnTo} returnQuery={returnQuery} /><p><StatusBadge value={finding.asset_class} /> · scan #{finding.scan_id}</p></section>
         <section className="finding-detail-wide"><span className="finding-detail-label">Why</span><p>{displayOptional(finding.why_it_matters, "No explanation recorded by the source contract.")}</p></section>
         <section className="finding-detail-wide"><span className="finding-detail-label">Evidence</span><EvidenceValue value={finding.evidence} /></section>
         <section className="finding-detail-wide"><span className="finding-detail-label">Action</span><p>{displayOptional(finding.recommended_action, "No recommended action recorded.")}</p></section>
@@ -274,8 +275,10 @@ function FindingDetail({ finding, query }) {
   );
 }
 
-export default function SecurityFindingsPage({ query = "" }) {
+export default function SecurityFindingsPage({ query = "", routePrefix = "risk/findings" }) {
   const filters = useMemo(() => readFilters(query), [query]);
+  const pageTab = routePrefix === "risk/security-review" ? "evidence-signals" : null;
+  const pageQuery = queryForFilters(filters, pageTab);
   const [summary, setSummary] = useState(null);
   const [summaryStatus, setSummaryStatus] = useState("loading");
   const [data, setData] = useState(null);
@@ -320,9 +323,9 @@ export default function SecurityFindingsPage({ query = "" }) {
 
   const changeFilter = (key, value) => {
     const [, currentQuery = ""] = window.location.hash.replace(/^#\/?/, "").split("?");
-    updateFilters({ ...readFilters(currentQuery), [key]: value, page: 1 });
+    updateFilters({ ...readFilters(currentQuery), [key]: value, page: 1 }, routePrefix, pageTab);
   };
-  const changeCoverage = (nextFilters) => updateCoverageFilters(nextFilters);
+  const changeCoverage = (nextFilters) => updateCoverageFilters(nextFilters, routePrefix, pageTab);
 
   if (listStatus === "loading" && !data) return <LoadingState title="Loading Security Findings" copy="Retrieving current-scan observations and exposure signals." />;
   if (listStatus === "error") return <ErrorState title="Security Findings unavailable" copy="The unified findings request could not be loaded. No values have been inferred." onRetry={() => setListRequestVersion((value) => value + 1)} />;
@@ -349,6 +352,7 @@ export default function SecurityFindingsPage({ query = "" }) {
       <HostCoveragePanel
         filters={filters}
         query={query}
+        routePrefix={routePrefix}
         onChange={changeCoverage}
         onRetry={() => setCoverageRequestVersion((value) => value + 1)}
         onClose={() => changeCoverage({ ...filters, coverageCategory: "", coveragePage: 1 })}
@@ -374,7 +378,7 @@ export default function SecurityFindingsPage({ query = "" }) {
                   const selected = selectedFinding?.finding_id === finding.finding_id;
                   return <tr key={finding.finding_id} className={selected ? "finding-row-selected" : ""}>
                     <td><button type="button" className="finding-select-button" aria-expanded={selected} aria-controls="finding-detail" onClick={() => setSelectedFinding(selected ? null : finding)}><strong>{finding.title}</strong><span>{displayOptional(finding.finding_type, "Observation")}</span></button></td>
-                    <td><AssetLink domain={finding.asset_domain} returnTo="risk/findings" returnQuery={queryForFilters(filters)} /></td>
+                    <td><AssetLink domain={finding.asset_domain} returnTo={routePrefix} returnQuery={pageQuery} /></td>
                     <td><span>{sourceLabel(finding.source)}</span><small>{finding.source_outcome || ""}</small></td>
                     <td>{finding.severity ? <StatusBadge value={finding.severity} /> : <span className="not-applicable">Not provided</span>}</td>
                     <td><StatusBadge value={finding.category === "FINDING" ? "Source-recorded" : categoryLabel(finding.category)} />{finding.verification_state && <small>{finding.verification_state}</small>}</td>
@@ -386,13 +390,13 @@ export default function SecurityFindingsPage({ query = "" }) {
             <div className="pagination-bar findings-pagination">
               <label className="risk-page-size"><span>Rows per page</span><select aria-label="Findings rows per page" value={filters.pageSize} onChange={(event) => changeFilter("pageSize", Number(event.target.value))}>{PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
               <span>Page {filters.page} of {totalPages} · {total.toLocaleString()} matching records</span>
-              <div><button type="button" className="secondary-button" disabled={filters.page <= 1} onClick={() => updateFilters({ ...filters, page: filters.page - 1 })}>Previous</button><button type="button" className="secondary-button" disabled={filters.page >= totalPages} onClick={() => updateFilters({ ...filters, page: filters.page + 1 })}>Next</button></div>
+              <div><button type="button" className="secondary-button" disabled={filters.page <= 1} onClick={() => updateFilters({ ...filters, page: filters.page - 1 }, routePrefix, pageTab)}>Previous</button><button type="button" className="secondary-button" disabled={filters.page >= totalPages} onClick={() => updateFilters({ ...filters, page: filters.page + 1 }, routePrefix, pageTab)}>Next</button></div>
             </div>
           </>
         )}
       </Panel>
 
-      {selectedFinding && <FindingDetail finding={selectedFinding} query={queryForFilters(filters)} />}
+      {selectedFinding && <FindingDetail finding={selectedFinding} query={pageQuery} returnTo={routePrefix} />}
     </div>
   );
 }

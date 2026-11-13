@@ -589,6 +589,14 @@
 .risk-history-coverage summary { padding: 11px 2px 4px; color: var(--asip-text-secondary); cursor: pointer; font-weight: 700; }
 .risk-history-coverage p { margin: 5px 2px 7px; }
 .risk-history-coverage ul { margin: 0; padding-left: 19px; line-height: 1.5; }
+.security-review-tabs-panel { padding: 0; overflow: hidden; }
+.security-review-tabs { display: flex; flex-wrap: nowrap; gap: 22px; overflow-x: auto; padding: 0 16px; border-bottom: 1px solid var(--asip-border); }
+.security-review-tabs button { padding: 13px 2px 11px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--asip-text-muted); font: inherit; font-size: 11px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.security-review-tabs button:hover, .security-review-tabs button:focus-visible { border-bottom-color: rgba(61, 196, 255, .48); color: var(--asip-text-primary); outline: none; }
+.security-review-tabs button:focus-visible { box-shadow: 0 2px 0 rgba(61, 196, 255, .28); }
+.security-review-tabs button.active { border-bottom-color: var(--asip-accent-bright); color: var(--asip-text-primary); font-weight: 750; }
+.security-review-workspace > [role="tabpanel"] { grid-column: 1 / -1; min-width: 0; }
+.security-review-workspace > [role="tabpanel"] > .operations-grid { margin: 0; }
 
 .compact-list { max-height: 390px; overflow: auto; }
 .compact-evidence-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 11px; padding: 12px 5px; border-top: 1px solid rgba(115, 142, 170, .09); }

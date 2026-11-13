@@ -81,7 +81,7 @@ const attentionPage = {
 };
 
 beforeEach(() => {
-  window.location.hash = "#/risk/findings";
+  window.location.hash = "#/risk/security-review?tab=evidence-signals";
   getSecurityFindings.mockReset();
   getSecurityFindingsSummary.mockReset();
   getDnsSecurityHosts.mockReset();
@@ -94,8 +94,8 @@ beforeEach(() => {
 test("renders live category counts, separate coverage, and the default attention view", async () => {
   render(<App />);
 
-  expect(await screen.findByRole("heading", { name: "Security Findings" })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Findings" })).toHaveAttribute("href", "#/risk/findings");
+  expect(await screen.findByRole("heading", { name: "Security Review" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Evidence & Signals" })).toHaveAttribute("aria-selected", "true");
   expect(screen.getByText("0")).toBeInTheDocument();
   expect(screen.getByText("32")).toBeInTheDocument();
   expect(screen.getByText("892")).toBeInTheDocument();
@@ -123,7 +123,7 @@ test("assessment cards select one inline panel and use server-side domain search
   fireEvent.change(screen.getByRole("combobox", { name: "Search mode" }), { target: { value: "domain" } });
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
   await waitFor(() => expect(getDnsSecurityHosts).toHaveBeenLastCalledWith({ page: 1, limit: 25, search: "example.com", search_mode: "domain" }));
-  expect(await screen.findByRole("link", { name: "app.example.com" })).toHaveAttribute("href", "#/assets/app.example.com?return=risk%2Ffindings&return_query=coverage%3Ddns%26coverage_search%3Dexample.com%26coverage_mode%3Ddomain");
+  expect(await screen.findByRole("link", { name: "app.example.com" })).toHaveAttribute("href", "#/assets/app.example.com?return=risk%2Fsecurity-review&return_query=tab%3Devidence-signals%26coverage%3Ddns%26coverage_search%3Dexample.com%26coverage_mode%3Ddomain");
   fireEvent.click(screen.getByText("Recorded checks and evidence"));
   expect(screen.getByText("softfail")).toBeInTheDocument();
   expect(screen.getByText("Review DNS policy")).toBeInTheDocument();
@@ -189,7 +189,7 @@ test("maps source labels, null severity, inferred environment, and nested eviden
   expect(screen.getByText("softfail")).toBeInTheDocument();
   expect(screen.getByText(/inferred from hostname text/i)).toBeInTheDocument();
   expect(screen.getByText("Inferred environment indicators: DEV")).toBeInTheDocument();
-  expect(screen.getAllByRole("link", { name: "admin-dev.example.com" }).every((link) => link.getAttribute("href") === "#/assets/admin-dev.example.com?return=risk%2Ffindings")).toBe(true);
+  expect(screen.getAllByRole("link", { name: "admin-dev.example.com" }).every((link) => link.getAttribute("href") === "#/assets/admin-dev.example.com?return=risk%2Fsecurity-review&return_query=tab%3Devidence-signals")).toBe(true);
   expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
 });
 
