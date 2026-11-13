@@ -1,4 +1,7 @@
+import contextlib
+import io
 import importlib
+import json
 import pathlib
 import sys
 import threading
@@ -17,6 +20,7 @@ sys.path.insert(0, str(BACKEND / "tests"))
 
 import optional_migrations  # noqa: E402
 import capd_approval_consumption as consumption  # noqa: E402
+import capd_cli  # noqa: E402
 from apache_version_verification import (  # noqa: E402
     APACHE_CHECK_ID, APACHE_CHECK_REVISION, create_authorization_context,
 )
@@ -288,6 +292,158 @@ class CapdApprovalConsumptionPostgreSQLTests(unittest.TestCase):
             "https://apache.example.test/", "8.8.8.8", method="GET", timeout=3.0,
         )
         conn.close()
+
+    def test_actual_cli_execute_uses_signed_single_target_and_json_result(self):
+        preview = {
+            "source_scan": {"scan_id": 991, "status": "SUCCEEDED"},
+            "product": "Apache HTTP Server", "selection": {"eligible_targets": 1},
+            "populations": {"selected_candidate_counts": {"product_matched_candidates": 1}},
+            "targets": [self.target],
+        }
+        response = type("Response", (), {
+            "status_code": 200, "headers": {"Server": "Apache/2.4.58"},
+        })()
+        output = io.StringIO()
+        conn = self.connect()
+        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": CAPD_HTTP_HEADER_VERIFY}), \
+                mock.patch("capd_cli.get_conn", return_value=conn), \
+                mock.patch("capd_cli.preview_product_targets", return_value=preview), \
+                mock.patch("capd_cli._read_public_key", return_value=self.public_key), \
+                mock.patch("capd_cli.recheck_apache_target_from_inventory", return_value={
+                    "inventory_policy_passed": True, "reason_codes": [],
+                }), \
+                mock.patch.object(
+                    consumption, "recheck_apache_target_from_inventory",
+                    return_value={"inventory_policy_passed": True, "reason_codes": []},
+                ), \
+                mock.patch("capd_cli.socket.getaddrinfo", return_value=["8.8.8.8"]), \
+                mock.patch.object(
+                    BoundedApacheHTTPTransport, "request", return_value=response,
+                ) as request, \
+                mock.patch("capd_cli.sys.stdin", mock.Mock(buffer=io.BytesIO(self.document.encode()))), \
+                contextlib.redirect_stdout(output):
+            code = capd_cli.main([
+                "apache-version", "--execute", "--scan-id", "991",
+                "--asset-id", "9991", "--approval-stdin",
+            ])
+        rendered = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(rendered["mode"], "single_request")
+        self.assertEqual(rendered["result"]["outcome"], "VERSION_IDENTIFIED")
+        self.assertEqual(rendered["result"]["version"], "2.4.58")
+        self.assertEqual(rendered["result"]["http_request_count"], 1)
+        request.assert_called_once()
+        conn.close()
+
+        replay_output = io.StringIO()
+        replay_conn = self.connect()
+        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": CAPD_HTTP_HEADER_VERIFY}), \
+                mock.patch("capd_cli.get_conn", return_value=replay_conn), \
+                mock.patch("capd_cli.preview_product_targets", return_value=preview), \
+                mock.patch("capd_cli._read_public_key", return_value=self.public_key), \
+                mock.patch("capd_cli.recheck_apache_target_from_inventory", return_value={
+                    "inventory_policy_passed": True, "reason_codes": [],
+                }), \
+                mock.patch.object(
+                    consumption, "recheck_apache_target_from_inventory",
+                    return_value={"inventory_policy_passed": True, "reason_codes": []},
+                ), \
+                mock.patch("capd_cli.socket.getaddrinfo", return_value=["8.8.8.8"]) as replay_resolver, \
+                mock.patch.object(
+                    BoundedApacheHTTPTransport, "request", return_value=response,
+                ) as replay_request, \
+                mock.patch("capd_cli.sys.stdin", mock.Mock(buffer=io.BytesIO(self.document.encode()))), \
+                contextlib.redirect_stdout(replay_output):
+            replay_code = capd_cli.main([
+                "apache-version", "--execute", "--scan-id", "991",
+                "--asset-id", "9991", "--approval-stdin",
+            ])
+        replay_rendered = json.loads(replay_output.getvalue())
+        self.assertEqual(replay_code, 2)
+        self.assertEqual(replay_rendered["result"]["outcome"], "NOT_AUTHORIZED")
+        replay_resolver.assert_not_called()
+        replay_request.assert_not_called()
+        replay_conn.close()
+
+    def test_concurrent_actual_cli_invocations_share_one_single_use_approval(self):
+        preview = {
+            "source_scan": {"scan_id": 991, "status": "SUCCEEDED"},
+            "product": "Apache HTTP Server", "selection": {},
+            "populations": {}, "targets": [self.target],
+        }
+        response = type("Response", (), {
+            "status_code": 200, "headers": {"Server": "Apache/2.4.58"},
+        })()
+        output = []
+        output_lock = threading.Lock()
+
+        class ApprovalInput:
+            @property
+            def buffer(self):
+                return io.BytesIO(self_document.encode())
+
+        self_document = self.document
+
+        def collect(value):
+            with output_lock:
+                output.append(value)
+
+        def invoke():
+            return capd_cli.main([
+                "apache-version", "--execute", "--scan-id", "991",
+                "--asset-id", "9991", "--approval-stdin",
+            ])
+
+        with mock.patch.dict("os.environ", {"ASIP_DEFAULT_SCAN_OPERATIONS": CAPD_HTTP_HEADER_VERIFY}), \
+                mock.patch("capd_cli.get_conn", side_effect=self.connect), \
+                mock.patch("capd_cli.preview_product_targets", return_value=preview), \
+                mock.patch("capd_cli._read_public_key", return_value=self.public_key), \
+                mock.patch("capd_cli._json", side_effect=collect), \
+                mock.patch("capd_cli.recheck_apache_target_from_inventory", return_value={
+                    "inventory_policy_passed": True, "reason_codes": [],
+                }), \
+                mock.patch.object(
+                    consumption, "recheck_apache_target_from_inventory",
+                    return_value={"inventory_policy_passed": True, "reason_codes": []},
+                ), \
+                mock.patch("capd_cli.socket.getaddrinfo", return_value=["8.8.8.8"]), \
+                mock.patch.object(
+                    BoundedApacheHTTPTransport, "request", return_value=response,
+                ) as request, \
+                mock.patch("capd_cli.sys.stdin", ApprovalInput()):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                codes = list(executor.map(lambda _index: invoke(), range(2)))
+
+        self.assertEqual(sorted(codes), [0, 2])
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(len(output), 2)
+        outcomes = sorted(value["result"]["outcome"] for value in output)
+        self.assertEqual(outcomes, ["NOT_AUTHORIZED", "VERSION_IDENTIFIED"])
+
+    def test_cli_rejects_missing_or_invalid_trusted_approval_before_database_access(self):
+        errors = io.StringIO()
+        get_conn = mock.Mock(side_effect=AssertionError("database must not be opened"))
+        with mock.patch("capd_cli.get_conn", get_conn), contextlib.redirect_stderr(errors):
+            missing = capd_cli.main([
+                "apache-version", "--execute", "--scan-id", "991", "--asset-id", "9991",
+            ])
+        self.assertEqual(missing, 2)
+        get_conn.assert_not_called()
+
+        errors = io.StringIO()
+        with mock.patch("capd_cli.get_conn", get_conn), \
+                mock.patch("capd_cli._read_public_key", return_value=self.public_key), \
+                mock.patch("capd_cli.sys.stdin", mock.Mock(
+                    buffer=io.BytesIO((self.document + "tampered").encode()),
+                )), \
+                contextlib.redirect_stderr(errors):
+            invalid = capd_cli.main([
+                "apache-version", "--execute", "--scan-id", "991",
+                "--asset-id", "9991", "--approval-stdin",
+            ])
+        self.assertEqual(invalid, 2)
+        get_conn.assert_not_called()
+        self.assertIn("CAPD local approval denied", errors.getvalue())
 
     def test_invalid_approval_disabled_operation_and_wrong_binding_block_before_request(self):
         conn = self.connect()

@@ -86,7 +86,9 @@ are intentionally not executed by this source-only milestone:
    existing approvals or enable the operation.
 6. During a separately approved release, configure the backend operation
    allowlist to include `CAPD_HTTP_HEADER_VERIFY`. This is an operation policy
-   gate, not operator identity or target approval.
+   gate, not operator identity or target approval. The CLI also requires the
+   protected verification public key mounted at the configured path; it does
+   not accept a caller-selected key or target URL.
 
 ## Dry-run workflow
 
@@ -114,18 +116,37 @@ sudo /usr/local/libexec/asip-capd-approve \
     --dry-run --scan-id SCAN_ID --asset-id ASSET_ID --approval-stdin
 ```
 
-The signed `max_requests: 1` field is a scope limit, not replay prevention.
-The current dry-run does not consume approvals, and replaying a token may
-produce another authorization preview; both previews still perform zero
-network requests and zero writes because no transport is wired. A future live
-path must call the single-use consumption gate, which revalidates current
-target policy and atomically records a receipt keyed by the signed run ID
-before returning permission to proceed. Migration
-`017_add_capd_approval_consumptions.sql` creates this receipt table through the
-approved optional migration runner; it does not modify CAPD assessment runs
-and is independent of Findings Lifecycle migration 014. A failed request or
-process crash after receipt commit leaves the approval consumed. The transport
-must still make at most one bounded request and refuse redirects. This release
-does not wire or execute that transport.
+The signed `max_requests: 1` field is a scope limit; migration 017 provides
+durable replay prevention. Dry-run never consumes an approval. For a separately
+approved live pilot, the CLI requires explicit `--execute` mode, signed
+approval on stdin, one asset ID, and an explicit source scan ID. The approval
+must bind that exact asset and stored origin, and the protected public key must
+be available. Example invocation:
+
+```sh
+sudo /usr/local/libexec/asip-capd-approve \
+  --run-id RUN_ID --scan-id SCAN_ID --asset-id ASSET_ID \
+  --domain HOST --origin 'https://HOST/' |
+  docker compose exec -T backend python3 /app/capd_cli.py apache-version \
+    --execute --scan-id SCAN_ID --asset-id ASSET_ID --approval-stdin
+```
+
+The CLI reselects the asset from the successful inventory scan. The executor
+rechecks current eligibility and operation permission, then commits the
+single-use receipt before resolving the approved hostname or opening a socket.
+It pins one validated public address, sends one `GET /`, verifies TLS for the
+approved hostname, does not retry or follow redirects, and does not read the
+response body. A failed request or process crash after receipt commit leaves
+the approval consumed. Do not use `--execute` until migrations 016 and 017,
+the trusted host helper and operator group, the mounted verification key, and
+the narrowly enabled operation have all been reviewed for a one-asset pilot.
+
+The CLI currently returns version evidence as JSON but does not persist it or
+create a CAPD CVE result. If durable version history is required, add a separate
+small observation table keyed by the approval receipt reference and carrying
+source scan, asset, approved origin, check revision, outcome, redacted Server
+header, identified version, confidence, and observation timestamp. Do not
+repurpose CAPD CVE run/result rows. Migration 017's consumption receipt table is
+independent of Findings Lifecycle migration 014.
 An approval token by itself is never evidence that a check was executed or a
 vulnerability was found.

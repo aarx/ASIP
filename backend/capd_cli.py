@@ -3,6 +3,7 @@
 import argparse
 from datetime import datetime
 import json
+import socket
 import sys
 
 from capd import (
@@ -31,10 +32,15 @@ from capd_authorization import (
     recheck_apache_target_from_inventory,
 )
 from capd_local_approval import (
+    MAX_APPROVAL_BYTES,
     LocalApprovalError,
     _read_public_key,
     approval_matches_target,
     verify_approval,
+)
+from apache_version_executor import (
+    BoundedApacheHTTPTransport,
+    execute_approved_apache_check,
 )
 
 
@@ -43,7 +49,9 @@ def _json(value):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(prog="capd", description="On-demand passive CVE assessment")
+    parser = argparse.ArgumentParser(
+        prog="capd", description="On-demand CAPD assessment and Apache version verification",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     checks = commands.add_parser("checks", help="inspect inert local check definitions")
     checks.add_argument("action", choices=("list",))
@@ -71,13 +79,15 @@ def build_parser():
     results.add_argument("--page", type=int, default=1)
     results.add_argument("--limit", type=int, default=50)
     apache = commands.add_parser(
-        "apache-version", help="preview a future Apache version-header check; dry-run only"
+        "apache-version", help="preview or execute one signed Apache version-header check"
     )
     apache.add_argument("--scan-id", type=int)
     apache.add_argument("--limit", type=int, default=MAX_TARGETS)
     apache.add_argument("--asset-id", type=int)
     apache.add_argument("--approval-stdin", action="store_true")
-    apache.add_argument("--dry-run", action="store_true", required=True)
+    apache_mode = apache.add_mutually_exclusive_group(required=True)
+    apache_mode.add_argument("--dry-run", action="store_true")
+    apache_mode.add_argument("--execute", action="store_true")
     return parser
 
 
@@ -99,15 +109,27 @@ def main(argv=None):
                 conn.close()
         if args.command == "apache-version":
             approval = None
+            public_key = None
+            approval_document = None
+            if args.execute:
+                if not args.approval_stdin or not args.asset_id or not args.scan_id:
+                    raise CapdError(
+                        "--execute requires --approval-stdin, one --asset-id, and explicit --scan-id"
+                    )
             if args.approval_stdin:
                 if not args.asset_id:
                     raise CapdError("--approval-stdin requires one --asset-id")
                 try:
+                    public_key = _read_public_key()
+                    approval_document = sys.stdin.buffer.read(MAX_APPROVAL_BYTES + 1)
                     approval = verify_approval(
-                        sys.stdin.buffer.read(8193), _read_public_key()
+                        approval_document, public_key
                     )
                 except LocalApprovalError as exc:
-                    raise CapdError(f"CAPD local approval denied: {exc}") from exc
+                    raise CapdError(
+                        "CAPD local approval denied: " + str(exc)
+                        + "; install the protected host approval helper and trusted public key"
+                    ) from exc
                 if args.scan_id is not None and args.scan_id != approval["source_scan_id"]:
                     raise CapdError("CAPD local approval source scan does not match --scan-id")
             if args.asset_id is not None and args.asset_id <= 0:
@@ -178,6 +200,24 @@ def main(argv=None):
                             "max_requests": 1,
                             "expires_at": context.expires_at.isoformat(),
                         }
+                if args.execute:
+                    if approval is None or public_key is None:
+                        raise CapdError("trusted signed approval is required for execution")
+                    if len(candidates) != 1 or candidates[0]["domain_id"] != args.asset_id:
+                        raise CapdError("selected asset is not one current Apache product candidate")
+                    selected_target = {
+                        **candidates[0],
+                        "source_scan_id": preview["source_scan"]["scan_id"],
+                    }
+                    execution = execute_approved_apache_check(
+                        conn, approval_document, public_key, context,
+                        selected_target, resolver=socket.getaddrinfo,
+                        transport=BoundedApacheHTTPTransport(),
+                    )
+                    _json({"mode": "single_request", "result": execution})
+                    if execution["outcome"] == "NOT_AUTHORIZED":
+                        return 2
+                    return 1 if execution["outcome"] == "ERROR" else 0
                 reason_counts = {}
                 for decision in decisions:
                     all_reasons = list(decision["reason_codes"])
