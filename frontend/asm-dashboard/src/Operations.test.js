@@ -152,7 +152,7 @@ test("risk workspace presents exact metrics and separate review evidence", async
     "Findings", "Observed sensitive-port exposures", "Review Indicators",
   ]);
   expect(screen.queryByText("Discovery Sources")).not.toBeInTheDocument();
-  expect(screen.queryByText("Risk distribution")).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Risk distribution" })).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Assets with IP addresses/ })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /HTTP responding/ })).toHaveAttribute("href", "#/assets?http_live=true");
   expect(screen.queryByRole("link", { name: "High 1" })).not.toBeInTheDocument();
@@ -226,6 +226,26 @@ test("Risk Overview exposes DNS coverage without treating partial evidence as a 
   expect(screen.getByRole("link", { name: "Open DNS Security details →" })).toHaveAttribute("href", "#/risk/dns-security");
   expect(screen.queryByText(/confirmed vulnerability/i)).not.toBeInTheDocument();
   expect(getDnsSecuritySummary).toHaveBeenCalledTimes(1);
+});
+
+test("Risk Overview restores Risk Distribution in its own context", async () => {
+  window.location.hash = "#/risk?section=risk-distribution";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue([]);
+  getExposureSummary.mockResolvedValue({ resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  getHttpStatus.mockResolvedValue(null);
+  getDnsSecuritySummary.mockResolvedValue(null);
+  getRiskHistorySummary.mockResolvedValue({ availability_state: "UNAVAILABLE" });
+
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { name: "Risk distribution" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Risk distribution" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("link", { name: /High 1/ })).toHaveAttribute("href", "#/assets?priority=High&limit=25");
+  expect(screen.getByRole("link", { name: /Low 4/ })).toHaveAttribute("href", "#/assets?priority=Low&limit=25");
 });
 
 test("reports capped sensitive-port observations without presenting an exact total", async () => {
@@ -492,7 +512,7 @@ test("review indicators have truthful empty and isolated failure states", async 
   getV2ReviewIndicators.mockRejectedValue(new Error("offline"));
   render(<App />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Redirect review evidence could not be loaded");
-  expect(screen.queryByText("Risk distribution")).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Risk distribution" })).not.toBeInTheDocument();
 });
 
 test("review indicators label historical and incomplete redirect evidence without implying a verified chain", async () => {

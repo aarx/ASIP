@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getRiskHistorySummary, getSecurityFindings, getSecurityFindingsSummary, getSeeds, getV2Assets, getV2Overview, getV2Scans } from "./services/api";
+import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getFindings, getHttpStatus, getNamingAssetExposure, getRiskHistorySummary, getSecurityFindings, getSecurityFindingsSummary, getSeeds, getSensitiveExposure, getV2Assets, getV2Overview, getV2ReviewIndicators, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -87,6 +87,9 @@ beforeEach(() => {
   getRiskHistorySummary.mockReset();
   getSecurityFindings.mockReset();
   getSecurityFindingsSummary.mockReset();
+  getFindings.mockReset();
+  getSensitiveExposure.mockReset();
+  getV2ReviewIndicators.mockReset();
 });
 
 test("renders the permanent shell and authoritative overview", async () => {
@@ -331,7 +334,7 @@ test("redirects the legacy Needs Attention overview route to the Security Review
   render(<App />);
 
   expect(await screen.findByText("alpha.example")).toBeInTheDocument();
-  expect(screen.getByText("Positive-score assets ranked by deterministic risk")).toBeInTheDocument();
+  expect(screen.getByText("The same positive-score ranking, shown as a compact review queue")).toBeInTheDocument();
   expect(screen.getByText("1 RANKED ASSETS")).toBeInTheDocument();
   expect(screen.getByText("alpha.example").closest("a")).toHaveAttribute(
     "href", "#/assets/alpha.example?return=risk%2Fsecurity-review&return_query=page%3D1%26limit%3D10%26tab%3Dreview-queue"
@@ -341,16 +344,22 @@ test("redirects the legacy Needs Attention overview route to the Security Review
   expect(getV2Overview).toHaveBeenCalledTimes(1);
 });
 
-test("redirects the legacy Risk Distribution route to the Security Review queue", async () => {
+test("redirects the legacy Risk Distribution route to Risk Overview", async () => {
   window.location.hash = "#/overview/risk-distribution";
   getV2Overview.mockResolvedValue(overview);
   getV2Assets.mockResolvedValue(rankedAssetPage);
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue([]);
+  getExposureSummary.mockResolvedValue({ resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  getHttpStatus.mockResolvedValue(null);
+  getRiskHistorySummary.mockResolvedValue({ availability_state: "UNAVAILABLE" });
   render(<App />);
 
-  expect(await screen.findByText("Needs attention")).toBeInTheDocument();
-  expect(screen.queryByText("Risk distribution")).not.toBeInTheDocument();
-  expect(window.location.hash).toBe("#/risk/security-review?tab=review-queue");
-  expect(screen.getByRole("tab", { name: "Review Queue" })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByRole("heading", { name: "Risk distribution" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Risk distribution" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("link", { name: /High 1/ })).toHaveAttribute("href", "#/assets?priority=High&limit=25");
+  expect(window.location.hash).toBe("#/risk?section=risk-distribution");
   expect(getV2Overview).toHaveBeenCalledTimes(1);
 });
 
@@ -452,6 +461,9 @@ test("Security Review keeps stable accessible tabs and preserves tab navigation"
   expect(evidence).toHaveAttribute("aria-selected", "false");
   expect(queue).toHaveAttribute("aria-selected", "false");
   expect(screen.getByText("alpha.example")).toBeInTheDocument();
+  expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 1, limit: 25, risk_positive: true, sort_by: "risk_score", sort_dir: "desc",
+  });
 
   fireEvent.click(evidence);
   expect(window.location.hash).toBe("#/risk/security-review?tab=evidence-signals");
@@ -462,6 +474,9 @@ test("Security Review keeps stable accessible tabs and preserves tab navigation"
   expect(window.location.hash).toBe("#/risk/security-review?tab=review-queue");
   expect(await screen.findByText("Needs attention")).toBeInTheDocument();
   expect(queue).toHaveAttribute("aria-selected", "true");
+  expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 1, limit: 10, risk_positive: true, sort_by: "risk_score", sort_dir: "desc",
+  });
 });
 
 test("redirects the legacy Settings route to Overview without placeholder content", async () => {

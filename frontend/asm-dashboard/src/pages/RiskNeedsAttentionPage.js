@@ -100,7 +100,7 @@ export default function RiskNeedsAttentionPage({ query = "", embedded = false, r
       {showDistribution && <Panel title="Risk distribution" subtitle="Canonical priorities across confirmed organizational assets" meta={`SCAN #${data.current_scan_id}`} className="operation-panel-full">
         <RiskDistributionChart distribution={data.risk_distribution} priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}`} />
       </Panel>}
-      <Panel title="Needs attention" subtitle="Positive-score assets ranked by deterministic risk" meta={`${totalCount} RANKED ASSETS`} className="operation-panel-full">
+      <Panel title="Needs attention" subtitle="The same positive-score ranking, shown as a compact review queue" meta={`${totalCount} RANKED ASSETS`} className="operation-panel-full">
         {queueStatus === "loading" && <LoadingState title="Loading ranked assets" copy="Retrieving the current positive-score population." />}
         {queueStatus === "error" && <ErrorState title="Ranked assets unavailable" copy="The current positive-score asset queue could not be loaded." onRetry={() => setQueueRequestVersion((value) => value + 1)} />}
         {queueStatus === "ready" && totalCount === 0 && <EmptyState className="state-card-compact" title="No ranked assets" copy="No current assets have a positive deterministic risk score." />}

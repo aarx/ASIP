@@ -14,7 +14,7 @@ import {
 import AssetLink from "../components/ui/AssetLink";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
-import { RISK_COLORS } from "../components/ui/RiskDistributionChart";
+import RiskDistributionChart, { RISK_COLORS } from "../components/ui/RiskDistributionChart";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { displayAssetClass, displayHttpStatus, isUsableHttpStatus } from "../utils/presentation";
@@ -26,6 +26,7 @@ const SECONDARY_VIEWS = [
   ["review-indicators", "Needs review"],
   ["sensitive-ports", "Sensitive ports"],
   ["dns-security", "DNS assessments"],
+  ["risk-distribution", "Risk distribution"],
 ];
 
 function readSecondaryView(query) {
@@ -240,7 +241,7 @@ export default function RiskExposurePage({ query }) {
     if (status !== "ready") return;
     const params = new URLSearchParams(query);
     const section = params.get("section") || params.get("view");
-    if (!["priority-assets", "sensitive-ports", "review-indicators", "dns-security", "historical-high-risk"].includes(section)) return;
+    if (!["priority-assets", "sensitive-ports", "review-indicators", "dns-security", "risk-distribution", "historical-high-risk"].includes(section)) return;
     document.getElementById(section)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }, [query, status]);
 
@@ -443,6 +444,17 @@ export default function RiskExposurePage({ query }) {
         {secondaryView === "dns-security" && (
           <div id="dns-security" role="tabpanel" aria-labelledby="dns-security-tab" tabIndex={0}>
             <DnsSecurityCoverage summary={dnsSummary} currentScanId={overview.current_scan_id} />
+          </div>
+        )}
+
+        {secondaryView === "risk-distribution" && (
+          <div id="risk-distribution" role="tabpanel" aria-labelledby="risk-distribution-tab" tabIndex={0}>
+            <Panel title="Risk distribution" subtitle="Canonical priorities across confirmed organizational assets" meta={`SCAN #${overview.current_scan_id}`} className="operation-panel-full">
+              <RiskDistributionChart
+                distribution={overview.risk_distribution}
+                priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}&limit=25`}
+              />
+            </Panel>
           </div>
         )}
       </section>

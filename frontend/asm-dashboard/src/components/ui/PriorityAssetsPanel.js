@@ -67,7 +67,7 @@ export default function PriorityAssetsPanel({ query = "", routePrefix = "risk/se
   const returnQuery = new URLSearchParams({ tab: "prioritized-assets", priority_page: String(page) }).toString();
 
   return (
-    <Panel title="Prioritized assets" subtitle="Current assets with risk scores above zero" meta={`${total} RANKED ASSETS`} className="operation-panel-full">
+    <Panel title="Prioritized assets" subtitle="Current positive-score assets ranked by deterministic risk" meta={`${total} RANKED ASSETS`} className="operation-panel-full">
       {assets.length === 0 && <div className="detail-empty">No assets have a risk score above zero in this scan.</div>}
       {assets.length > 0 && (
         <>

@@ -42,7 +42,14 @@ function locationFromHash() {
     window.history.replaceState(null, "", "#/overview");
     return { route: "overview", domain: null, query: "" };
   }
-  if (segments[0] === "overview" && ["needs-attention", "risk-distribution"].includes(segments[1])) {
+  if (segments[0] === "overview" && segments[1] === "risk-distribution") {
+    const params = new URLSearchParams(query);
+    params.set("section", "risk-distribution");
+    const nextQuery = params.toString();
+    window.history.replaceState(null, "", `#/risk?${nextQuery}`);
+    return { route: "risk", domain: null, query: nextQuery };
+  }
+  if (segments[0] === "overview" && segments[1] === "needs-attention") {
     const params = new URLSearchParams(query);
     params.set("tab", "review-queue");
     const nextQuery = params.toString();
