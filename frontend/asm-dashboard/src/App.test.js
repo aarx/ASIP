@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getSeeds, getV2Assets, getV2Overview, getV2Scans } from "./services/api";
+import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getRiskHistorySummary, getSeeds, getV2Assets, getV2Overview, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -15,6 +15,7 @@ jest.mock("./services/api", () => ({
   getV2Scans: jest.fn(),
   getNamingAssetExposure: jest.fn(),
   getSeeds: jest.fn(),
+  getRiskHistorySummary: jest.fn(),
   getV2ReviewIndicators: jest.fn(),
   getV2AssetAssistant: jest.fn(),
   getInvestigationAssets: jest.fn(),
@@ -81,6 +82,7 @@ beforeEach(() => {
   getCertExpiry.mockReset();
   getDiscoverySources.mockReset();
   getExposureSummary.mockReset();
+  getRiskHistorySummary.mockReset();
 });
 
 test("renders the permanent shell and authoritative overview", async () => {
@@ -112,7 +114,7 @@ test("renders the permanent shell and authoritative overview", async () => {
   const overviewMetrics = screen.getByRole("region", { name: "Overview metrics" });
   const coveragePanel = screen.getByRole("heading", { name: "Asset Coverage" }).closest("section");
   expect(overviewMetrics.querySelectorAll(".panel")).toHaveLength(2);
-  expect(overviewMetrics.querySelectorAll(".metric-card")).toHaveLength(3);
+  expect(overviewMetrics.querySelectorAll(".metric-card")).toHaveLength(4);
   expect(coveragePanel).toHaveClass("asset-coverage-panel");
   expect(overviewMetrics.querySelector(".overview-discovery-sources-panel")).toBeInTheDocument();
   expect(within(coveragePanel).getByText("Historical")).toBeInTheDocument();
@@ -138,7 +140,7 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(coveragePanel.querySelector('a[href="#/shadow"]')).toBeInTheDocument();
   expect(coveragePanel.querySelector('a[href="#/assets?asset_class=CANDIDATE&limit=25"]')).toBeInTheDocument();
   expect(coveragePanel.querySelector('a[href="#/brand?asset_class=EXTERNAL"]')).toBeInTheDocument();
-  expect(within(overviewMetrics).getByRole("link", { name: /High Risk/ })).toHaveAttribute("href", "#/risk");
+  expect(within(overviewMetrics).getByRole("link", { name: /Current High Risk/ })).toHaveAttribute("href", "#/risk?section=priority-assets");
   expect(within(overviewMetrics).getByRole("link", { name: /New Assets/ })).toHaveAttribute("href", "#/changes?view=new");
   expect(within(overviewMetrics).getByRole("link", { name: /Assets with IP Addresses/ })).toHaveAttribute("href", "#/assets?has_ip=true");
   expect(within(overviewMetrics).getByText("14")).toBeInTheDocument();
@@ -157,7 +159,7 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(within(discoverySourcesPanel).getByText("Pentest Tools").parentElement).toHaveTextContent("617");
   expect(within(discoverySourcesPanel).getByText("SAN Exposure").parentElement).toHaveTextContent("427");
   expect(within(discoverySourcesPanel).getByText("Brand Exposure").parentElement).toHaveTextContent("1241");
-  expect(overviewMetrics.querySelectorAll(".metric-card")).toHaveLength(3);
+  expect(overviewMetrics.querySelectorAll(".metric-card")).toHaveLength(4);
   expect(screen.getByText("scan 41 → 42")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
   expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("href", "#/overview");
@@ -231,6 +233,26 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(within(overviewContent).getByText("HTTP status distribution")).toBeInTheDocument();
   expect(within(overviewContent).getByText("Naming exposure")).toBeInTheDocument();
   Date.now.mockRestore();
+});
+
+test("main Overview separates current and previously High Risk with scan context and correct destinations", async () => {
+  getV2Overview.mockResolvedValue(overview);
+  getV2Scans.mockResolvedValue({ scans: [{ scan_id: 42, status: "SUCCEEDED", completed_at: "2026-09-26T10:00:00Z", is_current_authoritative: true }] });
+  getRiskHistorySummary.mockResolvedValue({ availability_state: "AVAILABLE", latest_successful_scan_id: 42, current_high_assets: 1, historical_unique_high_assets: 19 });
+  getCertExpiry.mockResolvedValue([]);
+  getSeeds.mockResolvedValue([]);
+  getDiscoverySources.mockResolvedValue({ "Pentest Tool": 1, "SAN Expansion": 0, "Brand Expansion": 0 });
+  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 0 });
+  render(<App />);
+
+  const current = await screen.findByRole("link", { name: /Current High Risk/ });
+  const historical = screen.getByRole("link", { name: /Previously High Risk/ });
+  expect(current).toHaveTextContent("1");
+  expect(current).toHaveTextContent("Current scan #42");
+  expect(current).toHaveAttribute("href", "#/risk?section=priority-assets");
+  expect(historical).toHaveTextContent("19");
+  expect(historical).toHaveTextContent("latest #42");
+  expect(historical).toHaveAttribute("href", "#/risk?section=historical-high-risk");
 });
 
 test("keeps historical and current coverage unavailable when their source contracts are incomplete", async () => {

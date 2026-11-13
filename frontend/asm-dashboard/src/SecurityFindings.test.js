@@ -1,10 +1,13 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { getSecurityFindings, getSecurityFindingsSummary } from "./services/api";
+import { getCertificateHosts, getDnsSecurityHosts, getSecurityFindings, getSecurityFindingsSummary, getSensitivePortHosts } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getSecurityFindings: jest.fn(),
   getSecurityFindingsSummary: jest.fn(),
+  getDnsSecurityHosts: jest.fn(),
+  getCertificateHosts: jest.fn(),
+  getSensitivePortHosts: jest.fn(),
   getV2Overview: jest.fn(),
   getV2Assets: jest.fn(),
   getV2AssetDetail: jest.fn(),
@@ -81,6 +84,9 @@ beforeEach(() => {
   window.location.hash = "#/risk/findings";
   getSecurityFindings.mockReset();
   getSecurityFindingsSummary.mockReset();
+  getDnsSecurityHosts.mockReset();
+  getCertificateHosts.mockReset();
+  getSensitivePortHosts.mockReset();
   getSecurityFindingsSummary.mockResolvedValue(summary);
   getSecurityFindings.mockResolvedValue(attentionPage);
 });
@@ -100,6 +106,56 @@ test("renders live category counts, separate coverage, and the default attention
   expect(screen.getByRole("combobox", { name: "Finding view" })).toHaveValue("attention");
   expect(getSecurityFindings).toHaveBeenCalledWith({ page: 1, limit: 25, view: "attention" });
   expect(screen.queryByText("Candidate")).not.toBeInTheDocument();
+});
+
+test("assessment cards select one inline panel and use server-side domain search and pagination", async () => {
+  getDnsSecurityHosts
+    .mockResolvedValueOnce({ scan_id: 19, page: 1, limit: 25, total: 30, hosts: [{ domain_id: 8, domain: "app.example.com", asset_class: "SHADOW", scan_id: 19, check_count: 1, outcome_distribution: { WARNING: 1 }, assessment_state: "ASSESSED", checks: [{ check_id: 3, check_key: "spf_policy", outcome: "WARNING", evidence: { observed: "softfail" }, remediation: "Review DNS policy", scan_id: 19 }] }] })
+    .mockResolvedValueOnce({ scan_id: 19, page: 1, limit: 25, total: 30, hosts: [{ domain_id: 8, domain: "app.example.com", asset_class: "SHADOW", scan_id: 19, check_count: 1, outcome_distribution: { WARNING: 1 }, assessment_state: "ASSESSED", checks: [{ check_id: 3, check_key: "spf_policy", outcome: "WARNING", evidence: { observed: "softfail" }, remediation: "Review DNS policy", scan_id: 19 }] }] })
+    .mockResolvedValueOnce({ scan_id: 19, page: 2, limit: 25, total: 30, hosts: [{ domain_id: 9, domain: "mail.example.com", asset_class: "KNOWN", scan_id: 19, assessment_state: "ASSESSED", checks: [] }] })
+    .mockResolvedValue({ scan_id: 19, page: 2, limit: 25, total: 30, hosts: [{ domain_id: 9, domain: "mail.example.com", asset_class: "KNOWN", scan_id: 19, assessment_state: "ASSESSED", checks: [] }] });
+  render(<App />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /DNS Security/ }));
+  expect(await screen.findByRole("heading", { name: "DNS Security hosts" })).toBeInTheDocument();
+  expect(getDnsSecurityHosts).toHaveBeenLastCalledWith({ page: 1, limit: 25 });
+  fireEvent.change(screen.getByRole("textbox", { name: "Search hostname or domain" }), { target: { value: "example.com" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Search mode" }), { target: { value: "domain" } });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() => expect(getDnsSecurityHosts).toHaveBeenLastCalledWith({ page: 1, limit: 25, search: "example.com", search_mode: "domain" }));
+  expect(await screen.findByRole("link", { name: "app.example.com" })).toHaveAttribute("href", "#/assets/app.example.com?return=risk%2Ffindings&return_query=coverage%3Ddns%26coverage_search%3Dexample.com%26coverage_mode%3Ddomain");
+  fireEvent.click(screen.getByText("Recorded checks and evidence"));
+  expect(screen.getByText("softfail")).toBeInTheDocument();
+  expect(screen.getByText("Review DNS policy")).toBeInTheDocument();
+  fireEvent.click(within(screen.getByRole("heading", { name: "DNS Security hosts" }).closest("section")).getByRole("button", { name: "Next" }));
+  await waitFor(() => expect(getDnsSecurityHosts).toHaveBeenLastCalledWith({ page: 2, limit: 25, search: "example.com", search_mode: "domain" }));
+  expect(await screen.findByRole("link", { name: "mail.example.com" })).toBeInTheDocument();
+  expect(window.location.hash).toContain("coverage_page=2");
+});
+
+test("unassessed DNS and unobserved certificates remain distinct from completed assessment", async () => {
+  getDnsSecurityHosts.mockResolvedValue({ scan_id: 19, page: 1, limit: 25, total: 1, hosts: [{ domain_id: 10, domain: "unknown.example.com", asset_class: "KNOWN", scan_id: 19, assessment_state: "NOT_ASSESSED", checks: [] }] });
+  getCertificateHosts.mockResolvedValue({ scan_id: 19, page: 1, limit: 25, total: 1, hosts: [{ domain_id: 11, domain: "missing.example.com", asset_class: "SHADOW", scan_id: 19, assessment_state: "NO_PERSISTED_OBSERVATION", certificates: [] }] });
+  render(<App />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /DNS Security/ }));
+  fireEvent.click(await screen.findByLabelText("Show unassessed hosts"));
+  expect(await screen.findByText("UNASSESSED · NO CHECKS")).toBeInTheDocument();
+  expect(getDnsSecurityHosts).toHaveBeenLastCalledWith({ page: 1, limit: 25, include_unassessed: true });
+  fireEvent.click(screen.getByRole("button", { name: /Certificates/ }));
+  fireEvent.click(await screen.findByLabelText("Show hosts without observations"));
+  expect(await screen.findByText("NO OBSERVATION")).toBeInTheDocument();
+  expect(getCertificateHosts).toHaveBeenLastCalledWith({ page: 1, limit: 25, include_unobserved: true });
+  expect(screen.getByText(/not a successful TLS assessment/i)).toBeInTheDocument();
+});
+
+test("sensitive-port empty results preserve unknown coverage semantics", async () => {
+  getSensitivePortHosts.mockResolvedValue({ scan_id: 19, page: 1, limit: 25, total: 0, assessment_coverage: "UNKNOWN", hosts: [] });
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: /Sensitive ports/ }));
+  expect(await screen.findByText("No positive observations recorded. Assessment coverage unknown.")).toBeInTheDocument();
+  expect(screen.getByText(/No matching sensitive-port observation hosts/)).toBeInTheDocument();
+  expect(getSensitivePortHosts).toHaveBeenCalledWith({ page: 1, limit: 25 });
 });
 
 test("maps source labels, null severity, inferred environment, and nested evidence in details", async () => {

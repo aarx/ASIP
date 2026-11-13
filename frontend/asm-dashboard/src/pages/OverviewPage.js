@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getSeeds, getV2Overview, getV2Scans } from "../services/api";
+import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getHttpStatus, getNamingAssetExposure, getRiskHistorySummary, getSeeds, getV2Overview, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
@@ -176,6 +176,7 @@ export default function OverviewPage() {
     Promise.all([
       getV2Overview(),
       Promise.resolve(getV2Scans(100)).catch(() => null),
+      optionalRequest(getRiskHistorySummary),
       optionalRequest(getAssetGrowth),
       optionalRequest(getSeeds),
       optionalRequest(getHttpStatus),
@@ -184,11 +185,13 @@ export default function OverviewPage() {
       optionalRequest(getDiscoverySources),
       optionalRequest(getExposureSummary),
     ])
-      .then(([result, scans, assetGrowth, seedDistribution, httpStatus, certificateExpiry, namingExposure, discoverySources, exposureSummary]) => {
+      .then(([result, scans, riskHistory, assetGrowth, seedDistribution, httpStatus, certificateExpiry, namingExposure, discoverySources, exposureSummary]) => {
         if (active) {
           setData({
             ...result,
             scanHistory: scans,
+            riskHistory: riskHistory.value,
+            riskHistoryStatus: riskHistory.status,
             assetGrowth: assetGrowth.value,
             assetGrowthStatus: assetGrowth.status,
             seedDistribution: seedDistribution.value,
@@ -242,7 +245,12 @@ export default function OverviewPage() {
   const allTimeDomains = data.discoverySourcesStatus === "ready"
     ? allTimeDiscoveryCount(data.discoverySources)
     : null;
-  const highRisk = data.risk_distribution?.High ?? 0;
+  const highRisk = countValue(data.risk_distribution?.High);
+  const historicalHighRisk = data.riskHistoryStatus === "ready"
+    && data.riskHistory?.availability_state === "AVAILABLE"
+    && Number.isInteger(data.riskHistory.historical_unique_high_assets)
+    ? data.riskHistory.historical_unique_high_assets
+    : null;
   const scanContext = data.previous_scan_id == null
     ? `scan ${data.current_scan_id} · no prior baseline`
     : `scan ${data.previous_scan_id} → ${data.current_scan_id}`;
@@ -270,8 +278,9 @@ export default function OverviewPage() {
           counts={counts}
         />
         <DiscoverySourcesPanel value={data.discoverySources} status={data.discoverySourcesStatus} />
-        <div className="overview-secondary-kpis">
-          <MetricCard label="High Risk" value={highRisk} support="Canonical priority" accent={RISK_COLORS.High} href="#/risk" />
+        <div className="overview-secondary-kpis overview-risk-kpis">
+          <MetricCard label="Current High Risk" value={highRisk ?? "Unavailable"} support={`Current scan #${data.current_scan_id} · canonical priority`} accent={RISK_COLORS.High} href="#/risk?section=priority-assets" />
+          <MetricCard label="Previously High Risk" value={historicalHighRisk ?? "Unavailable"} support={historicalHighRisk == null ? "Historical data unavailable" : `Historical successful scans · latest #${data.riskHistory.latest_successful_scan_id ?? data.current_scan_id}`} accent="#7b5bb5" href={historicalHighRisk == null ? undefined : "#/risk?section=historical-high-risk"} />
           <MetricCard label="New Assets" value={data.changes?.new_assets ?? 0} support="Since previous successful scan" accent="#327d80" href="#/changes?view=new" />
           <MetricCard label="Assets with IP Addresses" value={currentScanIpCount ?? "Unavailable"} support="Current scan" accent="#2f7d5b" href="#/assets?has_ip=true" />
         </div>

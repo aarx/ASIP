@@ -135,6 +135,16 @@ export const getDnsSecurityHosts = async (params) => {
   return res.data;
 };
 
+export const getCertificateHosts = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/certificates/hosts`, { params });
+  return res.data;
+};
+
+export const getSensitivePortHosts = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/sensitive-ports/hosts`, { params });
+  return res.data;
+};
+
 export const getDnsSecurityDomainEvidence = async (domainId, scanId) => {
   const res = await axios.get(`${API_URL}/v2/dns-security/domains/${encodeURIComponent(domainId)}`, { params: { scan_id: scanId } });
   return res.data;
