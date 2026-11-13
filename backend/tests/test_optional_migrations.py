@@ -29,6 +29,19 @@ class OptionalMigrationPostgreSQLTests(unittest.TestCase):
                     INSERT INTO domains(id, domain) VALUES (9919, 'migration-fixture.example')
                     ON CONFLICT (id) DO NOTHING
                 """)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS active_scan_scopes (
+                        testing_level text
+                    );
+                    ALTER TABLE active_scan_scopes
+                        DROP CONSTRAINT IF EXISTS active_scan_scopes_testing_level;
+                    ALTER TABLE active_scan_scopes
+                        ADD CONSTRAINT active_scan_scopes_testing_level
+                        CHECK (testing_level IN (
+                            'TECHNOLOGY_HTTP', 'PORT_SCAN', 'ADHOC_CHECK',
+                            'HTTP_TLS_OBSERVATION', 'DNS_SECURITY', 'ASN_METADATA'
+                        ))
+                """)
         connection.close()
 
     @classmethod
@@ -54,6 +67,16 @@ class OptionalMigrationPostgreSQLTests(unittest.TestCase):
                     DROP TABLE IF EXISTS public.capd_results,
                         public.capd_runs, public.capd_approval_consumptions,
                         public.asip_optional_migration_ledger CASCADE
+                """)
+                cursor.execute("""
+                    ALTER TABLE public.active_scan_scopes
+                        DROP CONSTRAINT IF EXISTS active_scan_scopes_testing_level;
+                    ALTER TABLE public.active_scan_scopes
+                        ADD CONSTRAINT active_scan_scopes_testing_level
+                        CHECK (testing_level IN (
+                            'TECHNOLOGY_HTTP', 'PORT_SCAN', 'ADHOC_CHECK',
+                            'HTTP_TLS_OBSERVATION', 'DNS_SECURITY', 'ASN_METADATA'
+                        ))
                 """)
         connection.close()
 
@@ -163,6 +186,110 @@ class OptionalMigrationPostgreSQLTests(unittest.TestCase):
         with connection.cursor() as cursor:
             cursor.execute("SELECT migration_id FROM public.asip_optional_migration_ledger")
             self.assertEqual(cursor.fetchall(), [("015_add_capd_runs",)])
+        connection.close()
+
+    def test_016_is_read_only_pending_then_applies_without_014_or_015(self):
+        connection = self.connect()
+        migration = optional_migrations.load_migration(
+            "016_add_capd_http_header_verify_operation"
+        )
+        planned = optional_migrations.plan(
+            connection, migration.migration_id
+        )
+        self.assertEqual(planned["state"], "PENDING")
+        self.assertEqual(planned["sha256"], migration.checksum)
+        self.assertFalse(planned["expected_schema_present"])
+        connection.rollback()
+
+        result = optional_migrations.apply(
+            connection, migration.migration_id,
+            approval_checksum=migration.checksum,
+        )
+        self.assertEqual(result["state"], "APPLIED")
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                 WHERE conrelid='public.active_scan_scopes'::regclass
+                   AND conname='active_scan_scopes_testing_level'
+            """)
+            self.assertIn("CAPD_HTTP_HEADER_VERIFY", cursor.fetchone()[0])
+            cursor.execute("""
+                SELECT to_regclass('public.capd_runs'),
+                       to_regclass('public.capd_results'),
+                       to_regclass('public.tracked_security_issues'),
+                       to_regclass('public.tracked_security_issue_history')
+            """)
+            self.assertEqual(cursor.fetchone(), (None, None, None, None))
+            cursor.execute("""
+                SELECT migration_id, sha256, source_file, applied_at
+                  FROM public.asip_optional_migration_ledger
+            """)
+            rows = cursor.fetchall()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0][:3], (
+                migration.migration_id, migration.checksum,
+                "016_add_capd_http_header_verify_operation.sql",
+            ))
+            self.assertIsNotNone(rows[0][3])
+        with self.assertRaisesRegex(
+            optional_migrations.OptionalMigrationError, "already applied"
+        ):
+            optional_migrations.apply(
+                connection, migration.migration_id,
+                approval_checksum=migration.checksum,
+            )
+        connection.close()
+
+    def test_016_rejects_untracked_constraint_state(self):
+        connection = self.connect()
+        migration = optional_migrations.load_migration(
+            "016_add_capd_http_header_verify_operation"
+        )
+        connection.rollback()
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute(migration.body)
+        with self.assertRaisesRegex(
+            optional_migrations.OptionalMigrationError,
+            "without an optional-migration receipt",
+        ):
+            optional_migrations.plan(connection, migration.migration_id)
+        connection.rollback()
+        connection.close()
+
+    def test_016_failed_ddl_rolls_back_constraint_and_receipt(self):
+        connection = self.connect()
+        migration = optional_migrations.load_migration(
+            "016_add_capd_http_header_verify_operation"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            broken_path = pathlib.Path(directory) / migration.source_file
+            source = optional_migrations.OPTIONAL_MIGRATIONS[
+                migration.migration_id
+            ].read_text(encoding="utf-8")
+            broken_path.write_text(
+                source.replace("COMMIT;", "SELECT definitely_not_valid_sql; COMMIT;"),
+                encoding="utf-8",
+            )
+            with mock.patch.dict(optional_migrations.OPTIONAL_MIGRATIONS,
+                                 {migration.migration_id: broken_path}):
+                broken_migration = optional_migrations.load_migration(
+                    migration.migration_id
+                )
+                with self.assertRaises(self.psycopg2.Error):
+                    optional_migrations.apply(
+                        connection, migration.migration_id,
+                        approval_checksum=broken_migration.checksum,
+                    )
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                 WHERE conrelid='public.active_scan_scopes'::regclass
+                   AND conname='active_scan_scopes_testing_level'
+            """)
+            self.assertNotIn("CAPD_HTTP_HEADER_VERIFY", cursor.fetchone()[0])
+            cursor.execute("SELECT to_regclass('public.asip_optional_migration_ledger')")
+            self.assertIsNone(cursor.fetchone()[0])
         connection.close()
 
     def test_017_consumption_receipt_migration_is_independent_of_014_015_and_016(self):

@@ -114,7 +114,7 @@ Migrations 001 and 002 are transactional but not safely re-runnable; migration 0
 
 ### Explicitly approved optional migrations
 
-Some feature migrations are intentionally optional and may be applied out of numeric order only when the change owner has explicitly approved that migration. The supported optional path is deliberately narrow: `backend/optional_migrations.py` allowlists `015_add_capd_runs` and `017_add_capd_approval_consumptions`. Migration 014 (Findings Lifecycle) is not optional through this command and must not be applied as a prerequisite for either CAPD migration. Migration 017 depends only on the existing `scans` and `domains` tables; it does not depend on 015 or 016. Do not add ordinary sequential migrations to the optional allowlist.
+Some feature migrations are intentionally optional and may be applied out of numeric order only when the change owner has explicitly approved that migration. The supported optional path is deliberately narrow: `backend/optional_migrations.py` allowlists `015_add_capd_runs`, `016_add_capd_http_header_verify_operation`, and `017_add_capd_approval_consumptions`. Migration 014 (Findings Lifecycle) is not optional through this command and must remain unapplied for the CAPD release. Migration 016 requires the existing `active_scan_scopes.active_scan_scopes_testing_level` constraint and independently checks whether that constraint already permits `CAPD_HTTP_HEADER_VERIFY`. Migration 017 depends only on the existing `scans` and `domains` tables; it does not depend on 014, 015, or 016. For a CAPD Apache verification release, review and apply 016 before 017 so the operation permission exists before the single-use approval receipt table is used. Do not add ordinary sequential migrations to the optional allowlist.
 
 The optional-migration ledger (`public.asip_optional_migration_ledger`) records only migrations applied by this mechanism. It records the stable migration ID, source filename, SHA-256 of the exact SQL file bytes, and PostgreSQL application timestamp. It does not backfill or claim that earlier migrations were applied through this runner. SQL and its receipt are committed in the same PostgreSQL transaction; an error rolls back both. An advisory transaction lock serializes concurrent optional-migration attempts.
 
@@ -125,7 +125,14 @@ docker compose -p asip exec -T backend \
   python3 /app/optional_migrations.py plan --migration 015_add_capd_runs
 ```
 
-The plan prints the migration ID, filename, checksum, pending/applied state, and whether that migration's expected objects or the ledger already exist. It does not create the ledger. Stop if the checksum differs from a prior receipt, if expected objects exist without a receipt, if the migration is already applied, or if the result is otherwise unexpected. Migration 017 can be reviewed with:
+The plan prints the migration ID, filename, checksum, pending/applied state, and whether that migration's expected schema state or the ledger already exist. It does not create the ledger. For 016, the expected schema state is the presence of the operation in the named constraint; the runner refuses to proceed if the table/constraint is absent or if that state exists without a matching receipt. Stop if the checksum differs from a prior receipt, if expected schema state exists without a receipt, if the migration is already applied, or if the result is otherwise unexpected. Migration 016 can be reviewed with:
+
+```bash
+docker compose -p asip exec -T backend \
+  python3 /app/optional_migrations.py plan --migration 016_add_capd_http_header_verify_operation
+```
+
+Migration 017 can be reviewed with:
 
 ```bash
 docker compose -p asip exec -T backend \
@@ -137,6 +144,14 @@ Review the exact SQL and obtain explicit change approval before applying:
 ```bash
 docker compose -p asip exec -T backend \
   python3 /app/optional_migrations.py apply --migration 015_add_capd_runs \
+    --approve-sha256 <sha256-from-reviewed-plan>
+```
+
+For migration 016, use its exact reviewed checksum and stable ID in the same command. Apply it before 017 for the Apache verification release:
+
+```bash
+docker compose -p asip exec -T backend \
+  python3 /app/optional_migrations.py apply --migration 016_add_capd_http_header_verify_operation \
     --approve-sha256 <sha256-from-reviewed-plan>
 ```
 

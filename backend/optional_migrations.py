@@ -19,6 +19,9 @@ from db import get_conn
 MIGRATION_DIR = Path(__file__).resolve().parent / "migrations"
 OPTIONAL_MIGRATIONS = {
     "015_add_capd_runs": MIGRATION_DIR / "015_add_capd_runs.sql",
+    "016_add_capd_http_header_verify_operation": (
+        MIGRATION_DIR / "016_add_capd_http_header_verify_operation.sql"
+    ),
     "017_add_capd_approval_consumptions": MIGRATION_DIR / "017_add_capd_approval_consumptions.sql",
 }
 MIGRATION_OBJECTS = {
@@ -107,6 +110,24 @@ def _read_receipt(cursor, migration):
 
 
 def _migration_objects(cursor, migration_id):
+    if migration_id == "016_add_capd_http_header_verify_operation":
+        cursor.execute("SELECT to_regclass(%s)", ("public.active_scan_scopes",))
+        if cursor.fetchone()[0] is None:
+            raise OptionalMigrationError(
+                "Migration 016 prerequisite public.active_scan_scopes is absent"
+            )
+        cursor.execute(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conrelid=%s::regclass AND conname=%s",
+            ("public.active_scan_scopes", "active_scan_scopes_testing_level"),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise OptionalMigrationError(
+                "Migration 016 prerequisite testing-level constraint is absent"
+            )
+        return ("CAPD_HTTP_HEADER_VERIFY" in row[0],)
+
     objects = MIGRATION_OBJECTS[migration_id]
     cursor.execute(
         "SELECT " + ", ".join("to_regclass(%s)" for _ in objects), objects
@@ -123,10 +144,14 @@ def plan(conn, migration_id):
         receipt = _read_receipt(cursor, migration) if exists else None
         objects = _migration_objects(cursor, migration_id)
     if receipt:
+        if not all(objects):
+            raise OptionalMigrationError(
+                f"Migration {migration_id} has a receipt but its expected schema state is absent"
+            )
         state = "APPLIED"
     elif any(objects):
         raise OptionalMigrationError(
-            "CAPD objects exist without an optional-migration receipt; "
+            "Expected migration schema state exists without an optional-migration receipt; "
             "manual reconciliation is required"
         )
     else:
@@ -139,6 +164,7 @@ def plan(conn, migration_id):
         "receipt": receipt,
         "ledger_present": exists,
         "capd_objects_present": any(objects),
+        "expected_schema_present": all(objects),
     }
 
 
@@ -164,9 +190,13 @@ def apply(conn, migration_id, *, approval_checksum=None):
                 )
             if any(_migration_objects(cursor, migration_id)):
                 raise OptionalMigrationError(
-                    "CAPD objects exist without a receipt; refusing to adopt them"
+                    "Expected migration schema state exists without a receipt; refusing to adopt it"
                 )
             cursor.execute(migration.body)
+            if not all(_migration_objects(cursor, migration_id)):
+                raise OptionalMigrationError(
+                    f"Migration {migration_id} did not produce its expected schema state"
+                )
             cursor.execute(
                 f"INSERT INTO {LEDGER}(migration_id, sha256, source_file) "
                 "VALUES (%s, %s, %s) RETURNING applied_at",
