@@ -155,7 +155,7 @@ export default function RiskExposurePage({ query }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
   const [requestVersion, setRequestVersion] = useState(0);
-  const [priorityPage, setPriorityPage] = useState(1);
+  const [priorityPage, setPriorityPage] = useState(() => readPositivePage(query, "priority_page"));
   const [priorityData, setPriorityData] = useState(null);
   const [priorityStatus, setPriorityStatus] = useState("loading");
   const [priorityRequestVersion, setPriorityRequestVersion] = useState(0);
@@ -168,6 +168,8 @@ export default function RiskExposurePage({ query }) {
 
   useEffect(() => {
     setSecondaryView(readSecondaryView(query));
+    const requestedPriorityPage = readPositivePage(query, "priority_page");
+    setPriorityPage((currentPage) => currentPage === requestedPriorityPage ? currentPage : requestedPriorityPage);
     const requestedPage = readPositivePage(query, "historical_page");
     setHistoricalPage((currentPage) => currentPage === requestedPage ? currentPage : requestedPage);
   }, [query]);
@@ -252,9 +254,16 @@ export default function RiskExposurePage({ query }) {
     if (status !== "ready") return;
     const params = new URLSearchParams(query);
     const section = params.get("section") || params.get("view");
-    if (!["sensitive-ports", "review-indicators", "dns-security", "historical-high-risk"].includes(section)) return;
+    if (!["priority-assets", "sensitive-ports", "review-indicators", "dns-security", "historical-high-risk"].includes(section)) return;
     document.getElementById(section)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }, [query, status]);
+
+  const movePriorityPage = (page) => {
+    const params = new URLSearchParams(query);
+    params.set("section", "priority-assets");
+    params.set("priority_page", String(page));
+    window.location.hash = `#/risk?${params.toString()}`;
+  };
 
   const moveSecondaryTab = (currentView, direction) => {
     const currentIndex = SECONDARY_VIEWS.findIndex(([view]) => view === currentView);
@@ -342,11 +351,11 @@ export default function RiskExposurePage({ query }) {
                 <thead><tr><th>Asset</th><th>Priority</th><th>Score</th><th>Evidence</th><th /></tr></thead>
                 <tbody>{priorityData.assets.map((asset) => (
                   <tr key={asset.domain}>
-                    <td><AssetLink domain={asset.domain} returnTo="risk" /></td>
+                    <td><AssetLink domain={asset.domain} returnTo="risk" returnQuery={`section=priority-assets&priority_page=${priorityPage}`} /></td>
                     <td><StatusBadge value={asset.risk?.priority} /></td>
                     <td><span className="risk-score">{asset.risk?.score ?? "—"}</span></td>
                     <td>{reasons(asset.risk?.reasons)}</td>
-                    <td><AssetLink domain={asset.domain} returnTo="risk" className="row-action">→</AssetLink></td>
+                    <td><AssetLink domain={asset.domain} returnTo="risk" returnQuery={`section=priority-assets&priority_page=${priorityPage}`} className="row-action">→</AssetLink></td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -355,8 +364,8 @@ export default function RiskExposurePage({ query }) {
               <div className="pagination-bar">
                 <span>Page {priorityPage} of {totalPriorityPages}</span>
                 <div>
-                  <button type="button" className="secondary-button" disabled={priorityPage <= 1} onClick={() => setPriorityPage((page) => page - 1)}>Previous</button>
-                  <button type="button" className="secondary-button" disabled={priorityPage >= totalPriorityPages} onClick={() => setPriorityPage((page) => page + 1)}>Next</button>
+                  <button type="button" className="secondary-button" disabled={priorityPage <= 1} onClick={() => movePriorityPage(priorityPage - 1)}>Previous</button>
+                  <button type="button" className="secondary-button" disabled={priorityPage >= totalPriorityPages} onClick={() => movePriorityPage(priorityPage + 1)}>Next</button>
                 </div>
               </div>
             )}

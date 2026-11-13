@@ -90,7 +90,7 @@ test("selects the first queue asset by default and runs grounded actions without
 
   expect(await screen.findByText("Authoritative ShadowRecon evidence")).toBeInTheDocument();
   expect(window.location.hash).toBe("#/investigate?domain=investigate.example.com");
-  expect(screen.getByLabelText("Search assets")).toBeInTheDocument();
+  expect(screen.getByLabelText("Filter this page")).toBeInTheDocument();
   expect(getV2AssetAssistant).not.toHaveBeenCalled();
   expect(screen.getByText("192.0.2.10")).toBeInTheDocument();
   expect(screen.getByText("RESPONDED")).toBeInTheDocument();
@@ -128,6 +128,22 @@ test("selects the first queue asset by default and runs grounded actions without
   expect(screen.queryByText(/Its prose is not an ASM observation/)).not.toBeInTheDocument();
   expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Gemma|Ollama|Qwen|gemma3:4b/i)).not.toBeInTheDocument();
+});
+
+test("investigation page-local search clearly hands off the query to global Asset Inventory search", async () => {
+  getInvestigationAssets.mockResolvedValue(investigationList);
+  getV2AssetDetail.mockResolvedValue(selectedAsset);
+
+  render(<App />);
+
+  const search = await screen.findByLabelText("Filter this page");
+  fireEvent.change(search, { target: { value: "missing.example.net" } });
+
+  expect(screen.getByText("No domains on this page match the local search.")).toBeInTheDocument();
+  const handoff = screen.getByRole("link", { name: /Search Asset Inventory for “missing\.example\.net”/ });
+  expect(handoff).toHaveAttribute("href", "#/assets?search=missing.example.net&limit=25");
+  expect(handoff).toHaveTextContent("broader population");
+  expect(getInvestigationAssets).toHaveBeenCalledWith(1, 20, null);
 });
 
 test("asks global and selected-asset questions through the model-free endpoint", async () => {

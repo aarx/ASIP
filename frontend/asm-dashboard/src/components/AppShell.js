@@ -31,7 +31,7 @@ const NAV_GROUPS = [
     key: "scans",
     symbol: "SC",
     label: "Scans",
-    items: [["scans", "SC", "Scan Centre"]],
+    items: [["scans", "SC", "Scan Centre"], ["changes", "CH", "Change Intelligence"]],
   },
   {
     key: "capd",

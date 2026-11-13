@@ -371,6 +371,42 @@ test("Risk Overview keeps current High Risk separate from paginated historical H
   );
 });
 
+test("priority asset page and section survive asset detail navigation and restore from the URL", async () => {
+  window.location.hash = "#/risk?section=priority-assets&priority_page=2";
+  const scrollIntoView = jest.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
+  getV2Overview.mockResolvedValue(overview);
+  getV2Assets
+    .mockResolvedValueOnce({ scan_id: 42, page: 2, limit: 25, count: 51, assets: [{ domain: "page-two.example.com", risk: { score: 5, priority: "Elevated", reasons: ["http_exposed"] } }] })
+    .mockResolvedValueOnce({ scan_id: 42, page: 3, limit: 25, count: 51, assets: [{ domain: "page-three.example.com", risk: { score: 4, priority: "Review", reasons: ["shadow_asset"] } }] });
+  getFindings.mockResolvedValue([]);
+  getSensitiveExposure.mockResolvedValue([]);
+  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
+  getHttpStatus.mockResolvedValue(null);
+  getDnsSecuritySummary.mockResolvedValue(null);
+  getRiskHistorySummary.mockResolvedValue({ availability_state: "UNAVAILABLE", per_scan: [] });
+
+  render(<App />);
+
+  expect(await screen.findByText("page-two.example.com")).toBeInTheDocument();
+  expect(getV2Assets).toHaveBeenCalledWith({ page: 2, limit: 25, risk_positive: true, sort_by: "risk_score", sort_dir: "desc" });
+  expect(scrollIntoView).toHaveBeenCalled();
+  expect(screen.getByRole("link", { name: "Open page-two.example.com" })).toHaveAttribute(
+    "href",
+    "#/assets/page-two.example.com?return=risk&return_query=section%3Dpriority-assets%26priority_page%3D2"
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(window.location.hash).toBe("#/risk?section=priority-assets&priority_page=3");
+  expect(await screen.findByText("page-three.example.com")).toBeInTheDocument();
+  expect(getV2Assets).toHaveBeenLastCalledWith({ page: 3, limit: 25, risk_positive: true, sort_by: "risk_score", sort_dir: "desc" });
+  expect(screen.getByRole("link", { name: "Open page-three.example.com" })).toHaveAttribute(
+    "href",
+    "#/assets/page-three.example.com?return=risk&return_query=section%3Dpriority-assets%26priority_page%3D3"
+  );
+});
+
 test("historical High pagination preserves the exact total and page context", async () => {
   window.location.hash = "#/risk";
   getV2Overview.mockResolvedValue(overview);

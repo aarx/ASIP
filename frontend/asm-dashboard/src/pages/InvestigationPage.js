@@ -379,9 +379,14 @@ export default function InvestigationPage({ query }) {
     <div className="investigation-workspace">
       <Panel title="Investigation queue" meta={list?.count != null ? `${list.count} ASSETS` : "CURRENT"} className="investigation-queue">
         <form className="investigation-search" onSubmit={openExact}>
-          <TextField size="small" label="Search assets" value={search} onChange={(event) => setSearch(event.target.value)} />
+          <TextField size="small" label="Filter this page" value={search} onChange={(event) => setSearch(event.target.value)} />
           <Button type="submit" variant="outlined" disabled={!search.trim()}>Load exact</Button>
         </form>
+        {search.trim() && (
+          <div className="investigation-search-scope" role="note">
+            This filter applies to the loaded page only. <a href={`#/assets?search=${encodeURIComponent(search.trim())}&limit=25`}>Search Asset Inventory for “{search.trim()}”</a> (broader population).
+          </div>
+        )}
         {listStatus === "loading" && <LoadingState title="Loading investigation assets" copy="Retrieving current authoritative organizational assets." />}
         {listStatus === "error" && <ErrorState title="Investigation queue unavailable" copy="The current investigation population could not be loaded." onRetry={() => setListVersion((value) => value + 1)} />}
         {listStatus === "ready" && list.count === 0 && <EmptyState className="state-card-compact" title="No investigation assets" copy="No confirmed resolving assets are available in the current authoritative scan." />}

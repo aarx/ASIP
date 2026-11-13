@@ -171,6 +171,7 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(screen.getByRole("link", { name: "Scan Centre" })).toHaveAttribute("href", "#/scans");
   expect(screen.getByRole("link", { name: "CVE Checks" })).toHaveAttribute("href", "#/capd");
   expect(screen.getByRole("link", { name: "Adhoc Checks" })).toHaveAttribute("href", "#/adhoc/php-rce");
+  expect(screen.getByRole("link", { name: "Change Intelligence" })).toHaveAttribute("href", "#/changes");
   expect(screen.getByRole("link", { name: "Investigate" })).toHaveAttribute("href", "#/investigate");
   const primaryNavigation = screen.getByLabelText("Primary navigation").querySelector("nav");
   expect([...primaryNavigation.children]
