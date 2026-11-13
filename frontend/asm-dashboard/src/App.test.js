@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getFindings, getHttpStatus, getNamingAssetExposure, getRiskHistorySummary, getSecurityFindings, getSecurityFindingsSummary, getSeeds, getSensitiveExposure, getV2Assets, getV2Overview, getV2ReviewIndicators, getV2Scans } from "./services/api";
+import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getFindings, getHttpStatus, getNamingAssetExposure, getRiskHistorySummary, getSecurityFindings, getSecurityFindingsSummary, getSeeds, getSensitiveExposure, getV2Assets, getV2BrandAssets, getV2Overview, getV2ReviewIndicators, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -10,6 +10,7 @@ jest.mock("./services/api", () => ({
   getExposureSummary: jest.fn(),
   getHttpStatus: jest.fn(),
   getV2Assets: jest.fn(),
+  getV2BrandAssets: jest.fn(),
   getV2AssetDetail: jest.fn(),
   updateV2AssetOwnership: jest.fn(),
   getV2Scans: jest.fn(),
@@ -76,6 +77,7 @@ beforeEach(() => {
   window.location.hash = "#/overview";
   getV2Overview.mockReset();
   getV2Assets.mockReset();
+  getV2BrandAssets.mockReset();
   getAssetGrowth.mockReset();
   getV2Scans.mockReset();
   getHttpStatus.mockReset();
@@ -248,6 +250,22 @@ test("renders the permanent shell and authoritative overview", async () => {
   expect(within(overviewContent).getByText("HTTP status distribution")).toBeInTheDocument();
   expect(within(overviewContent).getByText("Naming exposure")).toBeInTheDocument();
   Date.now.mockRestore();
+});
+
+test("keeps Brand Exposure under Analytics with the active group expanded", async () => {
+  window.location.hash = "#/brand";
+  getV2Overview.mockResolvedValue(overview);
+  getV2BrandAssets.mockResolvedValue({ scan_id: 42, count: 0, assets: [] });
+  render(<App />);
+
+  const brandLink = await screen.findByRole("link", { name: "Brand Exposure" });
+  expect(brandLink).toHaveAttribute("href", "#/brand");
+  expect(brandLink).toHaveAttribute("aria-current", "page");
+  const analyticsGroup = [...document.querySelectorAll(".nav-group")].find((group) => group.querySelector(".nav-group-summary")?.textContent.includes("Analytics"));
+  const riskGroup = [...document.querySelectorAll(".nav-group")].find((group) => group.querySelector(".nav-group-summary")?.textContent.includes("Risk & Exposure"));
+  expect(analyticsGroup).toHaveAttribute("open");
+  expect(within(analyticsGroup).getByRole("link", { name: "Brand Exposure" })).toBeInTheDocument();
+  expect(within(riskGroup).queryByRole("link", { name: "Brand Exposure" })).not.toBeInTheDocument();
 });
 
 test("main Overview separates current and previously High Risk with scan context and correct destinations", async () => {

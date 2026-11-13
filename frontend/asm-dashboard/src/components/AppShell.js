@@ -20,14 +20,17 @@ const NAV_GROUPS = [
     items: [
       ["risk", "RX", "Risk Overview"],
       ["risk-security-review", "SR", "Security Review", "risk/security-review"],
-      ["brand", "BP", "Brand Exposure"],
     ],
   },
   {
     key: "analytics",
     symbol: "AN",
     label: "Analytics",
-    items: [["investigate", "AI", "Asset Analysis"], ["risk-dns-security", "DNS", "DNS Security", "risk/dns-security"]],
+    items: [
+      ["investigate", "AI", "Asset Analysis"],
+      ["risk-dns-security", "DNS", "DNS Security", "risk/dns-security"],
+      ["brand", "BP", "Brand Exposure"],
+    ],
   },
   {
     key: "scans",
