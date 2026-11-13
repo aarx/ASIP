@@ -190,9 +190,9 @@ test("risk workspace presents exact metrics and separate review evidence", async
   expect(needsReviewTab).toHaveAttribute("aria-selected", "true");
   expect(screen.getByText("https://external.example/login")).toBeInTheDocument();
   expect(scrollIntoView).toHaveBeenCalled();
-  screen.getAllByRole("link", { name: "Open critical.example.com" }).forEach((link) => {
-    expect(link).toHaveAttribute("href", "#/assets/critical.example.com?return=risk");
-  });
+  const criticalAssetLinks = screen.getAllByRole("link", { name: "Open critical.example.com" });
+  expect(criticalAssetLinks.some((link) => link.getAttribute("href") === "#/assets/critical.example.com?return=risk&return_query=section%3Dpriority-assets%26priority_page%3D1")).toBe(true);
+  expect(criticalAssetLinks.some((link) => link.getAttribute("href") === "#/assets/critical.example.com?return=risk")).toBe(true);
 });
 
 test("Risk Overview exposes DNS coverage without treating partial evidence as a vulnerability verdict", async () => {

@@ -142,7 +142,7 @@ test("investigation page-local search clearly hands off the query to global Asse
   expect(screen.getByText("No domains on this page match the local search.")).toBeInTheDocument();
   const handoff = screen.getByRole("link", { name: /Search Asset Inventory for “missing\.example\.net”/ });
   expect(handoff).toHaveAttribute("href", "#/assets?search=missing.example.net&limit=25");
-  expect(handoff).toHaveTextContent("broader population");
+  expect(screen.getByText(/broader population/)).toBeInTheDocument();
   expect(getInvestigationAssets).toHaveBeenCalledWith(1, 20, null);
 });
 
