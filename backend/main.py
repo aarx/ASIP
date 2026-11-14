@@ -23,6 +23,7 @@ from asset_reporting import (
 from asset_history import (
     historical_identity_lookup_sql,
     list_retained_assets,
+    normalize_historical_http_payload,
     retained_inventory_cte,
     scan_identity_lookup_sql,
 )
@@ -4189,6 +4190,7 @@ def frontend_v2_asset_detail(domain_name: str, scope: str = "current", scan_id: 
             domain_for_detail, evidence_scan_id = match[0], match[1]
         conn.close()
         result = _frontend_v2_asset_detail(domain_for_detail, _historical_scan_id=evidence_scan_id)
+        result["http"] = normalize_historical_http_payload(result.get("http"))
         result.update({"scope": "retained_history", "identity_key": match[5],
                        "current_scan_member": bool(match[4]),
                        "evidence_scan_status": match[3], "evidence_scan_time": match[2]})

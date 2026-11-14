@@ -98,6 +98,21 @@ def scan_identity_lookup_sql():
     """
 
 
+def normalize_historical_http_payload(http_payload):
+    """Keep HTTP state and code semantics separate for retained evidence."""
+    http = dict(http_payload or {})
+    observation = (http.get("observation_status") or "UNKNOWN").upper()
+    status = http.get("status")
+    valid_status = isinstance(status, int) and 100 <= status <= 599
+    if observation != "RESPONDED" or not valid_status:
+        http["status"] = None
+    if observation == "UNKNOWN":
+        http["live"] = None
+    elif observation == "NO_RESPONSE":
+        http["live"] = False
+    return http
+
+
 def list_retained_assets(cursor, *, page, limit, filters, sort_by, sort_dir):
     """Apply filters/count/order/page in SQL against the one-row identity CTE."""
     clauses, params = [], []

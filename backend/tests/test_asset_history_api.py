@@ -9,6 +9,7 @@ from asset_history import (
     historical_identity_lookup_sql,
     identity_sql,
     list_retained_assets,
+    normalize_historical_http_payload,
     retained_inventory_cte,
     scan_identity_lookup_sql,
 )
@@ -71,6 +72,18 @@ class HistoricalAssetInventoryTests(unittest.TestCase):
         self.assertIn("CROSS JOIN (SELECT %s::text AS domain) requested", identity_query)
         self.assertIn("CROSS JOIN (SELECT %s::text AS domain) requested", scan_query)
         self.assertIn("SELECT e.domain, e.scan_id", identity_query)
+
+    def test_detail_http_unknown_and_invalid_status_remain_unavailable(self):
+        unknown = normalize_historical_http_payload({
+            "observation_status": "UNKNOWN", "live": False, "status": 200,
+        })
+        self.assertIsNone(unknown["live"])
+        self.assertIsNone(unknown["status"])
+        no_response = normalize_historical_http_payload({
+            "observation_status": "NO_RESPONSE", "live": True, "status": 0,
+        })
+        self.assertFalse(no_response["live"])
+        self.assertIsNone(no_response["status"])
 
 
 if __name__ == "__main__":
