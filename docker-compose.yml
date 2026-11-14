@@ -81,7 +81,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   frontend:
-    image: asip-frontend:risk-clarity-40eeef3-20261114T152500Z
+    image: asip-frontend:sec-review-meta-4c1638a-20261114T153229Z
     pull_policy: never
     build: ./frontend
     container_name: asm_frontend
