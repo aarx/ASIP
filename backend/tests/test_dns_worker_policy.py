@@ -83,6 +83,17 @@ class PassiveDnsWorkerPolicyTests(unittest.TestCase):
         resolver.resolve.assert_not_called()
         check.assert_called_once_with()
 
+    def test_dns_progress_line_reports_counts_and_elapsed_time(self):
+        message = self.worker.format_dns_progress(
+            visited=50, total=1968, records_found=21, no_records=29,
+            authorization_skips=0, elapsed_seconds=31.26,
+        )
+        self.assertEqual(
+            message,
+            "DNS progress: visited 50/1968; records_found_domains=21; "
+            "no_record_domains=29; authorization_skips=0; elapsed_seconds=31.3",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

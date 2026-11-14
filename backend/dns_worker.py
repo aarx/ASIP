@@ -1,11 +1,23 @@
 import dns.resolver
 import socket
 import sys
+import time
 from db import get_conn, require_running_scan
 from authorization_policy import passive_dns_discovery_sql
 from ownership import normalize_hostname
 
 scan_id = int(sys.argv[1])
+DNS_PROGRESS_INTERVAL_SECONDS = 30
+
+
+def format_dns_progress(visited, total, records_found, no_records,
+                        authorization_skips, elapsed_seconds):
+    return (
+        f"DNS progress: visited {visited}/{total}; "
+        f"records_found_domains={records_found}; no_record_domains={no_records}; "
+        f"authorization_skips={authorization_skips}; "
+        f"elapsed_seconds={elapsed_seconds:.1f}"
+    )
 
 class PassiveDnsAuthorizationDenied(RuntimeError):
     pass
@@ -139,16 +151,36 @@ def main():
     processed = 0
     inserted = 0
     invalid_hostname_skips = 0
+    authorization_skips = 0
+    no_record_domains = 0
+    visited = 0
+    progress_started = time.monotonic()
+    last_progress = progress_started
+
+    def report_progress(force=False):
+        nonlocal last_progress
+        now = time.monotonic()
+        if force or now - last_progress >= DNS_PROGRESS_INTERVAL_SECONDS:
+            print(format_dns_progress(
+                visited, len(rows), processed, no_record_domains,
+                authorization_skips, now - progress_started,
+            ))
+            last_progress = now
+
     for domain_id, domain, has_ip in rows:
+        visited += 1
 
         normalized_domain = normalize_hostname(domain, require_fqdn=True)
         if normalized_domain is None:
             invalid_hostname_skips += 1
+            report_progress()
             continue
         domain = normalized_domain
 
         if not passive_dns_target_allowed(cur, scan_id, domain_id):
             print(f"Skipping DNS target outside permitted discovery scope: {domain}")
+            authorization_skips += 1
+            report_progress()
             continue
 
         def recheck_discovery_scope():
@@ -160,12 +192,16 @@ def main():
             records = resolve_dns(domain, before_query=recheck_discovery_scope)
         except PassiveDnsAuthorizationDenied:
             print(f"DNS discovery authorization changed during resolution: {domain}")
+            authorization_skips += 1
+            report_progress()
             continue
 
         print(f"Resolved records: {records}")
 
         if not records:
             print(f"⛔ No DNS records for {domain}")
+            no_record_domains += 1
+            report_progress()
             continue
 
         a_records = sorted({value for rtype, value in records if rtype == "A"})
@@ -177,6 +213,8 @@ def main():
                 )
             except PassiveDnsAuthorizationDenied:
                 print(f"DNS discovery authorization changed before PTR lookup: {domain}")
+                authorization_skips += 1
+                report_progress()
                 continue
 
         for rtype, value in records:
@@ -230,6 +268,7 @@ def main():
             conn.commit()
             require_running_scan(cur, scan_id)
             print(f"💾 Checkpoint commit at {processed}")
+        report_progress()
 
     conn.commit()
     conn.close()
@@ -242,6 +281,7 @@ def main():
             "Skipped invalid DNS hostnames before resolver calls: "
             f"{invalid_hostname_skips}"
         )
+    report_progress(force=True)
 
 
 if __name__ == "__main__":

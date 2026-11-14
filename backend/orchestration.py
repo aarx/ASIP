@@ -4,6 +4,7 @@ from datetime import datetime
 import time
 import logging
 import os
+import selectors
 import signal
 import sys
 import threading
@@ -31,6 +32,8 @@ DEFAULT_STAGE_TIMEOUT_SECONDS = 1800
 DEFAULT_RUNNER_HEARTBEAT_INTERVAL_SECONDS = 15
 DEFAULT_RUNNER_ORPHAN_GRACE_SECONDS = 120
 PROCESS_GROUP_POLL_INTERVAL_SECONDS = 0.05
+MAX_STAGE_OUTPUT_CAPTURE_BYTES = 64 * 1024
+MAX_STAGE_OUTPUT_LINE_BYTES = 8 * 1024
 
 _ACTIVE_STAGE_PROCESS = None
 _ACTIVE_STAGE_DIAGNOSTICS = None
@@ -466,6 +469,87 @@ def _diagnostics_finish(scan_id, runner_token, name, stage_order, attempt,
                 logging.exception("Failed to close diagnostics connection")
 
 
+def _append_bounded_output(output, chunk):
+    output.extend(chunk)
+    overflow = len(output) - MAX_STAGE_OUTPUT_CAPTURE_BYTES
+    if overflow > 0:
+        del output[:overflow]
+
+
+def _log_stage_chunk(name, line):
+    logging.info(f"[{name}] {line.decode('utf-8', errors='replace')}")
+
+
+def _stream_stage_output(process, name, timeout_seconds):
+    """Forward merged child output as it arrives, retaining only a bounded tail."""
+    stdout = process.stdout
+    try:
+        file_descriptor = stdout.fileno()
+    except (AttributeError, OSError, ValueError):
+        # Compatibility for test doubles and non-file-backed process adapters.
+        output, _ = process.communicate(timeout=timeout_seconds)
+        output = output or ""
+        for line in output.splitlines():
+            logging.info("[%s] %s", name, line.strip())
+        return output.encode("utf-8", errors="replace")[-MAX_STAGE_OUTPUT_CAPTURE_BYTES:]
+
+    captured = bytearray()
+    pending = bytearray()
+    deadline = time.monotonic() + timeout_seconds
+    selector = selectors.DefaultSelector()
+    selector.register(stdout, selectors.EVENT_READ)
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _flush_stage_output(name, pending, final=True)
+                raise subprocess.TimeoutExpired(
+                    process.args, timeout_seconds, output=bytes(captured)
+                )
+            if not selector.select(remaining):
+                _flush_stage_output(name, pending, final=True)
+                raise subprocess.TimeoutExpired(
+                    process.args, timeout_seconds, output=bytes(captured)
+                )
+            chunk = os.read(file_descriptor, 4096)
+            if not chunk:
+                _flush_stage_output(name, pending, final=True)
+                break
+            _append_bounded_output(captured, chunk)
+            pending.extend(chunk)
+            _flush_stage_output(name, pending)
+
+        remaining = max(0, deadline - time.monotonic())
+        try:
+            process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired as exc:
+            raise subprocess.TimeoutExpired(
+                process.args, timeout_seconds, output=bytes(captured)
+            ) from exc
+        return bytes(captured)
+    finally:
+        selector.close()
+
+
+def _flush_stage_output(name, pending, final=False):
+    """Log complete lines and bounded fragments without retaining huge lines."""
+    while pending:
+        newline = pending.find(b"\n")
+        if newline >= 0 and newline < MAX_STAGE_OUTPUT_LINE_BYTES:
+            line = bytes(pending[:newline]).rstrip(b"\r")
+            del pending[:newline + 1]
+            _log_stage_chunk(name, line)
+        elif len(pending) >= MAX_STAGE_OUTPUT_LINE_BYTES:
+            line = bytes(pending[:MAX_STAGE_OUTPUT_LINE_BYTES])
+            del pending[:MAX_STAGE_OUTPUT_LINE_BYTES]
+            _log_stage_chunk(name, line)
+        elif final:
+            _log_stage_chunk(name, bytes(pending).rstrip(b"\r"))
+            pending.clear()
+        else:
+            return
+
+
 def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None,
              scan_id=None, runner_token=None, stage_order=None):
 
@@ -498,16 +582,33 @@ def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None,
 
         timeout_seconds = timeout_seconds or stage_timeout_seconds(name)
         try:
-            output, _ = process.communicate(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired:
+            captured_output = _stream_stage_output(
+                process, name, timeout_seconds
+            )
+        except subprocess.TimeoutExpired as timeout_error:
             logging.error(
                 "TIMEOUT: %s attempt %s/%s after %ss",
                 name, attempt, max_attempts, timeout_seconds,
             )
+            captured_output = timeout_error.output or b""
+            if isinstance(captured_output, str):
+                captured_output = captured_output.encode("utf-8", errors="replace")
             stop_active_child(process)
-            output, _ = process.communicate()
-            for line in (output or "").splitlines():
-                logging.info(f"[{name}] {line.strip()}")
+            try:
+                drained_output = _stream_stage_output(
+                    process, name, CHILD_TERMINATE_GRACE_SECONDS
+                )
+                combined = bytearray(captured_output)
+                _append_bounded_output(combined, drained_output)
+                captured_output = bytes(combined)
+            except subprocess.TimeoutExpired as drain_timeout:
+                combined = bytearray(captured_output)
+                extra = drain_timeout.output or b""
+                if isinstance(extra, str):
+                    extra = extra.encode("utf-8", errors="replace")
+                _append_bounded_output(combined, extra)
+                captured_output = bytes(combined)
+            output = captured_output.decode("utf-8", errors="replace")
             _diagnostics_finish(
                 scan_id, runner_token, name, stage_order, attempt,
                 "TIMED_OUT", time.monotonic() - monotonic_start,
@@ -515,8 +616,7 @@ def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None,
             )
             return STAGE_TIMEOUT_EXIT_CODE
 
-        for line in (output or "").splitlines():
-            logging.info(f"[{name}] {line.strip()}")
+        output = captured_output.decode("utf-8", errors="replace")
 
         returncode = process.returncode
 

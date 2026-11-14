@@ -5,6 +5,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import threading
 import types
 import time
 import unittest
@@ -52,6 +53,81 @@ class OrchestrationTimeoutTests(unittest.TestCase):
             "Hung Stage", command, 1, 2, timeout_seconds=0.1
         )
         self.assertEqual(result, self.module.STAGE_TIMEOUT_EXIT_CODE)
+
+    def test_streams_merged_stdout_and_stderr_before_stage_exits(self):
+        command = (
+            f"{shlex.quote(sys.executable)} -c "
+            + shlex.quote(
+                "import sys,time; "
+                "print('stdout-first',flush=True); "
+                "print('stderr-second',file=sys.stderr,flush=True); "
+                "print('stdout-third',flush=True); time.sleep(0.5)"
+            )
+        )
+        output_seen = threading.Event()
+        done = threading.Event()
+        records = []
+        results = []
+
+        def record_log(*args, **_kwargs):
+            message = " ".join(str(value) for value in args)
+            records.append(message)
+            if "stdout-first" in message:
+                output_seen.set()
+
+        def run_stage():
+            results.append(self.module.run_step(
+                "Live Stage", command, 1, 1, timeout_seconds=3
+            ))
+            done.set()
+
+        with mock.patch.object(self.module.logging, "info", side_effect=record_log):
+            worker = threading.Thread(target=run_stage)
+            worker.start()
+            self.assertTrue(output_seen.wait(2), "child output was not forwarded live")
+            self.assertFalse(done.is_set(), "stage exited before live output was observed")
+            worker.join(3)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results, [0])
+        forwarded = [item for item in records if "[Live Stage]" in item]
+        self.assertEqual(len(forwarded), 3)
+        sequence = [
+            next(index for index, item in enumerate(forwarded) if marker in item)
+            for marker in ("stdout-first", "stderr-second", "stdout-third")
+        ]
+        self.assertEqual(sequence, sorted(sequence))
+
+    def test_quiet_success_and_nonzero_exit_keep_stage_outcomes(self):
+        quiet = self.module.run_step(
+            "Quiet Stage",
+            f"{shlex.quote(sys.executable)} -c 'import time; time.sleep(0.05)'",
+            1, 1, timeout_seconds=2,
+        )
+        nonzero = self.module.run_step(
+            "Nonzero Stage",
+            f"{shlex.quote(sys.executable)} -c 'raise SystemExit(7)'",
+            1, 1, timeout_seconds=2,
+        )
+        self.assertEqual(quiet, 0)
+        self.assertEqual(nonzero, 7)
+
+    def test_stage_capture_is_bounded_for_large_unterminated_output(self):
+        command = (
+            f"{shlex.quote(sys.executable)} -c "
+            + shlex.quote("import sys; sys.stdout.write('x' * 200000); sys.stdout.flush()")
+        )
+        process = subprocess.Popen(
+            command, shell=True, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            with mock.patch.object(self.module.logging, "info"):
+                output = self.module._stream_stage_output(process, "Large Stage", 3)
+        finally:
+            process.stdout.close()
+        self.assertEqual(process.returncode, 0)
+        self.assertLessEqual(len(output), self.module.MAX_STAGE_OUTPUT_CAPTURE_BYTES)
 
     def test_timeout_kills_grandchild_that_ignores_sigterm(self):
         import tempfile
