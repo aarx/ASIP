@@ -94,7 +94,7 @@ class AssessmentCoverageTests(unittest.TestCase):
     def test_sensitive_port_results_are_positive_only_with_unknown_coverage(self):
         cursor = Cursor(
             one=[("SUCCEEDED",), (1,)],
-            many=[[(9, "port.example.com", "SHADOW")],
+            many=[[(9, "port.example.com", "SHADOW", 5, 1)],
                   [(9, 8443, "https-alt", 5, "Sensitive management service")]],
         )
         with mock.patch.object(main, "get_conn", return_value=Connection(cursor)):
@@ -102,9 +102,44 @@ class AssessmentCoverageTests(unittest.TestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["assessment_coverage"], "UNKNOWN")
         self.assertEqual(result["hosts"][0]["assessment_state"], "POSITIVE_OBSERVATION")
+        self.assertEqual(result["hosts"][0]["highest_sensitivity"], 5)
+        self.assertEqual(result["hosts"][0]["distinct_port_count"], 1)
         self.assertEqual(result["hosts"][0]["ports"][0]["port"], 8443)
         self.assertIn("positive sensitive-port observations", result["coverage_note"])
         self.assertNotIn("d.scannable IS TRUE", cursor.executions[1][0])
+        query = cursor.executions[2][0]
+        self.assertIn("MAX(sp.risk) DESC NULLS LAST", query)
+        self.assertIn("COUNT(DISTINCT dp.port) DESC", query)
+        self.assertIn("LOWER(TRIM(TRAILING '.' FROM d.domain)) ASC", query)
+        self.assertLess(query.index("GROUP BY"), query.index("ORDER BY"))
+        self.assertLess(query.index("ORDER BY"), query.index("LIMIT %s OFFSET %s"))
+
+    def test_sensitive_port_priority_order_is_applied_before_host_pagination(self):
+        cursor = Cursor(
+            one=[("SUCCEEDED",), (3,)],
+            many=[[(12, "middle.example.com", "KNOWN", 4, 3)],
+                  [(12, 22, "ssh", 4, "SSH")]],
+        )
+        with mock.patch.object(main, "get_conn", return_value=Connection(cursor)):
+            result = main.sensitive_port_assessment_hosts(scan_id=19, page=2, limit=1)
+
+        self.assertEqual(result["total"], 3)
+        self.assertEqual(result["page"], 2)
+        self.assertEqual(result["hosts"][0]["hostname"], "middle.example.com")
+        self.assertEqual(result["hosts"][0]["highest_sensitivity"], 4)
+        self.assertEqual(result["hosts"][0]["distinct_port_count"], 3)
+        query, params = cursor.executions[2]
+        self.assertEqual(params, (19, 1, 1))
+        order = query.index("ORDER BY")
+        sensitivity = query.index("MAX(sp.risk) DESC NULLS LAST", order)
+        port_count = query.index("COUNT(DISTINCT dp.port) DESC", order)
+        hostname = query.index("LOWER(TRIM(TRAILING '.' FROM d.domain)) ASC", order)
+        stable_id = query.index("d.id ASC", order)
+        page_limit = query.index("LIMIT %s OFFSET %s", order)
+        self.assertLess(sensitivity, port_count)
+        self.assertLess(port_count, hostname)
+        self.assertLess(hostname, stable_id)
+        self.assertLess(stable_id, page_limit)
 
     def test_incomplete_scan_is_rejected_for_new_coverage_routes(self):
         cursor = Cursor(one=[("RUNNING",)])

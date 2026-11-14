@@ -2322,16 +2322,23 @@ def sensitive_port_assessment_hosts(
         cur.execute(f"SELECT COUNT(DISTINCT d.id) {joins} WHERE {where_sql}", tuple(params))
         total = cur.fetchone()[0]
         cur.execute(f"""
-            SELECT DISTINCT d.id, d.domain, ({classification}) AS asset_class
+            SELECT d.id, d.domain, ({classification}) AS asset_class,
+                   MAX(sp.risk) AS highest_sensitivity,
+                   COUNT(DISTINCT dp.port) AS distinct_port_count
               {joins}
              WHERE {where_sql}
-             ORDER BY d.domain ASC, d.id ASC
+             GROUP BY d.id, d.domain, ({classification})
+             ORDER BY MAX(sp.risk) DESC NULLS LAST,
+                      COUNT(DISTINCT dp.port) DESC,
+                      LOWER(TRIM(TRAILING '.' FROM d.domain)) ASC,
+                      d.id ASC
              LIMIT %s OFFSET %s
         """, tuple(params + [bounded_limit, offset]))
         rows = cur.fetchall()
         hosts = {row[0]: {
             "asset_id": row[0], "domain_id": row[0], "hostname": row[1],
             "domain": row[1], "asset_class": row[2], "scan_id": scan_id,
+            "highest_sensitivity": row[3], "distinct_port_count": row[4],
             "source": "domain_ports+sensitive_ports", "assessment_state": "POSITIVE_OBSERVATION",
             "evidence_count": 0, "ports": [],
         } for row in rows}
