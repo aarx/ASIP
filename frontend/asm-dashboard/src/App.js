@@ -15,6 +15,7 @@ import DnsSecurityPage from "./pages/DnsSecurityPage";
 import SecurityFindingsPage from "./pages/SecurityFindingsPage";
 import CapdPage from "./pages/CapdPage";
 import SecurityReviewPage from "./pages/SecurityReviewPage";
+import BrandHistoryPage from "./pages/BrandHistoryPage";
 import "./App.css";
 
 const ROUTES = {
@@ -27,6 +28,7 @@ const ROUTES = {
   "risk-dns-security": ["DNS Security", "Risk & Exposure", "Read-only DNS assessment evidence from the current authoritative scan."],
   shadow: ["Shadow", "Unmanaged inventory", "Investigate confirmed organizational assets outside documented inventory."],
   brand: ["Brand Exposure", "Ownership intelligence", "Review Needs Verification and External assets without assuming ownership."],
+  "brand-history": ["Brand discovery history", "Analytics", "Retained brand-source observations."],
   scans: ["Scans", "Operations", "Monitor scan lifecycle and authoritative history."],
   investigate: ["Investigate", "Analyst workspace", "Move from deterministic evidence to focused investigation."],
   changes: ["Change Intelligence", "Successful-scan comparison", "Inspect exact membership changes between authoritative scans."],
@@ -94,9 +96,12 @@ function locationFromHash() {
     : segments[0] === "risk" && segments[1] === "dns-security"
       ? "risk-dns-security"
       : null;
-  const route = ROUTES[riskSubroute] ? riskSubroute : (ROUTES[segments[0]] ? segments[0] : "overview");
+  const brandHistoryRoute = segments[0] === "brand" && segments[1] === "history";
+  const route = brandHistoryRoute ? "brand-history" : ROUTES[riskSubroute] ? riskSubroute : (ROUTES[segments[0]] ? segments[0] : "overview");
   const domain = route === "assets" && segments.length > 1
     ? decodeURIComponent(segments.slice(1).join("/"))
+    : route === "brand-history" && segments.length > 2
+      ? decodeURIComponent(segments.slice(2).join("/"))
     : null;
   return { route, domain, query };
 }
@@ -122,11 +127,11 @@ function App() {
   const { route, domain, query } = location;
   const [title, eyebrow, description] = ROUTES[route];
   const routeMeta = domain
-    ? { title: "Asset detail", eyebrow: "Current evidence", description: domain }
+    ? { title: route === "brand-history" ? "Historical brand asset" : "Asset detail", eyebrow: route === "brand-history" ? "Retained evidence" : "Current evidence", description: domain }
     : { title, eyebrow, description };
 
   let page = null;
-  if (route === "overview") page = <OverviewPage />;
+  if (route === "overview") page = <OverviewPage query={query} />;
   if (route === "assets") {
     page = domain
       ? <AssetDetailPage domain={domain} returnQuery={query} />
@@ -140,13 +145,14 @@ function App() {
   if (route === "shadow") page = <ShadowCentrePage query={query} />;
   if (route === "scans") page = <ScanCentrePage />;
   if (route === "brand") page = <BrandPerimeterPage query={query} />;
+  if (route === "brand-history") page = <BrandHistoryPage query={query} domain={domain} />;
   if (route === "investigate") page = <InvestigationPage query={query} />;
   if (route === "changes") page = <ChangeIntelligencePage query={query} />;
   if (route === "adhoc") page = <AdhocChecksPage />;
   if (route === "capd") page = <CapdPage query={query} />;
 
   return (
-    <AppShell activeRoute={route} routeMeta={routeMeta}>
+    <AppShell activeRoute={route === "brand-history" ? "brand" : route} routeMeta={routeMeta}>
       {page}
     </AppShell>
   );

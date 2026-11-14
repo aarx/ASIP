@@ -1,4 +1,5 @@
 import React from "react";
+jest.mock("../../services/api", () => ({ getBrandHistorySummary: jest.fn() }));
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Bar, BarChart, Cell, XAxis } from "recharts";
 import OverviewIntelligence, {
@@ -202,30 +203,27 @@ test("renders authoritative brand discovery totals with exact full and review dr
   expect(normalizeBrandDiscovery(value, 42)).toEqual(value);
   expect(normalizeBrandDiscovery(value, 41)).toBeNull();
 
-  const { rerender } = render(<BrandDiscoveryPanel value={value} scanId={42} />);
+  const { rerender } = render(<BrandDiscoveryPanel value={value} scanId={42} query="brand_scope=current" />);
   expect(screen.getByRole("link", { name: "Open Brand-related domains (32)" })).toHaveAttribute(
     "href", "#/assets?discovery_source=brand_union&limit=25"
   );
   expect(screen.getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(
     "href", "#/assets?discovery_source=brand_union&asset_class=CANDIDATE&limit=25"
   );
-  rerender(<BrandDiscoveryPanel value={value} scanId={42} mode="brand" />);
-  expect(screen.getByRole("link", { name: "Open Total brand matches (32)" })).toHaveAttribute(
+  rerender(<BrandDiscoveryPanel value={value} scanId={42} mode="brand" query="brand_scope=current" />);
+  expect(screen.getByRole("link", { name: "Open Brand-related domains (32)" })).toHaveAttribute(
     "href", "#/assets?discovery_source=brand_union&limit=25"
   );
-  expect(screen.getByRole("link", { name: "Open Other Domain Extensions (20)" })).toHaveAttribute(
-    "href", "#/assets?discovery_source=brand_tld&limit=25"
-  );
-  expect(screen.getByRole("link", { name: "Open Brand Name Variations (15)" })).toHaveAttribute(
-    "href", "#/assets?discovery_source=brand_pattern&limit=25"
+  expect(screen.getByRole("link", { name: "Open Known (12)" })).toHaveAttribute(
+    "href", "#/assets?discovery_source=brand_union&asset_class=KNOWN&limit=25"
   );
   expect(screen.getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(
-    "href", "#/brand?discovery_source=brand_union&asset_class=CANDIDATE"
+    "href", "#/brand?discovery_source=brand_union&asset_class=CANDIDATE&brand_scope=current"
   );
 });
 
 test("does not fabricate brand discovery totals when the response is absent or incomplete", () => {
-  render(<BrandDiscoveryPanel value={{ scan_id: 42, source_counts: {} }} scanId={42} />);
+  render(<BrandDiscoveryPanel value={{ scan_id: 42, source_counts: {} }} scanId={42} query="brand_scope=current" />);
   expect(screen.getByText("Brand discovery unavailable")).toBeInTheDocument();
   expect(screen.queryByText("0")).not.toBeInTheDocument();
 });

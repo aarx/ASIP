@@ -161,7 +161,7 @@ function relativeCompletion(value) {
   return `completed ${Math.floor(hours / 24)}d ago`;
 }
 
-export default function OverviewPage() {
+export default function OverviewPage({ query = "" }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
   const [requestVersion, setRequestVersion] = useState(0);
@@ -312,6 +312,7 @@ export default function OverviewPage() {
         value={data.brandDiscovery}
         status={data.brandDiscoveryStatus}
         scanId={data.current_scan_id}
+        query={query}
       />
 
       <HttpStatusPanel value={data.httpStatus} status={data.httpStatusStatus} />

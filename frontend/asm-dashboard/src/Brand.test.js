@@ -98,7 +98,7 @@ beforeEach(() => {
 });
 
 test("Brand Perimeter separates Candidate and External evidence from organizational risk", async () => {
-  window.location.hash = "#/brand";
+  window.location.hash = "#/brand?brand_scope=current";
   mockBrandCounts();
 
   render(<App />);
@@ -110,19 +110,19 @@ test("Brand Perimeter separates Candidate and External evidence from organizatio
   expect(screen.getByText("https://vendor.example/acme")).toBeInTheDocument();
   expect(screen.getByText("Outside confirmed surface")).toBeInTheDocument();
   expect(screen.getByText("Potential brand misuse or lookalike domains")).toBeInTheDocument();
-  expect(screen.getByText("Total brand matches")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open Total brand matches (32)" })).toHaveAttribute(
+  expect(screen.getByText("Brand-related domains")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open Brand-related domains (32)" })).toHaveAttribute(
     "href", "#/assets?discovery_source=brand_union&limit=25"
   );
   expect(screen.getByRole("link", { name: "Open Needs Verification (10)" })).toHaveAttribute(
-    "href", "#/brand?discovery_source=brand_union&asset_class=CANDIDATE"
+    "href", "#/brand?discovery_source=brand_union&asset_class=CANDIDATE&brand_scope=current"
   );
   expect(screen.queryByText("Candidate and External assets are shown for review and do not receive organizational risk.")).not.toBeInTheDocument();
   expect(screen.queryByText("Why discovered")).not.toBeInTheDocument();
   expect(screen.queryByText("No org. risk")).not.toBeInTheDocument();
   expect(document.querySelector(".status-shadow")).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open acme-example.net" })).toHaveAttribute(
-    "href", "#/assets/acme-example.net?return=brand"
+    "href", "#/assets/acme-example.net?return=brand&return_query=brand_scope%3Dcurrent"
   );
 });
 

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Legend, Rectangle, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import Panel from "./Panel";
 import AssetLink from "./AssetLink";
+import { getBrandHistorySummary } from "../../services/api";
 
 const STATUS_GROUPS = [
   { key: "2xx", label: "2xx", color: "#398261" },
@@ -358,6 +359,7 @@ export function CertificateHealthPanel({ value, status, scanId, now }) {
 }
 
 function normalizeBrandCount(value) {
+  if (value === null || value === undefined || value === "") return null;
   const count = Number(value);
   return Number.isInteger(count) && count >= 0 ? count : null;
 }
@@ -389,33 +391,56 @@ function brandDiscoveryHref(source, assetClass, review = false) {
   return `${review ? "#/brand" : "#/assets"}?${params.toString()}${review ? "" : "&limit=25"}`;
 }
 
-export function BrandDiscoveryPanel({ value, status = "ready", scanId, mode = "overview" }) {
+export function BrandDiscoveryPanel({ value, status = "ready", scanId, mode = "overview", query = "" }) {
+  const scope = new URLSearchParams(query).get("brand_scope") === "current" ? "current" : "all-time";
+  const [history, setHistory] = useState(null);
+  const [historyStatus, setHistoryStatus] = useState("loading");
+  useEffect(() => {
+    if (scope !== "all-time") return undefined;
+    let active = true;
+    setHistoryStatus("loading");
+    Promise.resolve().then(() => getBrandHistorySummary()).then((result) => {
+      if (active) { setHistory(result); setHistoryStatus("ready"); }
+    }).catch(() => { if (active) setHistoryStatus("error"); });
+    return () => { active = false; };
+  }, [scope]);
   const summary = normalizeBrandDiscovery(value, scanId);
+  const historyCounts = history?.scope === "retained_brand_source_history" ? history.counts : null;
+  const validHistory = normalizeBrandCount(history?.total) != null
+    && ["needs_verification", "known", "shadow", "unknown"].every((key) => normalizeBrandCount(historyCounts?.[key]) != null)
+    && history.total === Object.values(historyCounts).reduce((total, count) => total + count, 0);
+  const activeStatus = scope === "all-time" ? historyStatus : status;
+  const activeSummary = scope === "all-time" ? validHistory : summary;
+  const scopeParams = new URLSearchParams(query);
+  scopeParams.delete("brand_scope");
+  const allTimeHref = `#/${mode === "brand" ? "brand" : "overview"}${scopeParams.toString() ? `?${scopeParams}` : ""}`;
+  scopeParams.set("brand_scope", "current");
+  const currentHref = `#/${mode === "brand" ? "brand" : "overview"}?${scopeParams}`;
   let content;
-  if (status === "loading") {
-    content = <ChartState title="Loading brand discovery" copy="Reading current brand-source totals." />;
-  } else if (status === "error" || !summary) {
-    content = <ChartState title="Brand discovery unavailable" copy="No authoritative brand-source totals were returned." error />;
+  if (activeStatus === "loading") {
+    content = <ChartState title="Loading brand discovery" copy="Reading brand-source totals." />;
+  } else if (activeStatus === "error" || !activeSummary) {
+    content = <ChartState title="Brand discovery unavailable" copy="Brand-source totals could not be loaded." error />;
   } else {
-    const union = summary.source_counts.brand_union;
-    const metrics = mode === "brand"
-      ? [
-        ["Total brand matches", union.domains, brandDiscoveryHref("brand_union")],
-        ["Other Domain Extensions", summary.source_counts.brand_tld.domains, brandDiscoveryHref("brand_tld")],
-        ["Brand Name Variations", summary.source_counts.brand_pattern.domains, brandDiscoveryHref("brand_pattern")],
-        ["Needs Verification", union.by_asset_class.candidate, brandDiscoveryHref("brand_union", "CANDIDATE", true)],
-      ]
-      : [
-        ["Brand-related domains", union.domains, brandDiscoveryHref("brand_union")],
-        ["Needs Verification", union.by_asset_class.candidate, brandDiscoveryHref("brand_union", "CANDIDATE")],
-        ["Known", union.by_asset_class.known, brandDiscoveryHref("brand_union", "KNOWN")],
-        ["Shadow", union.by_asset_class.shadow, brandDiscoveryHref("brand_union", "SHADOW")],
-      ];
-    if (mode !== "brand" && union.by_asset_class.external > 0) {
-      metrics.push(["External", union.by_asset_class.external, brandDiscoveryHref("brand_union", "EXTERNAL")]);
-    }
+    const union = summary?.source_counts.brand_union;
+    const historicalHref = (classification) => {
+      const params = new URLSearchParams({ from: mode });
+      if (classification) params.set("classification", classification);
+      return `#/brand/history?${params}`;
+    };
+    const metrics = scope === "all-time" ? [
+      ["Brand-related domains", history.total, historicalHref()],
+      ["Needs Verification", historyCounts.needs_verification, historicalHref("NEEDS_VERIFICATION")],
+      ["Known", historyCounts.known, historicalHref("KNOWN")],
+      ["Shadow", historyCounts.shadow, historicalHref("SHADOW")],
+    ] : [
+      ["Brand-related domains", union.domains, brandDiscoveryHref("brand_union")],
+      ["Needs Verification", union.by_asset_class.candidate, brandDiscoveryHref("brand_union", "CANDIDATE", mode === "brand") + (mode === "brand" ? "&brand_scope=current" : "")],
+      ["Known", union.by_asset_class.known, brandDiscoveryHref("brand_union", "KNOWN")],
+      ["Shadow", union.by_asset_class.shadow, brandDiscoveryHref("brand_union", "SHADOW")],
+    ];
     content = (
-      <div className="brand-discovery-signals" aria-label="Current brand discovery totals">
+      <div className="brand-discovery-signals" aria-label={scope === "all-time" ? "Retained brand discovery totals" : "Current brand discovery totals"}>
         {metrics.map(([label, count, href]) => (
           <a className="brand-discovery-signal" href={href} key={label} aria-label={`Open ${label} (${count})`}>
             <span>{label}</span>
@@ -428,7 +453,7 @@ export function BrandDiscoveryPanel({ value, status = "ready", scanId, mode = "o
   }
 
   return (
-    <Panel id={mode === "brand" ? "brand-discovery-summary" : "overview-brand-discovery"} title="Brand discovery" meta={scanId != null ? `SCAN #${scanId} · CURRENT-SCAN SUBSET` : "CURRENT-SCAN SUBSET"} className={`${mode === "brand" ? "brand-discovery-panel-page" : "intelligence-panel brand-discovery-panel"}`}>
+    <Panel id={mode === "brand" ? "brand-discovery-summary" : "overview-brand-discovery"} title="Brand discovery" meta={<div className="brand-scope-control" aria-label="Brand discovery scope"><a href={allTimeHref} aria-current={scope === "all-time" ? "page" : undefined}>All-time</a><a href={currentHref} aria-current={scope === "current" ? "page" : undefined}>Current scan</a><span title={scope === "all-time" ? "Only retained brand-source history is counted; earlier or deleted evidence is unavailable." : undefined}>{scope === "all-time" ? "Retained history" : `Scan #${scanId ?? "—"}`}</span></div>} className={`${mode === "brand" ? "brand-discovery-panel-page" : "intelligence-panel brand-discovery-panel"}`}>
       {content}
     </Panel>
   );

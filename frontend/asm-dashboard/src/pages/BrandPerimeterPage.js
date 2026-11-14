@@ -18,16 +18,18 @@ function readQuery(query) {
     ownership: params.get("ownership") || "",
     asset_class: params.get("asset_class") || "",
     discovery_source: params.get("discovery_source") || "",
+    brand_scope: params.get("brand_scope") || "",
     fixture: params.get("fixture") || "",
   };
 }
 
-function brandHash({ page = 1, search = "", ownership = "", asset_class: assetClass = "", discovery_source: discoverySource = "", fixture = "" }) {
+function brandHash({ page = 1, search = "", ownership = "", asset_class: assetClass = "", discovery_source: discoverySource = "", brand_scope: brandScope = "", fixture = "" }) {
   const params = new URLSearchParams();
   if (search) params.set("search", search);
   if (assetClass) params.set("asset_class", assetClass);
   else if (ownership) params.set("ownership", ownership);
   if (discoverySource) params.set("discovery_source", discoverySource);
+  if (brandScope) params.set("brand_scope", brandScope);
   if (page > 1) params.set("page", String(page));
   if (fixture) params.set("fixture", fixture);
   return `#/brand${params.toString() ? `?${params}` : ""}`;
@@ -50,7 +52,7 @@ function destinationEvidence(asset) {
 function queryForReturn(query) {
   const params = new URLSearchParams(query);
   const returnParams = new URLSearchParams();
-  ["search", "ownership", "asset_class", "discovery_source", "page", "fixture"].forEach((key) => {
+  ["search", "ownership", "asset_class", "discovery_source", "brand_scope", "page", "fixture"].forEach((key) => {
     const value = params.get(key);
     if (value) returnParams.set(key, value);
   });
@@ -110,9 +112,9 @@ export default function BrandPerimeterPage({ query }) {
 
   const apply = (event) => {
     event.preventDefault();
-    window.location.hash = brandHash({ ...draft, page: 1 });
+    window.location.hash = brandHash({ ...draft, brand_scope: applied.brand_scope, page: 1 });
   };
-  const clear = () => { window.location.hash = fixtureMode ? "#/brand?fixture=ownership-review" : "#/brand"; };
+  const clear = () => { window.location.hash = brandHash({ brand_scope: applied.brand_scope, fixture: fixtureMode ? "ownership-review" : "" }); };
   const movePage = (page) => { window.location.hash = brandHash({ ...applied, page }); };
 
   if (status === "loading") return <LoadingState title="Loading Brand Exposure" copy="Retrieving current Needs Verification and External evidence without assuming ownership." />;
@@ -139,6 +141,7 @@ export default function BrandPerimeterPage({ query }) {
         status={data.brandDiscoveryStatus}
         scanId={data.inventory.scan_id}
         mode="brand"
+        query={query}
       />
 
       <form className="brand-filters" onSubmit={apply}>

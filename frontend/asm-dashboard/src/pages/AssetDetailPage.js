@@ -334,7 +334,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   const returnParams = new URLSearchParams(returnQuery);
   const returnTo = returnParams.get("return");
   const explicitReturnQuery = returnParams.get("return_query");
-  const backRoute = ["overview", "overview/needs-attention", "overview/risk-distribution", "risk", "risk/security-review", "risk/findings", "risk/needs-attention", "shadow", "brand", "changes", "investigate"].includes(returnTo)
+  const backRoute = ["overview", "overview/needs-attention", "overview/risk-distribution", "risk", "risk/security-review", "risk/findings", "risk/needs-attention", "shadow", "brand", "brand/history", "changes", "investigate"].includes(returnTo)
     ? returnTo
     : "assets";
   const backLabels = {
@@ -347,6 +347,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
     "risk/needs-attention": "Needs Attention",
     shadow: "Shadow",
     brand: "Brand Exposure",
+    "brand/history": "Brand discovery history",
     changes: "Change Intelligence",
     investigate: "Investigate",
     assets: "Assets",

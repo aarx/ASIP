@@ -120,6 +120,21 @@ export const getV2BrandAssets = async (params) => {
   return res.data;
 };
 
+export const getBrandHistorySummary = async () => {
+  const res = await axios.get(`${API_URL}/v2/brand-discovery/history/summary`);
+  return res.data;
+};
+
+export const getBrandHistoryAssets = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/brand-discovery/history/assets`, { params });
+  return res.data;
+};
+
+export const getBrandHistoryDetail = async (domain) => {
+  const res = await axios.get(`${API_URL}/v2/brand-discovery/history/assets/${encodeURIComponent(domain)}`);
+  return res.data;
+};
+
 export const getDnsSecuritySummary = async () => {
   const res = await axios.get(`${API_URL}/v2/dns-security/summary`);
   return res.data;

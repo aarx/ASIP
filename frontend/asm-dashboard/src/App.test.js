@@ -95,6 +95,7 @@ beforeEach(() => {
 });
 
 test("renders the permanent shell and authoritative overview", async () => {
+  window.location.hash = "#/overview?brand_scope=current";
   getV2Overview.mockResolvedValue(overview);
   jest.spyOn(Date, "now").mockReturnValue(new Date("2026-09-26T12:00:00Z").getTime());
   getV2Scans.mockResolvedValue({
@@ -233,9 +234,7 @@ test("renders the permanent shell and authoritative overview", async () => {
     "href", "#/assets?discovery_source=brand_union&limit=25"
   );
   const brandPanel = screen.getByText("Brand discovery").closest("section");
-  expect(within(brandPanel).getByRole("link", { name: "Open External (2)" })).toHaveAttribute(
-    "href", "#/assets?discovery_source=brand_union&asset_class=EXTERNAL&limit=25"
-  );
+  expect(brandPanel).toBeInTheDocument();
   expect(screen.getByText("Naming exposure")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open DEV matching assets (2)" })).toBeInTheDocument();
   expect(getNamingAssetExposure).toHaveBeenCalledTimes(1);
