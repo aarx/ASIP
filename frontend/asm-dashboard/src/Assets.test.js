@@ -559,12 +559,12 @@ test("retained Asset Detail requests historical scope and returns to the same in
   getV2AssetDetail.mockResolvedValue({
     ...candidateDetail,
     domain: "historical-only.example.com",
-    scan_id: 17,
-    scan_time: "2026-11-03T13:00:10",
+    scan_id: 12,
+    scan_time: "2026-09-23T05:52:23",
     scope: "retained_history",
     current_scan_member: false,
     evidence_scan_status: "SUCCEEDED",
-    evidence_scan_time: "2026-11-03T13:00:10",
+    evidence_scan_time: "2026-09-23T05:52:23",
     risk: null,
     dns: { ip: null, has_ip: null, reverse_dns: null, observation_available: false },
     http: {
@@ -578,22 +578,107 @@ test("retained Asset Detail requests historical scope and returns to the same in
     technologies: [],
     technology_observations: [],
     certificate: null,
-    discovery: { sources: [] },
-    findings: [],
+    discovery: { sources: [{ source: "subfinder", seed: "example.com" }] },
+    findings: [{ finding: "retained_indicator", severity: "LOW", evidence: "scan 12 observation" }],
   });
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "historical-only.example.com" })).toBeInTheDocument();
   expect(getV2AssetDetail).toHaveBeenCalledWith("historical-only.example.com", { scope: "retained_history" });
   expect(screen.getByText("Retained identity")).toBeInTheDocument();
-  expect(screen.getByText("Historical-only")).toBeInTheDocument();
+  expect(screen.getByText("Not present in current scan")).toBeInTheDocument();
   expect(screen.getByText("Evidence scan status").parentElement).toHaveTextContent("SUCCEEDED");
+  expect(screen.getByText("Last retained observation · scan #12 · 2026-09-23T05:52:23")).toBeInTheDocument();
+  expect(screen.getAllByText(/Historical evidence from scan #12/).length).toBeGreaterThanOrEqual(1);
+  expect(screen.getByText("Historical findings from scan #12; not current findings")).toBeInTheDocument();
+  expect(screen.getByText("Provenance recorded in scan #12")).toBeInTheDocument();
+  expect(screen.queryByText("Current evidence")).not.toBeInTheDocument();
+  expect(screen.queryByText("How this asset entered the current scan")).not.toBeInTheDocument();
+  expect(screen.queryByText(/recorded for this asset in the current scan/i)).not.toBeInTheDocument();
   expect(screen.getByText("Risk score unavailable for this retained evidence scan.")).toBeInTheDocument();
   expect(screen.getAllByText("Evidence unavailable").length).toBeGreaterThanOrEqual(2);
   expect(screen.queryByText("Ownership Review")).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "← Back to Assets" })).toHaveAttribute(
     "href", "#/assets?scope=retained_history&search=legacy&page=2&limit=25&sort_by=risk_score&sort_dir=desc"
   );
+});
+
+test("retained identity evidence from the current authoritative scan is labeled current", async () => {
+  window.location.hash = "#/assets/current-member.example?scope=retained_history";
+  getV2AssetDetail.mockResolvedValue({
+    ...candidateDetail,
+    domain: "current-member.example",
+    scan_id: 19,
+    scan_time: "2026-11-11T05:56:53",
+    scope: "retained_history",
+    current_scan_member: true,
+    evidence_scan_status: "SUCCEEDED",
+    evidence_scan_time: "2026-11-11T05:56:53",
+  });
+  getV2AssetsSummary.mockResolvedValue({ scope: "current", scan_id: 19, count: 2133 });
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { name: "current-member.example" })).toBeInTheDocument();
+  expect(getV2AssetsSummary).toHaveBeenCalledWith({ scope: "current" });
+  expect(screen.getByText("Current scan evidence · scan #19 · 2026-11-11T05:56:53")).toBeInTheDocument();
+  expect(screen.getByText("Current scan membership").parentElement).toHaveTextContent("Present");
+  expect(screen.getByText("How this asset entered the current scan")).toBeInTheDocument();
+  expect(screen.queryByText("Historical evidence from scan #19")).not.toBeInTheDocument();
+});
+
+test("historical observations on a currently present identity remain tied to their evidence scan", async () => {
+  window.location.hash = "#/assets/known-current.example?scope=retained_history";
+  getV2AssetDetail.mockResolvedValue({
+    ...candidateDetail,
+    domain: "known-current.example",
+    asset_class: "KNOWN",
+    ownership_status: "CONFIRMED",
+    scan_id: 12,
+    scan_time: "2026-09-23T05:52:23",
+    scope: "retained_history",
+    current_scan_member: true,
+    evidence_scan_status: "SUCCEEDED",
+    evidence_scan_time: "2026-09-23T05:52:23",
+  });
+  getV2AssetsSummary.mockResolvedValue({ scope: "current", scan_id: 19, count: 2133 });
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { name: "known-current.example" })).toBeInTheDocument();
+  expect(screen.getByText("Current scan membership").parentElement).toHaveTextContent("Present");
+  expect(screen.getByText("Last retained observation · scan #12 · 2026-09-23T05:52:23")).toBeInTheDocument();
+  expect(screen.getAllByText(/Historical evidence from scan #12/).length).toBeGreaterThanOrEqual(1);
+  expect(screen.getByText("Historical findings from scan #12; not current findings")).toBeInTheDocument();
+  expect(screen.queryByText("Current-scan deterministic observations requiring investigation")).not.toBeInTheDocument();
+});
+
+test("missing historical membership and scan metadata stay unavailable without implying current evidence", async () => {
+  window.location.hash = "#/assets/partial-history.example?scope=retained_history";
+  getV2AssetDetail.mockResolvedValue({
+    ...candidateDetail,
+    domain: "partial-history.example",
+    scan_id: 12,
+    scan_time: null,
+    scope: "retained_history",
+    current_scan_member: null,
+    evidence_scan_status: null,
+    evidence_scan_time: null,
+    dns: { observation_available: false },
+    http: { observation_available: false, observation_status: "UNKNOWN" },
+    discovery: { sources: [] },
+    findings: [],
+  });
+  getV2AssetsSummary.mockRejectedValue(new Error("summary unavailable"));
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { name: "partial-history.example" })).toBeInTheDocument();
+  expect(screen.getByText("Retained evidence · scan #12 · —")).toBeInTheDocument();
+  expect(screen.getByText("Current scan membership").parentElement).toHaveTextContent("Unavailable");
+  expect(screen.getByText("Evidence scan status").parentElement).toHaveTextContent("—");
+  expect(screen.getByText("No provenance rows are available for this evidence scan.")).toBeInTheDocument();
+  expect(screen.getByText("No findings were recorded in retained evidence from scan #12.")).toBeInTheDocument();
+  expect(screen.getAllByText("Evidence unavailable").length).toBeGreaterThanOrEqual(2);
+  expect(screen.queryByText("Current evidence")).not.toBeInTheDocument();
+  expect(screen.queryByText(/not present in current scan/i)).not.toBeInTheDocument();
 });
 
 test("asset explorer sorts by risk score server-side, resets pagination, and preserves filters", async () => {
@@ -648,6 +733,9 @@ test("asset detail renders exact evidence and no risk for a Candidate", async ()
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "candidate.example" })).toBeInTheDocument();
+  expect(screen.getByText(/Current scan evidence · scan #42/)).toBeInTheDocument();
+  expect(screen.getByText("How this asset entered the current scan")).toBeInTheDocument();
+  expect(screen.getByText("Current-scan deterministic observations requiring investigation")).toBeInTheDocument();
   expect(screen.getByText("No organizational canonical risk applies to Needs Verification assets.")).toBeInTheDocument();
   expect(screen.getByText("edge.vendor.example")).toBeInTheDocument();
   expect(screen.getAllByText("https://vendor.example/login")).toHaveLength(2);

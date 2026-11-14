@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Button } from "@mui/material";
-import { getV2AssetDetail, updateV2AssetOwnership } from "../services/api";
+import { getV2AssetDetail, getV2AssetsSummary, updateV2AssetOwnership } from "../services/api";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { ErrorState, LoadingState } from "../components/ui/AsyncState";
@@ -196,12 +196,12 @@ function TechnologyDetails({ observation }) {
   );
 }
 
-function TechnologyIntelligence({ technologies, observations }) {
+function TechnologyIntelligence({ technologies, observations, subtitle }) {
   const rows = technologyRows(technologies, observations);
   const hasPartialCoverage = rows.some(({ observation }) => observation?.cve_intelligence?.coverage === "partial");
 
   return (
-    <Panel title="Technology Intelligence" subtitle="Reported current-scan technology and advisory context; not verification" className="detail-panel detail-panel-wide">
+    <Panel title="Technology Intelligence" subtitle={subtitle} className="detail-panel detail-panel-wide">
       {hasPartialCoverage && (
         <div className="technology-coverage-note" role="note">
           Local CVE advisory coverage is partial. No local candidate does not mean no vulnerabilities exist.
@@ -312,18 +312,24 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
   const [requestVersion, setRequestVersion] = useState(0);
+  const [currentScanId, setCurrentScanId] = useState(null);
 
   useEffect(() => {
     let active = true;
     setStatus("loading");
+    setCurrentScanId(null);
     const request = fixtureMode
       ? Promise.resolve(brandAcceptanceDetail(domain))
       : historicalScope
         ? getV2AssetDetail(domain, { scope: "retained_history" })
         : getV2AssetDetail(domain);
-    request
-      .then((result) => {
+    const summaryRequest = historicalScope
+      ? getV2AssetsSummary({ scope: "current" }).catch(() => null)
+      : Promise.resolve(null);
+    Promise.all([request, summaryRequest])
+      .then(([result, summary]) => {
         if (!active) return;
+        setCurrentScanId(summary?.scope === "current" ? summary.scan_id : null);
         if (result?.error) {
           setData(result);
           setStatus("not-found");
@@ -382,6 +388,28 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   }
 
   const risk = data.risk;
+  const retainedIdentity = data.scope === "retained_history";
+  const scanIdMatchesCurrent = currentScanId !== null && currentScanId !== undefined
+    && Number.isFinite(Number(data.scan_id))
+    && Number(data.scan_id) === Number(currentScanId);
+  const evidencePeriod = !historicalScope && !retainedIdentity
+    ? "current"
+    : !retainedIdentity
+      ? "retained"
+      : scanIdMatchesCurrent
+        ? "current"
+        : (data.current_scan_member === false || currentScanId !== null ? "historical" : "retained");
+  const evidenceScanLabel = evidencePeriod === "current"
+    ? `Current scan evidence · scan #${data.scan_id} · ${displayEvidence(data.evidence_scan_time || data.scan_time)}`
+    : evidencePeriod === "historical"
+      ? `Last retained observation · scan #${data.scan_id} · ${displayEvidence(data.evidence_scan_time || data.scan_time)}`
+      : `Retained evidence · scan #${data.scan_id} · ${displayEvidence(data.evidence_scan_time || data.scan_time)}`;
+  const evidenceSubtitle = evidencePeriod === "current"
+    ? "Current scan evidence"
+    : evidencePeriod === "historical"
+      ? `Historical evidence from scan #${data.scan_id}`
+      : `Retained evidence from scan #${data.scan_id}`;
+  const evidenceIsHistorical = evidencePeriod !== "current";
   const redirectEvidence = data.http?.redirect_evidence || {};
   const redirect = redirectBoundary(data.domain, redirectEvidence);
   const classificationContext = data.asset_class === "SHADOW"
@@ -393,27 +421,27 @@ export default function AssetDetailPage({ domain, returnQuery }) {
     <div className="asset-detail">
       <div className="detail-toolbar">
         <Button component="a" href={backHref} variant="text">← Back to {backLabel}</Button>
-        <div><span>{historicalScope ? `Evidence from scan #${data.scan_id} · ${displayEvidence(data.evidence_scan_time || data.scan_time)}` : `Authoritative scan #${data.scan_id}`}</span>{!historicalScope && <Button component="a" href={investigationHref} variant="outlined" size="small">Investigate asset</Button>}</div>
+        <div><span>{evidenceScanLabel}</span>{!retainedIdentity && <Button component="a" href={investigationHref} variant="outlined" size="small">Investigate asset</Button>}</div>
       </div>
 
       <section className="asset-identity-card">
         <div className="identity-heading">
           <div>
-            <span className="identity-kicker">{historicalScope ? "Retained identity" : "Current asset"}</span>
+            <span className="identity-kicker">{retainedIdentity ? "Retained identity" : "Current asset"}</span>
             <h2>{data.domain}</h2>
           </div>
           <div className="identity-badges">
-            <div className="identity-badge-field"><span>{historicalScope ? "Effective class" : "Current class"}</span><StatusBadge value={displayAssetClass(data.asset_class)} /></div>
+            <div className="identity-badge-field"><span>{retainedIdentity ? "Effective class" : "Current class"}</span><StatusBadge value={displayAssetClass(data.asset_class)} /></div>
             <div className="identity-badge-field"><span>Stored ownership</span><StatusBadge value={data.ownership_status} /></div>
-            {classificationContext && <a className="context-link" href={classificationContext.href}>{classificationContext.label}</a>}
+            {classificationContext && (!retainedIdentity || data.current_scan_member === true) && <a className="context-link" href={classificationContext.href}>{classificationContext.label}</a>}
           </div>
         </div>
         <div className="identity-meta">
           <span>First seen <strong>scan #{data.first_seen_scan} · {displayEvidence(data.first_seen_at)}</strong></span>
           <span>Last seen <strong>scan #{data.last_seen_scan} · {displayEvidence(data.last_seen_at)}</strong></span>
           <span>Seed <strong>{displayEvidence(data.seed)}</strong></span>
-          {historicalScope && <span>Current scan membership <strong>{data.current_scan_member === true ? "Member" : data.current_scan_member === false ? "Historical-only" : "Unavailable"}</strong></span>}
-          {historicalScope && <span>Evidence scan status <strong>{displayEvidence(data.evidence_scan_status)}</strong></span>}
+            {retainedIdentity && <span>Current scan membership <strong>{data.current_scan_member === true ? "Present" : data.current_scan_member === false ? "Not present in current scan" : "Unavailable"}</strong></span>}
+            {retainedIdentity && <span>Evidence scan status <strong>{displayEvidence(data.evidence_scan_status)}</strong></span>}
         </div>
         <div className="risk-posture">
           {risk ? (
@@ -424,7 +452,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
                 {(risk.reasons || []).map((reason) => <span className="reason-token" key={reason}>{reason.replaceAll("_", " ")}</span>)}
               </div>
             </>
-          ) : historicalScope ? (
+          ) : retainedIdentity ? (
             <div className="non-org-risk-note">Risk score unavailable for this retained evidence scan.</div>
           ) : (
             <div className="non-org-risk-note">No organizational canonical risk applies to {displayAssetClass(data.asset_class)} assets.</div>
@@ -432,7 +460,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
         </div>
       </section>
 
-      {!historicalScope && <OwnershipReview
+      {!retainedIdentity && <OwnershipReview
         asset={data}
         fixtureMode={fixtureMode}
         onChanged={() => {
@@ -441,10 +469,10 @@ export default function AssetDetailPage({ domain, returnQuery }) {
       />}
 
       <div className="detail-grid">
-        <Panel title="Network" subtitle={historicalScope ? "DNS and infrastructure evidence from the retained scan" : "Current DNS and infrastructure evidence"} className="detail-panel">
+        <Panel title="Network" subtitle={evidenceIsHistorical ? `DNS and infrastructure evidence · scan #${data.scan_id}` : "Current DNS and infrastructure evidence"} className="detail-panel">
           <div className="evidence-grid">
-            <EvidenceRow label="IP address" value={historicalScope && data.dns?.observation_available !== true ? "Evidence unavailable" : data.dns?.ip} mono />
-            <EvidenceRow label="Reverse DNS" value={historicalScope && data.dns?.observation_available !== true ? "Evidence unavailable" : data.dns?.reverse_dns} mono />
+            <EvidenceRow label="IP address" value={retainedIdentity && data.dns?.observation_available !== true ? "Evidence unavailable" : data.dns?.ip} mono />
+            <EvidenceRow label="Reverse DNS" value={retainedIdentity && data.dns?.observation_available !== true ? "Evidence unavailable" : data.dns?.reverse_dns} mono />
             <EvidenceRow label="Provider" value={data.provider} />
             <EvidenceRow label="ASN" value={data.asn?.asn} mono />
             <EvidenceRow label="Organization" value={data.asn?.organization} wide />
@@ -458,15 +486,15 @@ export default function AssetDetailPage({ domain, returnQuery }) {
                 </div>
               ))}
             </div>
-          ) : <DetailEmpty compact>{historicalScope ? "No port evidence recorded for this retained scan." : "No positive port evidence for this scan."}</DetailEmpty>}
+          ) : <DetailEmpty compact>{retainedIdentity ? `No port evidence recorded for scan #${data.scan_id}.` : "No positive port evidence for this scan."}</DetailEmpty>}
         </Panel>
 
-        <Panel title="HTTP" subtitle={historicalScope ? "HTTP evidence from the retained scan" : "Observed response state and destination"} className="detail-panel">
+        <Panel title="HTTP" subtitle={evidenceIsHistorical ? `HTTP evidence · scan #${data.scan_id}` : "Observed response state and destination"} className="detail-panel">
           <div className="evidence-grid">
-            {historicalScope && data.http?.observation_available !== true
+            {retainedIdentity && data.http?.observation_available !== true
               ? <EvidenceRow label="Observation" value="Evidence unavailable" />
               : <div className="evidence-row"><span className="evidence-label">Observation</span><span className="evidence-value"><StatusBadge value={data.http?.observation_status} /></span></div>}
-            <EvidenceRow label="HTTP status" value={historicalScope && data.http?.observation_available !== true ? "Evidence unavailable" : displayHttpStatus(data.http?.observation_status, data.http?.status)} mono />
+            <EvidenceRow label="HTTP status" value={retainedIdentity && data.http?.observation_available !== true ? "Evidence unavailable" : displayHttpStatus(data.http?.observation_status, data.http?.status)} mono />
             <EvidenceRow label="Reason" value={data.http?.reason} />
             {redirectEvidence.completion_status === "COMPLETE" && isObservedHttpStatus(data.http?.final_status) && (
               <EvidenceRow label="Verified final status" value={data.http?.final_status} mono />
@@ -498,9 +526,10 @@ export default function AssetDetailPage({ domain, returnQuery }) {
         <TechnologyIntelligence
           technologies={data.technologies}
           observations={data.technology_observations}
+          subtitle={`${evidenceSubtitle}; not verification`}
         />
 
-        <Panel title="Certificate" subtitle="Observed certificate metadata" className="detail-panel">
+        <Panel title="Certificate" subtitle={`${evidenceSubtitle} · certificate metadata`} className="detail-panel">
           {data.certificate ? (
             <div className="evidence-grid">
               <EvidenceRow label="Status" value={data.certificate.status} />
@@ -510,7 +539,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
           ) : <DetailEmpty>No certificate evidence available.</DetailEmpty>}
         </Panel>
 
-        <Panel title="Discovery & provenance" subtitle="How this asset entered the current scan" className="detail-panel detail-panel-wide">
+        <Panel title="Discovery & provenance" subtitle={evidenceIsHistorical ? `Provenance recorded in scan #${data.scan_id}` : "How this asset entered the current scan"} className="detail-panel detail-panel-wide">
           {data.discovery?.sources?.length ? (
             <div className="provenance-table">
               <div className="provenance-head"><span>Source</span><span>Associated seed</span></div>
@@ -521,10 +550,10 @@ export default function AssetDetailPage({ domain, returnQuery }) {
                 </div>
               ))}
             </div>
-          ) : <DetailEmpty>No current-scan provenance rows are available.</DetailEmpty>}
+          ) : <DetailEmpty>No provenance rows are available for this evidence scan.</DetailEmpty>}
         </Panel>
 
-        <Panel title="Findings" subtitle="Deterministic observations requiring investigation" className="detail-panel detail-panel-wide">
+        <Panel title="Findings" subtitle={evidenceIsHistorical ? `Historical findings from scan #${data.scan_id}; not current findings` : "Current-scan deterministic observations requiring investigation"} className="detail-panel detail-panel-wide">
           {data.findings?.length ? (
             <div className="finding-list">
               {data.findings.map((finding, index) => (
@@ -534,7 +563,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
                 </div>
               ))}
             </div>
-          ) : <DetailEmpty>No findings were recorded for this asset in the current scan.</DetailEmpty>}
+          ) : <DetailEmpty>{evidenceIsHistorical ? `No findings were recorded in retained evidence from scan #${data.scan_id}.` : "No findings were recorded for this asset in the current scan."}</DetailEmpty>}
         </Panel>
       </div>
     </div>

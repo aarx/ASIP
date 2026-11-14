@@ -151,7 +151,7 @@ function App() {
   const { route, domain, query } = location;
   const [title, eyebrow, description] = ROUTES[route];
   const routeMeta = domain
-    ? { title: route === "brand-history" ? "Historical brand asset" : "Asset detail", eyebrow: route === "brand-history" ? "Retained evidence" : "Current evidence", description: domain }
+    ? { title: route === "brand-history" ? "Historical brand asset" : "Asset detail", eyebrow: route === "brand-history" ? "Retained evidence" : "Asset detail", description: domain }
     : { title, eyebrow, description };
 
   let page = null;
