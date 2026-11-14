@@ -110,7 +110,7 @@ class AssessmentCoverageTests(unittest.TestCase):
         query = cursor.executions[2][0]
         self.assertIn("MAX(sp.risk) DESC NULLS LAST", query)
         self.assertIn("COUNT(DISTINCT dp.port) DESC", query)
-        self.assertIn("LOWER(TRIM(TRAILING '.' FROM d.domain)) ASC", query)
+        self.assertIn('LOWER(TRIM(TRAILING \'.\' FROM d.domain)) COLLATE "C" ASC', query)
         self.assertLess(query.index("GROUP BY"), query.index("ORDER BY"))
         self.assertLess(query.index("ORDER BY"), query.index("LIMIT %s OFFSET %s"))
 
@@ -133,7 +133,7 @@ class AssessmentCoverageTests(unittest.TestCase):
         order = query.index("ORDER BY")
         sensitivity = query.index("MAX(sp.risk) DESC NULLS LAST", order)
         port_count = query.index("COUNT(DISTINCT dp.port) DESC", order)
-        hostname = query.index("LOWER(TRIM(TRAILING '.' FROM d.domain)) ASC", order)
+        hostname = query.index('LOWER(TRIM(TRAILING \'.\' FROM d.domain)) COLLATE "C" ASC', order)
         stable_id = query.index("d.id ASC", order)
         page_limit = query.index("LIMIT %s OFFSET %s", order)
         self.assertLess(sensitivity, port_count)

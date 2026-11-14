@@ -2330,7 +2330,7 @@ def sensitive_port_assessment_hosts(
              GROUP BY d.id, d.domain, ({classification})
              ORDER BY MAX(sp.risk) DESC NULLS LAST,
                       COUNT(DISTINCT dp.port) DESC,
-                      LOWER(TRIM(TRAILING '.' FROM d.domain)) ASC,
+                      LOWER(TRIM(TRAILING '.' FROM d.domain)) COLLATE "C" ASC,
                       d.id ASC
              LIMIT %s OFFSET %s
         """, tuple(params + [bounded_limit, offset]))
