@@ -66,6 +66,30 @@ function locationFromHash() {
     window.history.replaceState(null, "", `#/risk/security-review${nextQuery ? `?${nextQuery}` : ""}`);
     return { route: "risk-security-review", domain: null, query: nextQuery };
   }
+  if (segments[0] === "risk" && !segments[1]) {
+    const params = new URLSearchParams(query);
+    const legacySection = params.get("section") || params.get("view");
+    const targetTab = legacySection === "sensitive-ports" ? "sensitive-ports"
+      : legacySection === "review-indicators" ? "evidence-signals" : null;
+    if (targetTab) {
+      params.delete("section");
+      params.delete("view");
+      params.set("tab", targetTab);
+      if (legacySection === "review-indicators") {
+        params.set("signals", "review-indicators");
+      }
+      const nextQuery = params.toString();
+      window.history.replaceState(null, "", `#/risk/security-review${nextQuery ? `?${nextQuery}` : ""}`);
+      return { route: "risk-security-review", domain: null, query: nextQuery };
+    }
+    if (legacySection === "dns-security") {
+      params.delete("section");
+      params.delete("view");
+      const nextQuery = params.toString();
+      window.history.replaceState(null, "", `#/risk/dns-security${nextQuery ? `?${nextQuery}` : ""}`);
+      return { route: "risk-dns-security", domain: null, query: nextQuery };
+    }
+  }
   if (segments[0] === "risk" && segments[1] === "findings") {
     const params = new URLSearchParams(query);
     params.set("tab", "evidence-signals");

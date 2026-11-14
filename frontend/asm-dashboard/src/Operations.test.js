@@ -7,6 +7,9 @@ import {
   getHttpStatus,
   getRiskHistoryAssets,
   getRiskHistorySummary,
+  getSecurityFindings,
+  getSecurityFindingsSummary,
+  getDnsSecurityHosts,
   getSensitiveExposure,
   getV2Assets,
   getV2Overview,
@@ -26,6 +29,9 @@ jest.mock("./services/api", () => ({
   exportV2ScanReport: jest.fn(),
   getV2BrandAssets: jest.fn(),
   getV2ReviewIndicators: jest.fn(),
+  getSecurityFindings: jest.fn(),
+  getSecurityFindingsSummary: jest.fn(),
+  getDnsSecurityHosts: jest.fn(),
   getHttpStatus: jest.fn(),
   getV2AssetAssistant: jest.fn(),
   getInvestigationAssets: jest.fn(),
@@ -63,6 +69,9 @@ beforeEach(() => {
     getHttpStatus,
     getRiskHistoryAssets,
     getRiskHistorySummary,
+    getSecurityFindings,
+    getSecurityFindingsSummary,
+    getDnsSecurityHosts,
     getSensitiveExposure,
     getV2Assets,
     getV2Overview,
@@ -73,10 +82,8 @@ beforeEach(() => {
   ].forEach((mockFunction) => mockFunction.mockReset());
 });
 
-test("risk workspace presents exact metrics and separate review evidence", async () => {
-  window.location.hash = "#/risk?section=review-indicators";
-  const scrollIntoView = jest.fn();
-  Element.prototype.scrollIntoView = scrollIntoView;
+test("Risk Overview keeps its metrics, HTTP drilldowns, and chart above Historical High Risk", async () => {
+  window.location.hash = "#/risk";
   getV2Overview.mockResolvedValue(overview);
   getV2Assets.mockResolvedValue({
     scan_id: 42,
@@ -142,61 +149,36 @@ test("risk workspace presents exact metrics and separate review evidence", async
 
   expect(screen.getByRole("heading", { name: "Risk Overview" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Risk Overview" })).toHaveAttribute("href", "#/risk");
-  expect((await screen.findAllByText("critical.example.com"))[0]).toBeInTheDocument();
-  const primaryKpis = screen.getByRole("region", { name: "Risk and exposure metrics" });
+  const primaryKpis = await screen.findByRole("region", { name: "Risk and exposure metrics" });
   expect([...primaryKpis.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
-    "Current High Risk", "Assets with risk scores", "HTTP responding", "Previously High Risk",
+    "Current High Risk", "Assets with risk scores", "HTTP responding", "Historical High Risk",
   ]);
   const actionableKpis = screen.getByRole("region", { name: "Actionable evidence" });
   expect([...actionableKpis.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
     "Findings", "Observed sensitive-port exposures", "Review Indicators",
   ]);
   expect(screen.queryByText("Discovery Sources")).not.toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: "Risk distribution" })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Risk distribution" })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Assets with IP addresses/ })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /HTTP responding/ })).toHaveAttribute("href", "#/assets?http_live=true");
-  expect(screen.queryByRole("link", { name: "High 1" })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "High 1" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "2xx 4" })).toHaveAttribute("href", "#/assets?http_status_group=2xx");
   expect(screen.getByRole("link", { name: "3xx 2" })).toHaveAttribute("href", "#/assets?http_status_group=3xx");
   expect(screen.getByRole("link", { name: "4xx 1" })).toHaveAttribute("href", "#/assets?http_status_group=4xx");
   expect(screen.getByRole("link", { name: "5xx 0" })).toHaveAttribute("href", "#/assets?http_status_group=5xx");
-  expect(screen.getByRole("heading", { name: "Supporting evidence" })).toBeInTheDocument();
-  expect(screen.queryByText("Secondary evidence")).not.toBeInTheDocument();
-  expect(screen.queryByText("Review observations separately from ranked risk.")).not.toBeInTheDocument();
-  expect(screen.getAllByText("Review Indicators")).toHaveLength(2);
-  const needsReviewTab = screen.getByRole("tab", { name: "Needs review" });
-  expect(needsReviewTab).toHaveAttribute("aria-selected", "true");
-  expect(needsReviewTab).toHaveAttribute("aria-controls", "review-indicators");
-  expect(document.getElementById("review-indicators")).toHaveAttribute("aria-labelledby", "review-indicators-tab");
-  expect(screen.getByText("https://external.example/login")).toBeInTheDocument();
-  expect(screen.getByText("No current asset match")).toBeInTheDocument();
-  expect(screen.getByText("Current scan asset match")).toBeInTheDocument();
-  expect(screen.getAllByText("Review only · not a vulnerability conclusion")).toHaveLength(2);
-  expect(screen.getByText("Redirect does not establish ownership or authorization")).toBeInTheDocument();
   const actionable = screen.getByRole("region", { name: "Actionable evidence" });
   expect(actionable.querySelector('a[href="#/risk/security-review?tab=evidence-signals"]')).toBeInTheDocument();
-  expect(actionable.querySelector('a[href="#/risk?section=sensitive-ports"]')).toBeInTheDocument();
-  expect(actionable.querySelector('a[href="#/risk?section=review-indicators"]')).toBeInTheDocument();
-  expect(document.getElementById("review-indicators")).toBeInTheDocument();
-  expect(screen.queryByRole("tab", { name: "Findings" })).not.toBeInTheDocument();
-  const sensitivePortsTab = screen.getByRole("tab", { name: "Sensitive ports" });
-  fireEvent.keyDown(needsReviewTab, { key: "ArrowRight" });
-  expect(sensitivePortsTab).toHaveAttribute("aria-selected", "true");
-  expect(document.getElementById("sensitive-ports")).toBeInTheDocument();
-  expect(screen.getByText("SSH administration")).toBeInTheDocument();
-  expect(screen.getByText("Sensitivity 4")).toBeInTheDocument();
-  fireEvent.keyDown(sensitivePortsTab, { key: "Home" });
-  expect(needsReviewTab).toHaveAttribute("aria-selected", "true");
-  expect(screen.getByText("https://external.example/login")).toBeInTheDocument();
-  expect(scrollIntoView).toHaveBeenCalled();
-  const criticalAssetLinks = screen.getAllByRole("link", { name: "Open critical.example.com" });
-  expect(criticalAssetLinks.some((link) => link.getAttribute("href") === "#/assets/critical.example.com?return=risk")).toBe(true);
-  expect(screen.getByRole("link", { name: /Open Prioritized Assets/ })).toHaveAttribute(
-    "href", "#/risk/security-review?tab=prioritized-assets"
-  );
+  expect(actionable.querySelector('a[href="#/risk/security-review?tab=sensitive-ports"]')).toBeInTheDocument();
+  expect(actionable.querySelector('a[href="#/risk/security-review?tab=evidence-signals&signals=review-indicators"]')).toBeInTheDocument();
+  const riskHeadings = [...document.querySelectorAll(".panel-title")].map((node) => node.textContent);
+  expect(riskHeadings.indexOf("Risk distribution")).toBeLessThan(riskHeadings.indexOf("Historical High Risk"));
+  expect(screen.queryByRole("tab", { name: "Needs review" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: "DNS assessments" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: "Sensitive ports" })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open Prioritized Assets in Security Review →" })).toHaveAttribute("href", "#/risk/security-review?tab=prioritized-assets");
 });
 
-test("Risk Overview exposes DNS coverage without treating partial evidence as a vulnerability verdict", async () => {
+test("legacy DNS assessment section redirects to the existing DNS Security page", async () => {
   window.location.hash = "#/risk?view=dns-security";
   getV2Overview.mockResolvedValue(overview);
   getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
@@ -215,15 +197,16 @@ test("Risk Overview exposes DNS coverage without treating partial evidence as a 
     unchecked_assets: 6,
     affected_assets: 2,
   });
+  getDnsSecurityHosts.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, total: 0, hosts: [] });
 
   render(<App />);
 
-  expect(await screen.findByRole("tab", { name: "DNS assessments" })).toHaveAttribute("aria-selected", "true");
-  expect(screen.getByText("Partial coverage")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "DNS assessment summary" })).toBeInTheDocument();
+  expect(screen.getByText("Partial assessment coverage")).toBeInTheDocument();
   expect(screen.getByText("4 of 10 eligible assets assessed.")).toBeInTheDocument();
   expect(screen.queryByText("HISTORICAL SCAN #42")).not.toBeInTheDocument();
-  expect(screen.getByText("SCAN #42")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open DNS Security details →" })).toHaveAttribute("href", "#/risk/dns-security");
+  expect(screen.getAllByText("SCAN #42").length).toBeGreaterThan(0);
+  expect(window.location.hash).toBe("#/risk/dns-security");
   expect(screen.queryByText(/confirmed vulnerability/i)).not.toBeInTheDocument();
   expect(getDnsSecuritySummary).toHaveBeenCalledTimes(1);
 });
@@ -243,51 +226,35 @@ test("Risk Overview restores Risk Distribution in its own context", async () => 
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "Risk distribution" })).toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Risk distribution" })).toHaveAttribute("aria-selected", "true");
+  expect(document.getElementById("risk-distribution")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /High 1/ })).toHaveAttribute("href", "#/assets?priority=High&limit=25");
   expect(screen.getByRole("link", { name: /Low 4/ })).toHaveAttribute("href", "#/assets?priority=Low&limit=25");
 });
 
-test("reports capped sensitive-port observations without presenting an exact total", async () => {
-  window.location.hash = "#/risk?view=sensitive-ports";
-  getV2Overview.mockResolvedValue(overview);
-  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
-  getFindings.mockResolvedValue([]);
+test("Security Review exposes the existing capped sensitive-port observations", async () => {
+  window.location.hash = "#/risk/security-review?tab=sensitive-ports";
   getSensitiveExposure.mockResolvedValue(Array.from({ length: 20 }, (_, index) => ({
     domain: `port-${index}.example.com`, port: 20 + index, risk: 3, service: "Observed service",
   })));
-  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 8, http_responding_domains: 6 });
-  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
-  getHttpStatus.mockResolvedValue(null);
-  getDnsSecuritySummary.mockResolvedValue(null);
-
   render(<App />);
 
   expect(await screen.findByText("20+ OBSERVED")).toBeInTheDocument();
-  expect(screen.getByText("Observed rows · result list capped at 20")).toBeInTheDocument();
-  expect(screen.getByText("20+")).toBeInTheDocument();
+  expect(screen.getByText("Result list capped at 20 rows.")).toBeInTheDocument();
   expect(screen.queryByText("20 ROWS")).not.toBeInTheDocument();
 });
 
 test("does not describe an empty sensitive-port result as a clean assessment", async () => {
-  window.location.hash = "#/risk?view=sensitive-ports";
-  getV2Overview.mockResolvedValue(overview);
-  getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
-  getFindings.mockResolvedValue([]);
+  window.location.hash = "#/risk/security-review?tab=sensitive-ports";
   getSensitiveExposure.mockResolvedValue([]);
-  getExposureSummary.mockResolvedValue({ scan_id: 42, resolving_domains: 8, http_responding_domains: 6 });
-  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
-  getHttpStatus.mockResolvedValue(null);
-  getDnsSecuritySummary.mockResolvedValue(null);
 
   render(<App />);
 
   expect(await screen.findByText("No port observations recorded for this scan.")).toBeInTheDocument();
-  expect(screen.getByText("Assessment coverage unavailable")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Sensitive Ports" })).toHaveAttribute("aria-selected", "true");
   expect(screen.queryByText(/clean assessment/i)).not.toBeInTheDocument();
 });
 
-test("Risk Overview labels DNS evidence from a non-authoritative scan as historical", async () => {
+test("DNS Security remains reachable from the Risk Overview legacy section URL", async () => {
   window.location.hash = "#/risk?view=dns-security";
   getV2Overview.mockResolvedValue(overview);
   getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
@@ -306,11 +273,13 @@ test("Risk Overview labels DNS evidence from a non-authoritative scan as histori
     unchecked_assets: 3,
     affected_assets: 0,
   });
+  getDnsSecurityHosts.mockResolvedValue({ scan_id: 41, page: 1, limit: 25, total: 0, hosts: [] });
 
   render(<App />);
 
-  expect(await screen.findByText("HISTORICAL SCAN #41")).toBeInTheDocument();
-  expect(screen.getAllByText("Not Assessed").length).toBeGreaterThan(0);
+  expect(await screen.findByRole("heading", { name: "DNS assessment summary" })).toBeInTheDocument();
+  expect(screen.getAllByText("SCAN #41").length).toBeGreaterThan(0);
+  expect(window.location.hash).toBe("#/risk/dns-security");
 });
 
 test("Security Review prioritizes the exact positive-risk count and paginates the ranked queue", async () => {
@@ -378,7 +347,7 @@ test("Risk Overview keeps current High Risk separate from paginated historical H
   render(<App />);
 
   expect(await screen.findByRole("link", { name: /Current High Risk/ })).toHaveTextContent("1");
-  const historicalMetric = screen.getByRole("link", { name: /Previously High Risk/ });
+  const historicalMetric = screen.getByRole("link", { name: /Historical High Risk/ });
   expect(historicalMetric).toHaveTextContent("19");
   expect(historicalMetric).toHaveAttribute("href", "#/risk?section=historical-high-risk");
   expect(await screen.findByText("historical.example.com")).toBeInTheDocument();
@@ -423,6 +392,41 @@ test("Security Review priority asset page survives detail navigation and restore
     "href",
     "#/assets/page-three.example.com?return=risk%2Fsecurity-review&return_query=tab%3Dprioritized-assets%26priority_page%3D3"
   );
+});
+
+test("Security Review keeps Sensitive Ports as a separate tab with asset return context", async () => {
+  window.location.hash = "#/risk/security-review?tab=sensitive-ports";
+  getSensitiveExposure.mockResolvedValue([{ domain: "observed.example.com", port: 22, risk: 4, service: "SSH" }]);
+
+  render(<App />);
+
+  expect(await screen.findByRole("tab", { name: "Sensitive Ports" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tab", { name: "Prioritized Assets" })).toHaveAttribute("aria-selected", "false");
+  expect(screen.getByRole("tab", { name: "Evidence & Signals" })).toHaveAttribute("aria-selected", "false");
+  expect(screen.getByText("SSH")).toBeInTheDocument();
+  expect(screen.getByText("observed.example.com")).toHaveAttribute(
+    "href", "#/assets/observed.example.com?return=risk%2Fsecurity-review&return_query=tab%3Dsensitive-ports"
+  );
+  expect(getSensitiveExposure).toHaveBeenCalledTimes(1);
+  expect(getV2Overview).not.toHaveBeenCalled();
+});
+
+test("legacy Sensitive Ports and Needs Review links redirect to their Security Review views", async () => {
+  window.location.hash = "#/risk?section=sensitive-ports";
+  getSensitiveExposure.mockResolvedValue([]);
+  const first = render(<App />);
+  expect(await screen.findByRole("tab", { name: "Sensitive Ports" })).toHaveAttribute("aria-selected", "true");
+  expect(window.location.hash).toBe("#/risk/security-review?tab=sensitive-ports");
+  first.unmount();
+
+  window.location.hash = "#/risk?view=review-indicators";
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 1, indicators: [{ type: "CROSS_HOST_HTTP_REDIRECT", domain: "candidate-redirect.example.com", asset_class: "CANDIDATE", ownership_status: "CANDIDATE", http_observation_status: "RESPONDED", http_status: 302, final_url: "https://outside.example/", final_url_verification: "LEGACY_UNKNOWN", final_hostname: "outside.example", destination_confirmed: false }] });
+  render(<App />);
+  expect(await screen.findByRole("tab", { name: "Evidence & Signals" })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByText("candidate-redirect.example.com")).toBeInTheDocument();
+  expect(window.location.hash).toContain("tab=evidence-signals");
+  expect(window.location.hash).toContain("signals=review-indicators");
+  expect(getSecurityFindings).not.toHaveBeenCalled();
 });
 
 test("historical High pagination preserves the exact total and page context", async () => {
@@ -485,67 +489,36 @@ test("historical High Risk shows unavailable instead of zero when no successful 
   render(<App />);
 
   expect(await screen.findByText("Historical High Risk unavailable")).toBeInTheDocument();
-  expect(screen.queryByRole("link", { name: /Previously High Risk/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /Historical High Risk/ })).not.toBeInTheDocument();
   expect(getRiskHistoryAssets).not.toHaveBeenCalled();
 });
 
-test("review indicators have truthful empty and isolated failure states", async () => {
-  const baseContracts = () => {
-    getV2Overview.mockResolvedValue(overview);
-    getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
-    getFindings.mockResolvedValue([]);
-    getSensitiveExposure.mockResolvedValue([]);
-    getExposureSummary.mockResolvedValue({
-      scan_id: 42, total_domains: 10, resolving_domains: 8, http_responding_domains: 6,
-    });
-    getHttpStatus.mockResolvedValue({ "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 });
-  };
-
+test("Risk Overview links review indicators to their exact Security Review view", async () => {
   window.location.hash = "#/risk";
-  baseContracts();
-  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 0, indicators: [] });
-  const empty = render(<App />);
-  expect(await screen.findByText("No cross-host HTTP redirects were observed in the current authoritative scan.")).toBeInTheDocument();
-  empty.unmount();
-
-  baseContracts();
-  getV2ReviewIndicators.mockRejectedValue(new Error("offline"));
-  render(<App />);
-  expect(await screen.findByRole("alert")).toHaveTextContent("Redirect review evidence could not be loaded");
-  expect(screen.queryByRole("heading", { name: "Risk distribution" })).not.toBeInTheDocument();
-});
-
-test("review indicators label historical and incomplete redirect evidence without implying a verified chain", async () => {
-  window.location.hash = "#/risk?view=review-indicators";
   getV2Overview.mockResolvedValue(overview);
   getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
   getFindings.mockResolvedValue([]);
   getSensitiveExposure.mockResolvedValue([]);
   getExposureSummary.mockResolvedValue({ resolving_domains: 8, http_responding_domains: 6 });
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 1, indicators: [] });
   getHttpStatus.mockResolvedValue(null);
-  getV2ReviewIndicators.mockResolvedValue({
-    scan_id: 42,
-    count: 1,
-    indicators: [{
-      type: "CROSS_HOST_HTTP_REDIRECT",
-      domain: "historical.example.com",
-      asset_class: "KNOWN",
-      http_observation_status: "RESPONDED",
-      http_status: 302,
-      final_url: "https://old.example.com/login",
-      final_status: 302,
-      final_url_verification: "LEGACY_UNKNOWN",
-      final_hostname: null,
-      destination_confirmed: false,
-    }],
-  });
+  getRiskHistorySummary.mockResolvedValue({ availability_state: "UNAVAILABLE" });
 
   render(<App />);
 
-  expect(await screen.findByText("Historical redirect URL — verification unavailable")).toBeInTheDocument();
-  expect(screen.getByText("Initial 302 · Terminal response unavailable")).toBeInTheDocument();
-  expect(screen.queryByText("302 → 302")).not.toBeInTheDocument();
-  expect(screen.getByText("Hostname unavailable")).toBeInTheDocument();
+  const reviewLink = await screen.findByRole("link", { name: /Review Indicators/ });
+  expect(reviewLink).toHaveAttribute("href", "#/risk/security-review?tab=evidence-signals&signals=review-indicators");
+});
+
+test("legacy Review Indicators link opens the matching redirect evidence results", async () => {
+  window.location.hash = "#/risk?view=review-indicators";
+  getV2ReviewIndicators.mockResolvedValue({ scan_id: 42, count: 1, indicators: [{ type: "CROSS_HOST_HTTP_REDIRECT", domain: "redirect.example.com", asset_class: "KNOWN", http_observation_status: "RESPONDED", http_status: 302, final_url: "https://outside.example/", final_url_verification: "LEGACY_UNKNOWN", final_hostname: "outside.example", destination_confirmed: false }] });
+
+  render(<App />);
+
+  expect(await screen.findByRole("tab", { name: "Evidence & Signals" })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByText("redirect.example.com")).toBeInTheDocument();
+  expect(getV2ReviewIndicators).toHaveBeenCalledTimes(1);
 });
 
 test("Shadow Centre uses effective asset class rather than stored ownership status", async () => {

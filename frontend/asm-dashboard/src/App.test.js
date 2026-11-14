@@ -278,7 +278,7 @@ test("main Overview separates current and previously High Risk with scan context
   render(<App />);
 
   const current = await screen.findByRole("link", { name: /Current High Risk/ });
-  const historical = screen.getByRole("link", { name: /Previously High Risk/ });
+  const historical = screen.getByRole("link", { name: /Historical High Risk/ });
   expect(current).toHaveTextContent("1");
   expect(current).toHaveTextContent("Current scan #42");
   expect(current).toHaveAttribute("href", "#/risk/security-review?tab=prioritized-assets");
@@ -348,6 +348,7 @@ test("redirects the legacy Needs Attention overview route to Prioritized Assets"
   window.location.hash = "#/overview/needs-attention";
   getV2Overview.mockResolvedValue(overview);
   getV2Assets.mockResolvedValue(rankedAssetPage);
+  getSensitiveExposure.mockResolvedValue([]);
   render(<App />);
 
   expect(await screen.findByText("alpha.example")).toBeInTheDocument();
@@ -374,7 +375,8 @@ test("redirects the legacy Risk Distribution route to Risk Overview", async () =
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "Risk distribution" })).toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Risk distribution" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("heading", { name: "Risk distribution" })).toBeInTheDocument();
+  expect(document.getElementById("risk-distribution")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /High 1/ })).toHaveAttribute("href", "#/assets?priority=High&limit=25");
   expect(window.location.hash).toBe("#/risk?section=risk-distribution");
   expect(getV2Overview).toHaveBeenCalledTimes(1);
@@ -413,6 +415,7 @@ test("Security Review keeps stable accessible tabs and preserves tab navigation"
   window.location.hash = "#/risk/security-review";
   getV2Overview.mockResolvedValue(overview);
   getV2Assets.mockResolvedValue(rankedAssetPage);
+  getSensitiveExposure.mockResolvedValue([]);
   getSecurityFindingsSummary.mockResolvedValue({ availability_state: "AVAILABLE", scan_id: 42, counts_by_category: {} });
   getSecurityFindings.mockResolvedValue({ availability_state: "AVAILABLE", scan_id: 42, findings: [], total: 0 });
   render(<App />);
@@ -433,6 +436,12 @@ test("Security Review keeps stable accessible tabs and preserves tab navigation"
   expect(evidence).toHaveAttribute("aria-selected", "true");
 
   fireEvent.keyDown(evidence, { key: "ArrowRight" });
+  expect(window.location.hash).toBe("#/risk/security-review?tab=sensitive-ports");
+  const sensitivePorts = screen.getByRole("tab", { name: "Sensitive Ports" });
+  expect(sensitivePorts).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByText("No port observations recorded for this scan.")).toBeInTheDocument();
+
+  fireEvent.keyDown(sensitivePorts, { key: "ArrowRight" });
   expect(window.location.hash).toBe("#/risk/security-review?tab=prioritized-assets");
   expect(await screen.findByText("Prioritized assets")).toBeInTheDocument();
   expect(prioritized).toHaveAttribute("aria-selected", "true");

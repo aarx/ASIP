@@ -1,10 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import PriorityAssetsPanel from "../components/ui/PriorityAssetsPanel";
+import ReviewIndicatorsPanel from "../components/ui/ReviewIndicatorsPanel";
+import SensitivePortsPanel from "../components/ui/SensitivePortsPanel";
 import SecurityFindingsPage from "./SecurityFindingsPage";
 
 const TABS = [
   ["prioritized-assets", "Prioritized Assets"],
   ["evidence-signals", "Evidence & Signals"],
+  ["sensitive-ports", "Sensitive Ports"],
 ];
 
 function readTab(query) {
@@ -21,6 +24,7 @@ export default function SecurityReviewPage({ query = "" }) {
   const selectTab = (nextTab) => {
     const params = new URLSearchParams(query);
     params.delete("section");
+    params.delete("signals");
     params.set("tab", nextTab);
     setTab(nextTab);
     window.location.hash = `#/risk/security-review?${params}`;
@@ -76,7 +80,12 @@ export default function SecurityReviewPage({ query = "" }) {
         {tab === "prioritized-assets" && <PriorityAssetsPanel query={query} />}
       </div>
       <div id="evidence-signals" role="tabpanel" aria-labelledby="evidence-signals-tab" hidden={tab !== "evidence-signals"}>
-        {tab === "evidence-signals" && <SecurityFindingsPage query={query} routePrefix="risk/security-review" />}
+        {tab === "evidence-signals" && (new URLSearchParams(query).get("signals") === "review-indicators"
+          ? <ReviewIndicatorsPanel />
+          : <SecurityFindingsPage query={query} routePrefix="risk/security-review" />)}
+      </div>
+      <div id="sensitive-ports" role="tabpanel" aria-labelledby="sensitive-ports-tab" hidden={tab !== "sensitive-ports"}>
+        {tab === "sensitive-ports" && <SensitivePortsPanel />}
       </div>
     </div>
   );
