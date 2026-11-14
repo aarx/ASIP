@@ -155,6 +155,10 @@
 .supporting-intelligence-grid > .panel { grid-column: auto; }
 .supporting-intelligence-grid > .naming-exposure-panel { grid-column: 1 / -1; }
 .overview-http-status-chart { min-width: 0; }
+.http-status-drilldown { cursor: pointer; }
+.http-status-drilldown:hover .recharts-rectangle { filter: brightness(1.15); }
+.http-status-drilldown:hover text, .http-status-drilldown:focus-visible text { fill: var(--asip-accent-bright); }
+.http-status-drilldown:focus-visible { outline: 2px solid var(--asip-accent-bright); outline-offset: 2px; }
 .change-panel, .certificate-health-panel { grid-column: span 6; }
 .attention-panel { grid-column: 1 / -1; }
 .risk-panel, .ownership-panel { grid-column: span 6; }

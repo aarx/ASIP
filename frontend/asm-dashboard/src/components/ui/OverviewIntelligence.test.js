@@ -1,7 +1,10 @@
 import React from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Bar, BarChart, Cell, XAxis } from "recharts";
 import OverviewIntelligence, {
   BrandDiscoveryPanel,
+  HttpStatusBar,
+  HttpStatusTick,
   classifyCertificateExpiry,
   normalizeBrandDiscovery,
   normalizeNamingExposure,
@@ -48,7 +51,49 @@ test("renders supported aggregate charts with their scope", () => {
   expect(screen.queryByRole("link", { name: /Open confirmed assets with no response/i })).not.toBeInTheDocument();
   expect(screen.queryByText("NO_RESPONSE")).not.toBeInTheDocument();
   expect(screen.queryByText("UNKNOWN")).not.toBeInTheDocument();
-  expect(screen.queryByRole("link", { name: /2xx|3xx|4xx|5xx/i })).not.toBeInTheDocument();
+});
+
+test("HTTP chart bars and labels link only exact server-filtered groups", () => {
+  const groups = ["2xx", "3xx", "4xx", "5xx", "no_response", "unknown"];
+  const labels = ["2xx", "3xx", "4xx", "5xx", "No HTTP response", "No HTTP status recorded"];
+  const { container } = render(<svg>
+    {groups.map((key, index) => <g key={key}>
+      <HttpStatusBar payload={{ key, label: labels[index] }} x={index * 30} y={10} width={20} height={index === 3 ? 0 : 20} fill="#398261" />
+      <HttpStatusTick x={index * 30} y={40} payload={{ value: labels[index] }} />
+    </g>)}
+  </svg>);
+
+  for (const group of groups.slice(0, 4)) {
+    const links = [...container.querySelectorAll(`a[href="#/assets?http_status_group=${group}"]`)];
+    expect(links).toHaveLength(2);
+    links.forEach((link) => {
+      expect(link).toHaveAttribute("aria-label", `Show ${group} assets`);
+      expect(link).toHaveAttribute("tabindex", "0");
+    });
+  }
+  expect(container.querySelectorAll('a[href*="no_response"], a[href*="unknown"]')).toHaveLength(0);
+});
+
+test("Recharts renders a keyboard reachable HTTP bar and category label", async () => {
+  window.location.hash = "#/overview";
+  const { container } = render(<BarChart width={480} height={220} data={[{ key: "2xx", label: "2xx", count: 4, color: "#398261" }]}>
+    <XAxis dataKey="label" tick={<HttpStatusTick />} />
+    <Bar dataKey="count" shape={<HttpStatusBar />} isAnimationActive={false}><Cell fill="#398261" /></Bar>
+  </BarChart>);
+
+  const links = [...container.querySelectorAll('a[href="#/assets?http_status_group=2xx"]')];
+  expect(links).toHaveLength(2);
+  links.forEach((link) => expect(link).toHaveAttribute("tabindex", "0"));
+  expect(links[0].querySelector(".recharts-rectangle")).toHaveAttribute("fill", "#398261");
+  act(() => links[1].focus());
+  expect(links[1]).toHaveFocus();
+  fireEvent.keyDown(links[1], { key: "Enter" });
+  expect(window.location.hash).toBe("#/assets?http_status_group=2xx");
+  window.location.hash = "#/overview";
+  fireEvent.click(links[0]);
+  expect(window.location.hash).toBe("#/assets?http_status_group=2xx");
+  window.history.back();
+  await waitFor(() => expect(window.location.hash).toBe("#/overview"));
 });
 
 test("normalizes and renders verified current-scan seed groups", async () => {

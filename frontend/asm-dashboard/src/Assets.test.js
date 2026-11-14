@@ -340,6 +340,36 @@ test("Asset Explorer forwards metric drill-down filters and preserves their acti
   expect(screen.getByText("http status group: 3xx")).toBeInTheDocument();
 });
 
+test("HTTP group drilldown keeps its filter through pagination and Asset Detail, then clears it", async () => {
+  window.location.hash = "#/assets?http_status_group=3xx";
+  getV2Assets.mockResolvedValue(assetPage);
+  render(<App />);
+
+  await screen.findByText("app.example.com");
+  expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 1, limit: 25, http_status_group: "3xx", sort_by: "domain", sort_dir: "asc",
+  });
+  expect(screen.getByText("http status group: 3xx")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open app.example.com" })).toHaveAttribute(
+    "href", "#/assets/app.example.com?http_status_group=3xx"
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 2, limit: 25, http_status_group: "3xx", sort_by: "domain", sort_dir: "asc",
+  }));
+  expect(screen.getByText("http status group: 3xx")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open app.example.com" })).toHaveAttribute(
+    "href", "#/assets/app.example.com?http_status_group=3xx&page=2&limit=25"
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
+    page: 1, limit: 25, sort_by: "domain", sort_dir: "asc",
+  }));
+  expect(screen.queryByText("http status group: 3xx")).not.toBeInTheDocument();
+});
+
 test("asset drill-down routes respond to hash navigation in both directions", async () => {
   const noResponseHash = "#/assets?ownership=CONFIRMED&http_observation_status=NO_RESPONSE&limit=25";
   const respondedHash = "#/assets?ownership=CONFIRMED&http_observation_status=RESPONDED&limit=25";

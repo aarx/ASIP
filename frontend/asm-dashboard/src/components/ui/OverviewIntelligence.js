@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Legend, Rectangle, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import Panel from "./Panel";
 import AssetLink from "./AssetLink";
 
@@ -11,6 +11,48 @@ const STATUS_GROUPS = [
   { key: "no_response", label: "No HTTP response", color: "#7e91a8" },
   { key: "unknown", label: "No HTTP status recorded", color: "#a8b3c2" },
 ];
+const DRILLDOWN_GROUPS = new Set(["2xx", "3xx", "4xx", "5xx"]);
+const statusGroupHref = (group) => `#/assets?http_status_group=${group}`;
+const statusGroupLinkProps = (group) => ({
+  className: "http-status-drilldown",
+  href: statusGroupHref(group),
+  "aria-label": `Show ${group} assets`,
+  tabIndex: 0,
+  onClick: (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    window.location.hash = statusGroupHref(group);
+  },
+  onKeyDown: (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    window.location.hash = statusGroupHref(group);
+  },
+});
+
+export function HttpStatusBar({ payload, ...shape }) {
+  const bar = <Rectangle {...shape} radius={[3, 3, 0, 0]} />;
+  if (!DRILLDOWN_GROUPS.has(payload?.key)) return bar;
+  return (
+    <a {...statusGroupLinkProps(payload.key)}>
+      {bar}
+    </a>
+  );
+}
+
+export function HttpStatusTick({ x, y, payload }) {
+  const group = STATUS_GROUPS.find((item) => item.label === payload.value);
+  const label = <text x={x} y={y} dy={16} textAnchor="middle" fill="#64748b" fontSize={10}>{payload.value}</text>;
+  if (!DRILLDOWN_GROUPS.has(group?.key)) return <g>{label}</g>;
+  return (
+    <g>
+      <a {...statusGroupLinkProps(group.key)}>
+        <rect x={x - 22} y={y} width={44} height={20} fill="transparent" />
+        {label}
+      </a>
+    </g>
+  );
+}
 
 export function parseCertificateExpiry(value) {
   if (typeof value !== "string") return null;
@@ -233,10 +275,10 @@ export function HttpStatusPanel({ value, status }) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 4, right: 12, bottom: 4, left: 0 }}>
               <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
+              <XAxis dataKey="label" tick={<HttpStatusTick />} axisLine={false} tickLine={false} />
               <YAxis allowDecimals={false} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} width={28} />
               <Tooltip contentStyle={chartTooltipStyle} />
-              <Bar dataKey="count" name="Assets" radius={[3, 3, 0, 0]} barSize={22}>
+              <Bar dataKey="count" name="Assets" radius={[3, 3, 0, 0]} barSize={22} shape={<HttpStatusBar />}>
                 {data.map((entry) => <Cell key={entry.key} fill={entry.color} />)}
               </Bar>
             </BarChart>
