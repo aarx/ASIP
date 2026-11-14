@@ -308,6 +308,7 @@ function OwnershipReview({ asset, onChanged, fixtureMode = false }) {
 
 export default function AssetDetailPage({ domain, returnQuery }) {
   const fixtureMode = isBrandAcceptanceFixture(returnQuery);
+  const historicalScope = new URLSearchParams(returnQuery).get("scope") === "retained_history";
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
   const [requestVersion, setRequestVersion] = useState(0);
@@ -315,7 +316,11 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   useEffect(() => {
     let active = true;
     setStatus("loading");
-    const request = fixtureMode ? Promise.resolve(brandAcceptanceDetail(domain)) : getV2AssetDetail(domain);
+    const request = fixtureMode
+      ? Promise.resolve(brandAcceptanceDetail(domain))
+      : historicalScope
+        ? getV2AssetDetail(domain, { scope: "retained_history" })
+        : getV2AssetDetail(domain);
     request
       .then((result) => {
         if (!active) return;
@@ -329,7 +334,7 @@ export default function AssetDetailPage({ domain, returnQuery }) {
       })
       .catch(() => { if (active) setStatus("error"); });
     return () => { active = false; };
-  }, [domain, fixtureMode, requestVersion]);
+  }, [domain, fixtureMode, historicalScope, requestVersion]);
 
   const returnParams = new URLSearchParams(returnQuery);
   const returnTo = returnParams.get("return");
@@ -361,15 +366,15 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   if (returnQuery) investigationParams.set("detail_return", returnQuery);
   const investigationHref = `#/investigate?${investigationParams}`;
 
-  if (status === "loading") return <LoadingState title="Loading asset evidence" copy="Retrieving current scan evidence without inferring missing observations." />;
-  if (status === "error") return <ErrorState title="Asset detail unavailable" copy="The current evidence contract could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
+  if (status === "loading") return <LoadingState title={historicalScope ? "Loading retained asset evidence" : "Loading asset evidence"} copy={historicalScope ? "Retrieving the latest available evidence from retained scans." : "Retrieving current scan evidence without inferring missing observations."} />;
+  if (status === "error") return <ErrorState title="Asset detail unavailable" copy={`The ${historicalScope ? "retained-history" : "current"} evidence contract could not be loaded.`} onRetry={() => setRequestVersion((value) => value + 1)} />;
   if (status === "not-found") {
     return (
       <div className="state-card">
         <div>
           <div className="state-icon" aria-hidden="true">?</div>
-          <h2 className="state-title">Asset is not in the current surface</h2>
-          <p className="state-copy">{data?.error || "The asset was not found in the current authoritative scan."}</p>
+          <h2 className="state-title">{historicalScope ? "Asset is not in retained history" : "Asset is not in the current surface"}</h2>
+          <p className="state-copy">{data?.error || (historicalScope ? "The identity was not found in retained scans." : "The asset was not found in the current authoritative scan.")}</p>
           <Button className="state-action" component="a" href={backHref} variant="outlined">Back to {backLabel}</Button>
         </div>
       </div>
@@ -388,17 +393,17 @@ export default function AssetDetailPage({ domain, returnQuery }) {
     <div className="asset-detail">
       <div className="detail-toolbar">
         <Button component="a" href={backHref} variant="text">← Back to {backLabel}</Button>
-        <div><span>Authoritative scan #{data.scan_id}</span><Button component="a" href={investigationHref} variant="outlined" size="small">Investigate asset</Button></div>
+        <div><span>{historicalScope ? `Evidence from scan #${data.scan_id} · ${displayEvidence(data.evidence_scan_time || data.scan_time)}` : `Authoritative scan #${data.scan_id}`}</span>{!historicalScope && <Button component="a" href={investigationHref} variant="outlined" size="small">Investigate asset</Button>}</div>
       </div>
 
       <section className="asset-identity-card">
         <div className="identity-heading">
           <div>
-            <span className="identity-kicker">Current asset</span>
+            <span className="identity-kicker">{historicalScope ? "Retained identity" : "Current asset"}</span>
             <h2>{data.domain}</h2>
           </div>
           <div className="identity-badges">
-            <div className="identity-badge-field"><span>Current class</span><StatusBadge value={displayAssetClass(data.asset_class)} /></div>
+            <div className="identity-badge-field"><span>{historicalScope ? "Effective class" : "Current class"}</span><StatusBadge value={displayAssetClass(data.asset_class)} /></div>
             <div className="identity-badge-field"><span>Stored ownership</span><StatusBadge value={data.ownership_status} /></div>
             {classificationContext && <a className="context-link" href={classificationContext.href}>{classificationContext.label}</a>}
           </div>
@@ -407,6 +412,8 @@ export default function AssetDetailPage({ domain, returnQuery }) {
           <span>First seen <strong>scan #{data.first_seen_scan} · {displayEvidence(data.first_seen_at)}</strong></span>
           <span>Last seen <strong>scan #{data.last_seen_scan} · {displayEvidence(data.last_seen_at)}</strong></span>
           <span>Seed <strong>{displayEvidence(data.seed)}</strong></span>
+          {historicalScope && <span>Current scan membership <strong>{data.current_scan_member === true ? "Member" : data.current_scan_member === false ? "Historical-only" : "Unavailable"}</strong></span>}
+          {historicalScope && <span>Evidence scan status <strong>{displayEvidence(data.evidence_scan_status)}</strong></span>}
         </div>
         <div className="risk-posture">
           {risk ? (
@@ -417,25 +424,27 @@ export default function AssetDetailPage({ domain, returnQuery }) {
                 {(risk.reasons || []).map((reason) => <span className="reason-token" key={reason}>{reason.replaceAll("_", " ")}</span>)}
               </div>
             </>
+          ) : historicalScope ? (
+            <div className="non-org-risk-note">Risk score unavailable for this retained evidence scan.</div>
           ) : (
             <div className="non-org-risk-note">No organizational canonical risk applies to {displayAssetClass(data.asset_class)} assets.</div>
           )}
         </div>
       </section>
 
-      <OwnershipReview
+      {!historicalScope && <OwnershipReview
         asset={data}
         fixtureMode={fixtureMode}
         onChanged={() => {
           getV2AssetDetail(domain).then((result) => { if (!result?.error) setData(result); });
         }}
-      />
+      />}
 
       <div className="detail-grid">
-        <Panel title="Network" subtitle="Current DNS and infrastructure evidence" className="detail-panel">
+        <Panel title="Network" subtitle={historicalScope ? "DNS and infrastructure evidence from the retained scan" : "Current DNS and infrastructure evidence"} className="detail-panel">
           <div className="evidence-grid">
-            <EvidenceRow label="IP address" value={data.dns?.ip} mono />
-            <EvidenceRow label="Reverse DNS" value={data.dns?.reverse_dns} mono />
+            <EvidenceRow label="IP address" value={historicalScope && data.dns?.observation_available !== true ? "Evidence unavailable" : data.dns?.ip} mono />
+            <EvidenceRow label="Reverse DNS" value={historicalScope && data.dns?.observation_available !== true ? "Evidence unavailable" : data.dns?.reverse_dns} mono />
             <EvidenceRow label="Provider" value={data.provider} />
             <EvidenceRow label="ASN" value={data.asn?.asn} mono />
             <EvidenceRow label="Organization" value={data.asn?.organization} wide />
@@ -449,13 +458,15 @@ export default function AssetDetailPage({ domain, returnQuery }) {
                 </div>
               ))}
             </div>
-          ) : <DetailEmpty compact>No positive port evidence for this scan.</DetailEmpty>}
+          ) : <DetailEmpty compact>{historicalScope ? "No port evidence recorded for this retained scan." : "No positive port evidence for this scan."}</DetailEmpty>}
         </Panel>
 
-        <Panel title="HTTP" subtitle="Observed response state and destination" className="detail-panel">
+        <Panel title="HTTP" subtitle={historicalScope ? "HTTP evidence from the retained scan" : "Observed response state and destination"} className="detail-panel">
           <div className="evidence-grid">
-            <div className="evidence-row"><span className="evidence-label">Observation</span><span className="evidence-value"><StatusBadge value={data.http?.observation_status} /></span></div>
-            <EvidenceRow label="HTTP status" value={displayHttpStatus(data.http?.observation_status, data.http?.status)} mono />
+            {historicalScope && data.http?.observation_available !== true
+              ? <EvidenceRow label="Observation" value="Evidence unavailable" />
+              : <div className="evidence-row"><span className="evidence-label">Observation</span><span className="evidence-value"><StatusBadge value={data.http?.observation_status} /></span></div>}
+            <EvidenceRow label="HTTP status" value={historicalScope && data.http?.observation_available !== true ? "Evidence unavailable" : displayHttpStatus(data.http?.observation_status, data.http?.status)} mono />
             <EvidenceRow label="Reason" value={data.http?.reason} />
             {redirectEvidence.completion_status === "COMPLETE" && isObservedHttpStatus(data.http?.final_status) && (
               <EvidenceRow label="Verified final status" value={data.http?.final_status} mono />

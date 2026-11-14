@@ -22,6 +22,11 @@ export const getV2Assets = async (params) => {
   return res.data;
 };
 
+export const getV2AssetsSummary = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/assets/summary`, { params });
+  return res.data;
+};
+
 export const exportV2AssetsCsv = async (params) => {
   return axios.get(`${API_URL}/v2/assets/export`, {
     params,
@@ -29,8 +34,8 @@ export const exportV2AssetsCsv = async (params) => {
   });
 };
 
-export const getV2AssetDetail = async (domain) => {
-  const res = await axios.get(`${API_URL}/v2/assets/${encodeURIComponent(domain)}`);
+export const getV2AssetDetail = async (domain, params) => {
+  const res = await axios.get(`${API_URL}/v2/assets/${encodeURIComponent(domain)}`, { params });
   return res.data;
 };
 

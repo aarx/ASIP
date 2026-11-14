@@ -4,12 +4,14 @@ import {
   exportV2AssetsCsv,
   getV2AssetDetail,
   getV2Assets,
+  getV2AssetsSummary,
   updateV2AssetOwnership,
 } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
   getV2Assets: jest.fn(),
+  getV2AssetsSummary: jest.fn(),
   exportV2AssetsCsv: jest.fn(),
   getV2AssetDetail: jest.fn(),
   updateV2AssetOwnership: jest.fn(),
@@ -175,9 +177,14 @@ const technologyDetail = {
 
 beforeEach(() => {
   getV2Assets.mockReset();
+  getV2AssetsSummary.mockReset();
   exportV2AssetsCsv.mockReset();
   getV2AssetDetail.mockReset();
   updateV2AssetOwnership.mockReset();
+  getV2AssetsSummary.mockResolvedValue({
+    scope: "current", scan_id: 42, count: 2133,
+    classification_counts: { KNOWN: 60, SHADOW: 769, CANDIDATE: 1304 },
+  });
 });
 
 test("explorer loads current assets, applies server filters, and clears them", async () => {
@@ -186,7 +193,11 @@ test("explorer loads current assets, applies server filters, and clears them", a
   render(<App />);
 
   expect(await screen.findByText("app.example.com")).toBeInTheDocument();
-  expect(getV2Assets).toHaveBeenCalledWith({ page: 1, limit: 25, sort_by: "domain", sort_dir: "asc" });
+  expect(getV2Assets).toHaveBeenCalledWith({ scope: "current", page: 1, limit: 25, sort_by: "domain", sort_dir: "asc" });
+  expect(getV2AssetsSummary).toHaveBeenCalledWith({ scope: "current" });
+  expect(screen.getByRole("button", { name: "Current scan" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText("2,133 current scan assets")).toBeInTheDocument();
+  expect(screen.getByText("Needs Verification 1,304")).toBeInTheDocument();
   expect(screen.getByText("26")).toBeInTheDocument();
   expect(screen.getByText("SHADOW")).toBeInTheDocument();
   expect(screen.getByText("Example Cloud")).toBeInTheDocument();
@@ -201,12 +212,13 @@ test("explorer loads current assets, applies server filters, and clears them", a
   fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
 
   await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 1, limit: 25, search: "login", sort_by: "domain", sort_dir: "asc",
+    scope: "current", page: 1, limit: 25, search: "login", sort_by: "domain", sort_dir: "asc",
   }));
   expect(await screen.findByText("search: login")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Clear" }));
   await waitFor(() => expect(window.location.hash).toBe("#/assets?limit=25"));
+  expect(getV2AssetsSummary).toHaveBeenCalledTimes(1);
 });
 
 test("Asset Explorer distinguishes UNKNOWN and NO_RESPONSE HTTP status wording", async () => {
@@ -238,7 +250,7 @@ test("explorer pagination is server-backed and preserves deterministic ordering"
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
   await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 2, limit: 25, ownership: "CONFIRMED", sort_by: "domain", sort_dir: "asc",
+    scope: "current", page: 2, limit: 25, ownership: "CONFIRMED", sort_by: "domain", sort_dir: "asc",
   }));
   expect(screen.getByText("ownership: CONFIRMED")).toBeInTheDocument();
   expect(screen.getByText("Ordered by domain")).toBeInTheDocument();
@@ -251,7 +263,7 @@ test("overview drill-down filters are consumed by the asset explorer", async () 
 
   await screen.findByText("app.example.com");
   expect(getV2Assets).toHaveBeenCalledWith({
-    page: 1, limit: 25, asset_class: "KNOWN", priority: "High",
+    scope: "current", page: 1, limit: 25, asset_class: "KNOWN", priority: "High",
     sort_by: "domain", sort_dir: "asc",
   });
   expect(screen.getByText("asset class: KNOWN")).toBeInTheDocument();
@@ -265,7 +277,7 @@ test("asset explorer preserves exact brand-source drilldown filters and terminol
 
   await screen.findByText("app.example.com");
   expect(getV2Assets).toHaveBeenCalledWith({
-    page: 1,
+    scope: "current", page: 1,
     limit: 25,
     asset_class: "CANDIDATE",
     discovery_source: "brand_union",
@@ -286,7 +298,7 @@ test("Asset Explorer preserves its explicit HTTP observation filter", async () =
 
   await screen.findByText("app.example.com");
   expect(getV2Assets).toHaveBeenCalledWith({
-    page: 1,
+    scope: "current", page: 1,
     limit: 25,
     ownership: "CONFIRMED",
     http_observation_status: "NO_RESPONSE",
@@ -304,7 +316,7 @@ test("Asset Explorer preserves naming exposure drill-down filters and pagination
 
   await screen.findByText("app.example.com");
   expect(getV2Assets).toHaveBeenCalledWith({
-    page: 2,
+    scope: "current", page: 2,
     limit: 25,
     exposure_keyword: "DEV",
     sort_by: "domain",
@@ -323,7 +335,7 @@ test("Asset Explorer forwards metric drill-down filters and preserves their acti
 
   await screen.findByText("app.example.com");
   expect(getV2Assets).toHaveBeenCalledWith({
-    page: 1,
+    scope: "current", page: 1,
     limit: 25,
     risk_positive: "true",
     has_ip: "true",
@@ -347,7 +359,7 @@ test("HTTP group drilldown keeps its filter through pagination and Asset Detail,
 
   await screen.findByText("app.example.com");
   expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 1, limit: 25, http_status_group: "3xx", sort_by: "domain", sort_dir: "asc",
+    scope: "current", page: 1, limit: 25, http_status_group: "3xx", sort_by: "domain", sort_dir: "asc",
   });
   expect(screen.getByText("http status group: 3xx")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open app.example.com" })).toHaveAttribute(
@@ -356,7 +368,7 @@ test("HTTP group drilldown keeps its filter through pagination and Asset Detail,
 
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 2, limit: 25, http_status_group: "3xx", sort_by: "domain", sort_dir: "asc",
+    scope: "current", page: 2, limit: 25, http_status_group: "3xx", sort_by: "domain", sort_dir: "asc",
   }));
   expect(screen.getByText("http status group: 3xx")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open app.example.com" })).toHaveAttribute(
@@ -365,7 +377,7 @@ test("HTTP group drilldown keeps its filter through pagination and Asset Detail,
 
   fireEvent.click(screen.getByRole("button", { name: "Clear" }));
   await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 1, limit: 25, sort_by: "domain", sort_dir: "asc",
+    scope: "current", page: 1, limit: 25, sort_by: "domain", sort_dir: "asc",
   }));
   expect(screen.queryByText("http status group: 3xx")).not.toBeInTheDocument();
 });
@@ -381,7 +393,7 @@ test("asset drill-down routes respond to hash navigation in both directions", as
   window.history.pushState({}, "", respondedHash);
   fireEvent(window, new Event("hashchange"));
   await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 1,
+    scope: "current", page: 1,
     limit: 25,
     ownership: "CONFIRMED",
     http_observation_status: "RESPONDED",
@@ -392,7 +404,7 @@ test("asset drill-down routes respond to hash navigation in both directions", as
   window.history.pushState({}, "", noResponseHash);
   fireEvent(window, new Event("hashchange"));
   await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 1,
+    scope: "current", page: 1,
     limit: 25,
     ownership: "CONFIRMED",
     http_observation_status: "NO_RESPONSE",
@@ -416,12 +428,172 @@ test("asset explorer exports the complete filtered authoritative dataset", async
   fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
 
   await waitFor(() => expect(exportV2AssetsCsv).toHaveBeenCalledWith({
+    scope: "current",
     asset_class: "SHADOW", provider: "Example Cloud",
     sort_by: "domain", sort_dir: "asc",
   }));
   expect(createObjectURL).toHaveBeenCalled();
   await waitFor(() => expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled());
   anchorClick.mockRestore();
+});
+
+test("All scans uses retained identity totals, preserves compatible filters, and marks unavailable evidence", async () => {
+  window.location.hash = "#/assets?search=app&page=3&limit=25";
+  const retainedAsset = {
+    ...currentAsset,
+    domain: "historical-only.example.com",
+    asset_class: "CANDIDATE",
+    current_scan_member: false,
+    latest_evidence_scan_id: 18,
+    latest_evidence_scan_status: "SUCCEEDED",
+    http_observation_status: "UNKNOWN",
+    http_live: null,
+    http_status: null,
+    field_availability: { dns: false, http: false, provider: false, asn: false, risk: false },
+    risk_available: false,
+    risk: null,
+  };
+  getV2Assets
+    .mockResolvedValueOnce(assetPage)
+    .mockResolvedValueOnce({
+      scope: "retained_history", current_scan_id: 42, page: 1, limit: 25,
+      count: 26, assets: [retainedAsset],
+    })
+    .mockResolvedValueOnce({
+      scope: "retained_history", current_scan_id: 42, page: 2, limit: 25,
+      count: 26, assets: [retainedAsset],
+    })
+    .mockResolvedValue(assetPage);
+  getV2AssetsSummary
+    .mockResolvedValueOnce({ scope: "current", count: 2133, classification_counts: { KNOWN: 60, SHADOW: 769, CANDIDATE: 1304 } })
+    .mockResolvedValueOnce({
+      scope: "retained_history", count: 2620,
+      classification_counts: { KNOWN: 60, SHADOW: 857, CANDIDATE: 1703, EXTERNAL: 0 },
+      retention: { scan_count_with_membership: 16, is_exhaustive_lifetime_history: false },
+    })
+    .mockResolvedValue({ scope: "current", count: 2133, classification_counts: { KNOWN: 60, SHADOW: 769, CANDIDATE: 1304 } });
+  render(<App />);
+
+  await screen.findByText("app.example.com");
+  fireEvent.click(screen.getByRole("button", { name: "All scans" }));
+  expect(await screen.findByText("historical-only.example.com")).toBeInTheDocument();
+  expect(window.location.hash).toBe("#/assets?search=app&scope=retained_history&limit=25");
+  expect(getV2Assets).toHaveBeenLastCalledWith({
+    scope: "retained_history", page: 1, limit: 25, sort_by: "domain", sort_dir: "asc", search: "app",
+  });
+  expect(getV2AssetsSummary).toHaveBeenLastCalledWith({ scope: "retained_history" });
+  expect(screen.getByRole("button", { name: "All scans" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText("2,620 retained identities")).toBeInTheDocument();
+  expect(screen.getByText("Needs Verification 1,703")).toBeInTheDocument();
+  expect(screen.getByText("Retained scans · current rules · not exhaustive lifetime history")).toBeInTheDocument();
+  const row = within(screen.getByText("historical-only.example.com").closest("tr"));
+  expect(row.getByText("Historical-only identity")).toBeInTheDocument();
+  expect(row.getByText("Evidence · scan #18 · SUCCEEDED")).toBeInTheDocument();
+  expect(row.getAllByText("Evidence unavailable")).toHaveLength(2);
+  expect(row.getAllByText("Unavailable")).toHaveLength(2);
+  expect(row.getByRole("link", { name: "Open historical-only.example.com" })).toHaveAttribute(
+    "href", "#/assets/historical-only.example.com?search=app&scope=retained_history&limit=25"
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
+    scope: "retained_history", page: 2, limit: 25, search: "app", sort_by: "domain", sort_dir: "asc",
+  }));
+  fireEvent.click(screen.getByRole("button", { name: "Current scan" }));
+  await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
+    scope: "current", page: 1, limit: 25, search: "app", sort_by: "domain", sort_dir: "asc",
+  }));
+  expect(window.location.hash).toBe("#/assets?search=app&limit=25");
+});
+
+test("retained-history export sends scope and compatible filters for the full population", async () => {
+  window.location.hash = "#/assets?has_ip=true&page=2&limit=25&sort_by=priority&sort_dir=desc";
+  getV2Assets.mockResolvedValue({ ...assetPage, scope: "retained_history", current_scan_id: 42 });
+  getV2AssetsSummary.mockResolvedValue({
+    scope: "retained_history", count: 2620,
+    classification_counts: { KNOWN: 60, SHADOW: 857, CANDIDATE: 1703, EXTERNAL: 0 },
+  });
+  exportV2AssetsCsv.mockResolvedValue({
+    data: new Blob(["Identity Key,Domain\r\n"]),
+    headers: { "content-disposition": "attachment; filename=shadowrecon-assets-retained-history.csv" },
+  });
+  let downloadedFilename;
+  const anchorClick = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click() {
+    downloadedFilename = this.download;
+  });
+  Object.defineProperty(window.URL, "createObjectURL", { configurable: true, value: jest.fn(() => "blob:history") });
+  Object.defineProperty(window.URL, "revokeObjectURL", { configurable: true, value: jest.fn() });
+  render(<App />);
+
+  await screen.findByText("app.example.com");
+  fireEvent.click(screen.getByRole("button", { name: "All scans" }));
+  await screen.findByText("2,620 retained identities");
+  fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+
+  await waitFor(() => expect(exportV2AssetsCsv).toHaveBeenCalledWith({
+    scope: "retained_history", has_ip: "true", sort_by: "priority", sort_dir: "desc",
+  }));
+  expect(anchorClick).toHaveBeenCalled();
+  expect(downloadedFilename).toBe("shadowrecon-assets-retained-history.csv");
+  anchorClick.mockRestore();
+});
+
+test("missing retained classification totals are shown as unavailable instead of zero", async () => {
+  window.location.hash = "#/assets?scope=retained_history";
+  getV2Assets.mockResolvedValue({ scope: "retained_history", count: 0, assets: [] });
+  getV2AssetsSummary.mockResolvedValue({
+    scope: "retained_history", count: 2620,
+    classification_counts: { KNOWN: null, SHADOW: 0, CANDIDATE: null, EXTERNAL: 0 },
+  });
+  render(<App />);
+
+  expect(await screen.findByText("2,620 retained identities")).toBeInTheDocument();
+  expect(screen.getByText("Some class totals unavailable")).toBeInTheDocument();
+  expect(screen.getByText("Shadow 0")).toBeInTheDocument();
+  expect(screen.getByText("External 0")).toBeInTheDocument();
+  expect(screen.queryByText("Known 0")).not.toBeInTheDocument();
+  expect(screen.queryByText("Needs Verification 0")).not.toBeInTheDocument();
+});
+
+test("retained Asset Detail requests historical scope and returns to the same inventory query", async () => {
+  window.location.hash = "#/assets/historical-only.example.com?scope=retained_history&search=legacy&page=2&limit=25&sort_by=risk_score&sort_dir=desc";
+  getV2AssetDetail.mockResolvedValue({
+    ...candidateDetail,
+    domain: "historical-only.example.com",
+    scan_id: 17,
+    scan_time: "2026-11-03T13:00:10",
+    scope: "retained_history",
+    current_scan_member: false,
+    evidence_scan_status: "SUCCEEDED",
+    evidence_scan_time: "2026-11-03T13:00:10",
+    risk: null,
+    dns: { ip: null, has_ip: null, reverse_dns: null, observation_available: false },
+    http: {
+      observation_status: "UNKNOWN", observation_available: false, live: null,
+      status: null, reason: null, final_url: null, final_status: null, title: null,
+      redirect_evidence: { completion_status: "UNKNOWN" },
+    },
+    ports: [],
+    asn: null,
+    provider: null,
+    technologies: [],
+    technology_observations: [],
+    certificate: null,
+    discovery: { sources: [] },
+    findings: [],
+  });
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { name: "historical-only.example.com" })).toBeInTheDocument();
+  expect(getV2AssetDetail).toHaveBeenCalledWith("historical-only.example.com", { scope: "retained_history" });
+  expect(screen.getByText("Retained identity")).toBeInTheDocument();
+  expect(screen.getByText("Historical-only")).toBeInTheDocument();
+  expect(screen.getByText("Evidence scan status").parentElement).toHaveTextContent("SUCCEEDED");
+  expect(screen.getByText("Risk score unavailable for this retained evidence scan.")).toBeInTheDocument();
+  expect(screen.getAllByText("Evidence unavailable").length).toBeGreaterThanOrEqual(2);
+  expect(screen.queryByText("Ownership Review")).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "← Back to Assets" })).toHaveAttribute(
+    "href", "#/assets?scope=retained_history&search=legacy&page=2&limit=25&sort_by=risk_score&sort_dir=desc"
+  );
 });
 
 test("asset explorer sorts by risk score server-side, resets pagination, and preserves filters", async () => {
@@ -433,7 +605,7 @@ test("asset explorer sorts by risk score server-side, resets pagination, and pre
   fireEvent.click(screen.getByRole("button", { name: "Sort by Risk Score" }));
 
   await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 1, limit: 25, search: "app", ownership: "CONFIRMED",
+    scope: "current", page: 1, limit: 25, search: "app", ownership: "CONFIRMED",
     sort_by: "risk_score", sort_dir: "desc",
   }));
   expect(window.location.hash).toBe(
@@ -443,7 +615,7 @@ test("asset explorer sorts by risk score server-side, resets pagination, and pre
 
   fireEvent.click(screen.getByRole("button", { name: "Sort by Risk Score, currently descending" }));
   await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 1, limit: 25, search: "app", ownership: "CONFIRMED",
+    scope: "current", page: 1, limit: 25, search: "app", ownership: "CONFIRMED",
     sort_by: "risk_score", sort_dir: "asc",
   }));
   expect(screen.getByRole("button", { name: "Sort by Risk Score, currently ascending" }).closest("th")).toHaveAttribute("aria-sort", "ascending");
@@ -461,11 +633,11 @@ test("asset explorer uses canonical priority sorting defaults and keeps selected
   await screen.findByText("app.example.com");
   fireEvent.click(screen.getByRole("button", { name: "Sort by Priority" }));
   await waitFor(() => expect(getV2Assets).toHaveBeenLastCalledWith({
-    page: 1, limit: 25, provider: "Example Cloud", sort_by: "priority", sort_dir: "desc",
+    scope: "current", page: 1, limit: 25, provider: "Example Cloud", sort_by: "priority", sort_dir: "desc",
   }));
   fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
   await waitFor(() => expect(exportV2AssetsCsv).toHaveBeenCalledWith({
-    provider: "Example Cloud", sort_by: "priority", sort_dir: "desc",
+    scope: "current", provider: "Example Cloud", sort_by: "priority", sort_dir: "desc",
   }));
   anchorClick.mockRestore();
 });
