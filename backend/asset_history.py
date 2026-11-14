@@ -77,10 +77,11 @@ def retained_inventory_cte():
 def historical_identity_lookup_sql():
     """Resolve one requested identity with a single safely bound input value."""
     return retained_inventory_cte() + f"""
-      SELECT domain, scan_id, scan_time, scan_status, current_scan_member, identity_key
-        FROM enriched
+      SELECT e.domain, e.scan_id, e.scan_time, e.scan_status,
+             e.current_scan_member, e.identity_key
+        FROM enriched e
         CROSS JOIN (SELECT %s::text AS domain) requested
-       WHERE identity_key={identity_sql('requested.domain')}
+       WHERE e.identity_key={identity_sql('requested.domain')}
     """
 
 

@@ -70,6 +70,7 @@ class HistoricalAssetInventoryTests(unittest.TestCase):
         self.assertEqual(scan_query.count("%s"), 2)
         self.assertIn("CROSS JOIN (SELECT %s::text AS domain) requested", identity_query)
         self.assertIn("CROSS JOIN (SELECT %s::text AS domain) requested", scan_query)
+        self.assertIn("SELECT e.domain, e.scan_id", identity_query)
 
 
 if __name__ == "__main__":
