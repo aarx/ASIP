@@ -20,6 +20,7 @@ from asset_reporting import (
     current_scan_asset_classes,
     current_scan_risks,
 )
+from brand_history import history_summary, history_assets, HISTORY_CTE
 from scan_diagnostics import api_diagnostics
 from risk_engine import ASSET_EXPOSURE_KEYWORDS, calculate_scan_risks, get_asset_exposure_keywords, priority_for_score
 from ownership import (
@@ -3992,9 +3993,16 @@ def frontend_v2_assets_export(
 
 @app.get("/v2/assets/{domain_name}")
 def frontend_v2_asset_detail(domain_name: str):
+    return _frontend_v2_asset_detail(domain_name)
+
+
+def _frontend_v2_asset_detail(domain_name: str, _historical_scan_id=None):
     conn = get_conn()
+    if _historical_scan_id is not None:
+        conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
     cur = conn.cursor()
-    scan_id = get_latest_authoritative_scan_id(cur)
+    scan_id = (_historical_scan_id if _historical_scan_id is not None
+               else get_latest_authoritative_scan_id(cur))
     if scan_id is None:
         conn.close()
         return {"error": "no authoritative scan yet"}
@@ -4142,14 +4150,11 @@ def frontend_v2_asset_detail(domain_name: str):
             raise
         conn.rollback()
 
-    risk = next(
-        (
-            item for item in calculate_scan_risks(cur, scan_id)
-            if item.domain_id == domain_id
-            and asset_class in ("KNOWN", "SHADOW")
-        ),
-        None,
-    )
+    risk = (next(
+        (item for item in calculate_scan_risks(cur, scan_id)
+         if item.domain_id == domain_id
+         and asset_class in ("KNOWN", "SHADOW")), None)
+        if _historical_scan_id is None else None)
     conn.close()
 
     return {
@@ -5096,6 +5101,90 @@ def adhoc_campaign_result_list(
         raise
     finally:
         conn.close()
+
+
+def _brand_history_cursor():
+    conn = get_conn()
+    conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
+    return conn, conn.cursor()
+
+
+@app.get("/v2/brand-discovery/history/summary")
+def frontend_v2_brand_history_summary():
+    conn, cur = _brand_history_cursor()
+    try:
+        return history_summary(cur)
+    finally:
+        conn.close()
+
+
+@app.get("/v2/brand-discovery/history/assets")
+def frontend_v2_brand_history_assets(
+    page: int = 1, limit: int = 50, classification: str = None,
+    search: str = None, sort_by: str = "domain", sort_dir: str = "asc",
+):
+    page, limit = max(page, 1), min(max(limit, 1), 200)
+    classification = (classification or "").strip().upper() or None
+    if classification not in (None, "NEEDS_VERIFICATION", "KNOWN", "SHADOW", "UNKNOWN"):
+        raise HTTPException(status_code=400, detail="Invalid classification")
+    search = (search or "").strip() or None
+    if sort_by not in ("domain", "first_seen", "last_seen") or sort_dir not in ("asc", "desc"):
+        raise HTTPException(status_code=400, detail="Invalid sort options")
+    conn, cur = _brand_history_cursor()
+    try:
+        return history_assets(cur, page=page, limit=limit,
+                              classification=classification, search=search,
+                              sort_by=sort_by, sort_dir=sort_dir)
+    finally:
+        conn.close()
+
+
+@app.get("/v2/brand-discovery/history/assets/{domain_name}")
+def frontend_v2_brand_history_detail(domain_name: str):
+    identity = (domain_name or "").strip().lower().rstrip(".")
+    if not identity:
+        raise HTTPException(status_code=404, detail="Historical brand identity not found")
+    conn, cur = _brand_history_cursor()
+    try:
+        cur.execute(HISTORY_CTE + """
+            SELECT domain, identity, asset_class, review_class,
+                   first_evidence_scan_id, last_evidence_scan_id,
+                   first_evidence_at, last_evidence_at, discovery_sources,
+                   retained_scan_count
+              FROM inventory WHERE identity = %s
+        """, (identity,))
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Historical brand identity not found")
+        domain, key, asset_class, review_class, first_id, last_id, first_at, last_at, sources, scan_count = row
+        current = get_latest_authoritative_scan_id(cur)
+        cur.execute("""
+            SELECT sr.scan_id, s.status, d.domain
+              FROM scan_results sr JOIN domains d ON d.id = sr.domain_id
+              JOIN scans s ON s.id = sr.scan_id
+             WHERE LOWER(TRIM(TRAILING '.' FROM BTRIM(d.domain))) = %s
+             ORDER BY (sr.scan_id = %s) DESC,
+                      (s.status = 'SUCCEEDED') DESC, sr.scan_id DESC LIMIT 1
+        """, (key, current))
+        evidence = cur.fetchone()
+    finally:
+        conn.close()
+    detail = (_frontend_v2_asset_detail(evidence[2], _historical_scan_id=evidence[0])
+              if evidence else None)
+    return {
+        "scope": "retained_brand_source_history", "domain": domain,
+        "identity": key, "asset_class": asset_class,
+        "review_class": review_class,
+        "first_evidence_scan_id": first_id, "last_evidence_scan_id": last_id,
+        "first_evidence_at": first_at, "last_evidence_at": last_at,
+        "discovery_sources": sources, "retained_scan_count": scan_count,
+        "current_scan_member": bool(evidence and evidence[0] == current),
+        "detail_evidence_scan_id": evidence[0] if evidence else None,
+        "detail_evidence_scan_status": evidence[1] if evidence else None,
+        "detail_availability": "AVAILABLE" if detail and "error" not in detail else "UNAVAILABLE",
+        "detail": detail if detail and "error" not in detail else None,
+        "limitation": "Detail is a persisted observation from the identified scan; missing rows are unavailable evidence, not negative findings. Classification reflects current reporting rules.",
+    }
 
 
 @app.get("/v2/brand-assets")
