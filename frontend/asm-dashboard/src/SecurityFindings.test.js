@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
 import { getCertificateHosts, getDnsSecurityHosts, getSecurityFindings, getSecurityFindingsSummary, getSensitivePortHosts } from "./services/api";
 
@@ -110,6 +110,52 @@ test("renders live category counts, separate coverage, and the default attention
   expect(screen.getByRole("combobox", { name: "Finding view" })).toHaveValue("attention");
   expect(getSecurityFindings).toHaveBeenCalledWith({ page: 1, limit: 25, view: "attention" });
   expect(screen.queryByText("Candidate")).not.toBeInTheDocument();
+});
+
+test("uses the evidence-list scan ID while summary metadata is pending", async () => {
+  let resolveSummary;
+  getSecurityFindingsSummary.mockReturnValue(new Promise((resolve) => { resolveSummary = resolve; }));
+  render(<App />);
+
+  expect(await screen.findByText("admin-dev.example.com")).toBeInTheDocument();
+  const context = screen.getByRole("region", { name: "Security findings scan context" });
+  expect(within(context).getByText("CURRENT SCAN #19")).toBeInTheDocument();
+  expect(within(context).queryByText("SCAN UNAVAILABLE")).not.toBeInTheDocument();
+
+  await act(async () => resolveSummary(summary));
+  expect(within(context).getByText("CURRENT SCAN #19")).toBeInTheDocument();
+});
+
+test("keeps evidence scan context when the independent summary request fails", async () => {
+  getSecurityFindingsSummary.mockRejectedValue(new Error("summary unavailable"));
+  render(<App />);
+
+  expect(await screen.findByText("admin-dev.example.com")).toBeInTheDocument();
+  const context = screen.getByRole("region", { name: "Security findings scan context" });
+  expect(within(context).getByText("CURRENT SCAN #19")).toBeInTheDocument();
+  expect(screen.getByText("32 MATCHING")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Security findings summary" })).getAllByText("—")).toHaveLength(3);
+  expect(screen.queryByText("SCAN UNAVAILABLE")).not.toBeInTheDocument();
+});
+
+test("does not fabricate a scan ID when the evidence-list response omits it", async () => {
+  getSecurityFindings.mockResolvedValueOnce({ ...attentionPage, scan_id: null });
+  render(<App />);
+
+  expect(await screen.findByText("admin-dev.example.com")).toBeInTheDocument();
+  const context = screen.getByRole("region", { name: "Security findings scan context" });
+  expect(within(context).getByText("Scan metadata unavailable")).toBeInTheDocument();
+  expect(within(context).queryByText(/CURRENT SCAN #/)).not.toBeInTheDocument();
+});
+
+test("does not mix summary counts from a different scan than the evidence list", async () => {
+  getSecurityFindingsSummary.mockResolvedValue({ ...summary, scan_id: 18 });
+  render(<App />);
+
+  expect(await screen.findByText("admin-dev.example.com")).toBeInTheDocument();
+  const context = screen.getByRole("region", { name: "Security findings scan context" });
+  expect(within(context).getByText("CURRENT SCAN #19")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Security findings summary" })).getAllByText("—")).toHaveLength(3);
 });
 
 test("assessment cards select one inline panel and use server-side domain search and pagination", async () => {

@@ -314,7 +314,14 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
     return () => { active = false; };
   }, [filters.page, filters.pageSize, filters.view, filters.category, filters.source, filters.assetClass, listRequestVersion]);
 
-  const summaryReady = summaryStatus === "ready" && summary?.availability_state === "AVAILABLE";
+  const listScanId = Number.isInteger(data?.scan_id) ? data.scan_id : null;
+  const summaryReady = summaryStatus === "ready"
+    && summary?.availability_state === "AVAILABLE"
+    && Number.isInteger(summary?.scan_id)
+    && listScanId !== null
+    && summary.scan_id === listScanId;
+  const scanContext = listScanId !== null ? `CURRENT SCAN #${listScanId}`
+    : listStatus === "loading" ? "Loading scan metadata" : "Scan metadata unavailable";
   const categoryCount = (category) => summaryReady ? (summary.counts_by_category?.[category]?.records ?? 0) : "—";
   const findings = Array.isArray(data?.findings) ? data.findings : [];
   const total = Number.isInteger(data?.total) ? data.total : 0;
@@ -334,7 +341,7 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
   return (
     <div className="operations-grid security-findings-workspace">
       <section className="findings-page-heading operation-panel-full" aria-label="Security findings scan context">
-        <span className="scan-context">{summaryReady ? `CURRENT SCAN #${summary.scan_id}` : "SCAN UNAVAILABLE"}</span>
+        <span className="scan-context">{scanContext}</span>
       </section>
 
       <section className="findings-summary-grid operation-panel-full" aria-label="Security findings summary">
