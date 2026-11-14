@@ -1,8 +1,9 @@
 # Backend release pin
 
-The production Compose service is pinned to the committed release
-`9398f3ab92e539361c2d992c82345e97d6008df3`. Its local image must resolve to
-`sha256:a4d01befa7d2db107ded5d71c4e6d36cd2633f82c36fb4ab205243a668da4654`.
+The production Compose service is pinned to source revision
+`52e4782fe6b9ed2e2303aef951cf002dca653ad5` as
+`asip-backend:sr-be-07e-04-d-52e4782-20261114T133344Z`. Its local image resolves
+to `sha256:50eb67e92e824f3cf1388cfab727c7d6b1c646a4f68fac956edc302565398872`.
 The service has no Compose build context and uses `pull_policy: never`; Compose
 therefore fails if this exact local release image is missing instead of silently
 building from the working tree or pulling a replacement.
@@ -29,7 +30,7 @@ Run from the repository root. These commands do not recreate containers:
 ```bash
 git rev-parse HEAD
 docker inspect --format '{{.Config.Image}} {{.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}' asm_backend
-docker image inspect --format '{{.Id}} {{index .Config.Labels "org.opencontainers.image.revision"}}' asip-backend:9398f3ab92e539361c2d992c82345e97d6008df3
+docker image inspect --format '{{.Id}} {{index .Config.Labels "org.opencontainers.image.revision"}}' asip-backend:sr-be-07e-04-d-52e4782-20261114T133344Z
 docker compose -p asip -f docker-compose.yml config --quiet
 ```
 
@@ -37,7 +38,7 @@ Confirm the image ID equals the recorded digest above and that the running
 container's revision label matches the configured release. `config --quiet`
 validates interpolation without displaying environment values.
 
-## Promoting a future backend release
+## Building a future backend release
 
 Promotion requires a separately authorized release. It must start from a
 committed revision, not the working tree. The archive excludes runtime data,
@@ -57,11 +58,10 @@ docker build \
 docker image inspect --format '{{.Id}} {{index .Config.Labels "org.opencontainers.image.revision"}}' "asip-backend:$REV"
 ```
 
-After reviewing the built image and authorizing deployment, update the backend
-`image` pin in `docker-compose.yml` to `asip-backend:$REV` and update this
-document's expected image ID. Validate the rendered Compose configuration and
-image ID before any rollout. Do not enable a Compose build field or remove
-`pull_policy: never`.
+After reviewing the built image and receiving deployment approval, update the
+backend `image` pin in `docker-compose.yml` and this document's expected image
+ID. Validate the rendered Compose configuration and image ID before rollout.
+Do not enable a Compose build field or remove `pull_policy: never`.
 
 The future authorized backend-only rollout command is:
 
@@ -70,22 +70,20 @@ docker compose -p asip -f docker-compose.yml up -d \
   --no-deps --force-recreate --no-build --pull never backend
 ```
 
-That command is documented for a future approved release; it was not run for
-this configuration change.
+This is the backend-only rollout command used for the approved release.
 
-## Restoring the retained recovery image
+## Restoring the pre-release backend
 
-The pre-release production backend is retained as
-`asip-backend:recovery-sr-obs-01d-45f5d1b-20261104`, expected image ID
-`sha256:6ee38f0460b0cd0b76ddbbb93768d4b44fe3d6d00da2505e66d51c28dc56d1a3`,
-revision `45f5d1b149e808a94908da81fabd02f58b1121aa`. Use it only after explicit
-operator authorization. For a durable rollback, change the backend `image`
-reference in `docker-compose.yml` to the recovery tag before recreating the
-service. This keeps future Compose operations on the recovered release:
+The pre-release backend is retained as
+`asip-backend:rollback-sr-be-07e-04d-20261114T131339Z`, image ID
+`sha256:7e9410d2307e5155cce979964081fec7dd8288c9dd62e37d6c015094ada17f37`,
+revision `7376ed1ecb1f858dc1753533037e991a0684a715`. Use it only after explicit
+operator authorization. For a durable rollback, change the backend `image` pin
+to this tag before recreating the service:
 
 ```bash
 docker image inspect --format '{{.Id}} {{index .Config.Labels "org.opencontainers.image.revision"}}' \
-  asip-backend:recovery-sr-obs-01d-45f5d1b-20261104
+  asip-backend:rollback-sr-be-07e-04d-20261114T131339Z
 docker compose -p asip -f docker-compose.yml config --quiet
 docker compose -p asip -f docker-compose.yml up -d \
   --no-deps --force-recreate --no-build --pull never backend
@@ -93,8 +91,7 @@ docker inspect --format '{{.Config.Image}} {{.Image}} {{index .Config.Labels "or
 ```
 
 Before running these commands, set the backend image line in
-`docker-compose.yml` to the recovery tag and commit or otherwise retain that
-pin. The recovery procedure was not run for this release. The additive
-diagnostics column should remain in place if the application image is rolled
-back. Retain both images until the replacement release has passed its
-operational acceptance checks.
+`docker-compose.yml` to the rollback tag. The older
+`asip-backend:recovery-sr-obs-01d-45f5d1b-20261104` image is also retained.
+Keep both images until the replacement release has passed operational
+acceptance checks.
