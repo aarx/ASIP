@@ -168,7 +168,7 @@ export default function RiskExposurePage({ query }) {
   return (
     <div className="operations-grid">
       <section className="operations-kpis" aria-label="Risk and exposure metrics">
-        <MetricCard label="Current High Risk" value={overview.risk_distribution?.High ?? 0} support="Current scan" accent={RISK_COLORS.High} href="#/assets?priority=High" />
+        <MetricCard label="Current High Risk" value={overview.risk_distribution?.High ?? 0} support="Current scan · canonical priority" accent={RISK_COLORS.High} href="#/assets?priority=High" />
         <MetricCard label="Assets with risk scores" value={priorityData?.count ?? "—"} support="Current scan" accent="#a96f1f" />
         <MetricCard label="HTTP responding" value={exposure.http_responding_domains ?? "—"} support="Current scan" accent="#2f7d5b" href="#/assets?http_live=true" />
         <MetricCard
@@ -205,7 +205,7 @@ export default function RiskExposurePage({ query }) {
         <RiskDistributionChart distribution={overview.risk_distribution} priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}&limit=25`} />
       </Panel>
 
-      <Panel title="Historical High Risk" subtitle="Distinct organizational assets with a persisted High score in a successful scan" meta={historicalCount == null ? "UNAVAILABLE" : `${historicalCount} ASSETS`} className="operation-panel-full historical-high-risk-panel" id="historical-high-risk">
+      <Panel title="Historical High Risk" subtitle="Distinct assets with a High risk score in at least one successful retained scan" meta={historicalCount == null ? "UNAVAILABLE" : `${historicalCount} ASSETS`} className="operation-panel-full historical-high-risk-panel" id="historical-high-risk">
         {historicalStatus === "loading" && <LoadingState title="Loading Historical High Risk" copy="Retrieving persisted High-score history." />}
         {(historicalStatus === "error" || historicalStatus === "unavailable") && (
           <div className="risk-history-unavailable" role={historicalStatus === "error" ? "alert" : "status"}>

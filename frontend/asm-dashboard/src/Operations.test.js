@@ -158,6 +158,8 @@ test("Risk Overview keeps its metrics, HTTP drilldowns, and chart above Historic
     "Recorded Findings", "Observed sensitive-port exposures", "Review Indicators",
   ]);
   expect(screen.queryByText("Discovery Sources")).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Current High Risk/ })).toHaveTextContent("Current scan · canonical priority");
+  expect(screen.getByText("Distinct assets with a High risk score in at least one successful retained scan")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Current Risk Distribution" })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Assets with IP addresses/ })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /HTTP responding/ })).toHaveAttribute("href", "#/assets?http_live=true");
