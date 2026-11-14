@@ -20,6 +20,7 @@ from asset_reporting import (
     current_scan_asset_classes,
     current_scan_risks,
 )
+from asset_history import list_retained_assets, retained_inventory_cte, identity_sql
 from brand_history import history_summary, history_assets, HISTORY_CTE
 from scan_diagnostics import api_diagnostics
 from risk_engine import ASSET_EXPOSURE_KEYWORDS, calculate_scan_risks, get_asset_exposure_keywords, priority_for_score
@@ -3688,6 +3689,7 @@ def frontend_v2_overview():
 
 @app.get("/v2/assets")
 def frontend_v2_assets(
+    scope: str = "current",
     page: int = 1,
     limit: int = 50,
     search: str = None,
@@ -3697,6 +3699,8 @@ def frontend_v2_assets(
     provider: str = None,
     http_observation_status: str = None,
     risk_positive: bool = None,
+    risk_min: int = None,
+    risk_max: int = None,
     has_ip: bool = None,
     http_live: bool = None,
     http_status: int = None,
@@ -3706,6 +3710,8 @@ def frontend_v2_assets(
     sort_by: str = None,
     sort_dir: str = None,
 ):
+    if scope not in ("current", "retained_history"):
+        raise HTTPException(status_code=400, detail="scope must be current or retained_history")
     _validate_asset_metric_filters(http_status, http_status_group)
     discovery_source = _normalize_brand_discovery_filter(discovery_source)
     exposure_keyword_value = None
@@ -3720,6 +3726,68 @@ def frontend_v2_assets(
         if sort_dir is None:
             sort_dir = "desc"
     sort_by, sort_dir = _frontend_sort_options(sort_by, sort_dir)
+
+    if scope == "retained_history":
+        if any(value is not None and not 0 <= value <= 100 for value in (risk_min, risk_max)):
+            raise HTTPException(status_code=400, detail="risk_min and risk_max must be between 0 and 100")
+        if risk_min is not None and risk_max is not None and risk_min > risk_max:
+            raise HTTPException(status_code=400, detail="risk_min cannot exceed risk_max")
+        conn = get_conn()
+        conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
+        cur = conn.cursor()
+        filters = {
+            "search": search, "ownership": ownership, "asset_class": asset_class,
+            "priority": priority, "provider": provider,
+            "http_observation_status": http_observation_status,
+            "risk_positive": risk_positive, "has_ip": has_ip, "http_live": http_live,
+            "risk_min": risk_min, "risk_max": risk_max,
+            "http_status": http_status, "http_status_group": http_status_group,
+            "discovery_source": discovery_source,
+            "exposure_keyword": exposure_keyword_value,
+        }
+        count, assets = list_retained_assets(
+            cur, page=page, limit=limit, filters=filters,
+            sort_by=sort_by, sort_dir=sort_dir,
+        )
+        cur.execute("SELECT MAX(id) FROM scans WHERE status='SUCCEEDED'")
+        current_scan_id = cur.fetchone()[0]
+        cur.execute("""
+          SELECT COUNT(DISTINCT scan_id), MIN(s.scan_time), MAX(s.scan_time),
+                 json_agg(json_build_object('scan_id',s.id,'status',s.status,
+                                            'scan_time',s.scan_time) ORDER BY s.id)
+            FROM (SELECT DISTINCT scan_id FROM scan_results) retained
+            JOIN scans s ON s.id=retained.scan_id
+        """)
+        retained = cur.fetchone()
+        conn.close()
+        for asset in assets:
+            reasons = asset.get("risk_reasons")
+            if isinstance(reasons, str):
+                try:
+                    reasons = json.loads(reasons)
+                except (TypeError, ValueError):
+                    reasons = [reasons] if reasons else []
+            asset["risk"] = (
+                {"score": asset["risk_score"], "priority": priority_for_score(asset["risk_score"]),
+                 "reasons": reasons if isinstance(reasons, list) else []}
+                if asset["risk_available"] else None
+            )
+            asset["field_availability"] = {
+                "dns": asset["state_available"],
+                "http": asset["state_available"],
+                "provider": asset["provider_available"],
+                "asn": asset["asn_available"],
+                "risk": asset["risk_available"],
+            }
+        return {
+            "scope": "retained_history", "current_scan_id": current_scan_id,
+            "classification_basis": "latest retained domain record evaluated with current reporting rules",
+            "page": page, "limit": limit, "sort_by": sort_by,
+            "sort_dir": sort_dir, "count": count, "assets": assets,
+            "retention": {"scan_count_with_membership": retained[0],
+                          "earliest_scan_time": retained[1], "latest_scan_time": retained[2],
+                          "scans": retained[3], "is_exhaustive_lifetime_history": False},
+        }
 
     conn = get_conn()
     cur = conn.cursor()
@@ -3842,18 +3910,118 @@ def frontend_v2_assets(
     }
 
 
+@app.get("/v2/assets/summary")
+def frontend_v2_assets_summary(scope: str = "current"):
+    if scope not in ("current", "retained_history"):
+        raise HTTPException(status_code=400, detail="scope must be current or retained_history")
+    conn = get_conn()
+    if scope == "retained_history":
+        conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
+    cur = conn.cursor()
+    if scope == "retained_history":
+        cur.execute(retained_inventory_cte() + """
+          SELECT asset_class, COUNT(*) FROM enriched GROUP BY asset_class
+        """)
+        counts = dict(cur.fetchall())
+        cur.execute("SELECT MAX(id) FROM scans WHERE status='SUCCEEDED'")
+        current_scan_id = cur.fetchone()[0]
+        cur.execute("""
+          SELECT COUNT(DISTINCT scan_id), MIN(s.scan_time), MAX(s.scan_time),
+                 json_agg(json_build_object('scan_id',s.id,'status',s.status,
+                                            'scan_time',s.scan_time) ORDER BY s.id)
+            FROM (SELECT DISTINCT scan_id FROM scan_results) r
+            JOIN scans s ON s.id=r.scan_id
+        """)
+        retention = cur.fetchone()
+        conn.close()
+        return {"scope": "retained_history", "current_scan_id": current_scan_id,
+                "classification_basis": "latest retained domain record evaluated with current reporting rules",
+                "count": sum(counts.values()), "classification_counts": {
+                    key: counts.get(key, 0) for key in ("KNOWN", "SHADOW", "CANDIDATE", "EXTERNAL")
+                }, "retention": {"scan_count_with_membership": retention[0],
+                                  "earliest_scan_time": retention[1], "latest_scan_time": retention[2],
+                                  "scans": retention[3],
+                                  "is_exhaustive_lifetime_history": False}}
+    scan_id = get_latest_authoritative_scan_id(cur)
+    if scan_id is None:
+        conn.close()
+        return {"scope": "current", "scan_id": None, "count": 0, "classification_counts": {}}
+    cur.execute("SELECT asset_class, COUNT(*) FROM (SELECT d.id, " +
+                reporting_asset_class_sql("d.domain", "d.ownership_status") +
+                " AS asset_class FROM scan_results sr JOIN domains d ON d.id=sr.domain_id WHERE sr.scan_id=%s) q GROUP BY asset_class", (scan_id,))
+    counts = dict(cur.fetchall())
+    conn.close()
+    return {"scope": "current", "scan_id": scan_id, "count": sum(counts.values()),
+            "classification_counts": counts}
+
+
 @app.get("/v2/assets/export")
 def frontend_v2_assets_export(
+    scope: str = "current",
     search: str = None,
     ownership: str = None,
     asset_class: str = None,
     priority: str = None,
     provider: str = None,
     http_observation_status: str = None,
+    risk_positive: bool = None,
+    risk_min: int = None,
+    risk_max: int = None,
+    has_ip: bool = None,
+    http_live: bool = None,
+    http_status: int = None,
+    http_status_group: str = None,
+    discovery_source: str = None,
+    exposure_keyword: str = None,
     sort_by: str = None,
     sort_dir: str = None,
 ):
+    if scope not in ("current", "retained_history"):
+        raise HTTPException(status_code=400, detail="scope must be current or retained_history")
     sort_by, sort_dir = _frontend_sort_options(sort_by, sort_dir)
+    if scope == "retained_history":
+        _validate_asset_metric_filters(http_status, http_status_group)
+        if any(value is not None and not 0 <= value <= 100 for value in (risk_min, risk_max)):
+            raise HTTPException(status_code=400, detail="risk_min and risk_max must be between 0 and 100")
+        if risk_min is not None and risk_max is not None and risk_min > risk_max:
+            raise HTTPException(status_code=400, detail="risk_min cannot exceed risk_max")
+        discovery_source = _normalize_brand_discovery_filter(discovery_source)
+        if exposure_keyword is not None:
+            exposure_keyword = exposure_keyword.strip().lower()
+            if exposure_keyword not in ASSET_EXPOSURE_KEYWORDS:
+                raise HTTPException(status_code=400, detail="Invalid exposure_keyword")
+        conn = get_conn()
+        conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
+        cur = conn.cursor()
+        total, rows = list_retained_assets(
+            cur, page=1, limit=2_147_483_647,
+            filters={"search": search, "ownership": ownership, "asset_class": asset_class,
+                     "priority": priority, "provider": provider,
+                     "http_observation_status": http_observation_status,
+                     "risk_positive": risk_positive, "has_ip": has_ip,
+                     "risk_min": risk_min, "risk_max": risk_max,
+                     "http_live": http_live, "http_status": http_status,
+                     "http_status_group": http_status_group,
+                     "discovery_source": discovery_source,
+                     "exposure_keyword": exposure_keyword},
+            sort_by=sort_by, sort_dir=sort_dir,
+        )
+        conn.close()
+        output = io.StringIO(newline="")
+        writer = csv.writer(output, lineterminator="\r\n")
+        writer.writerow(["Identity Key", "Domain", "Ownership Status", "Asset Class",
+                         "Current Scan Member", "Evidence Scan ID", "Evidence Scan Status",
+                         "Evidence Time", "Risk Score", "HTTP Observation", "HTTP Status"])
+        for row in rows:
+            writer.writerow([row["identity_key"], row["domain"], row["ownership_status"],
+                             row["asset_class"], row["current_scan_member"],
+                             row["latest_evidence_scan_id"], row["latest_evidence_scan_status"],
+                             row["latest_evidence_at"], row["risk_score"],
+                             row["http_observation_status"], row["http_status"]])
+        response = StreamingResponse(iter([output.getvalue()]), media_type="text/csv")
+        response.headers["Content-Disposition"] = 'attachment; filename="shadowrecon-assets-retained-history.csv"'
+        response.headers["X-Total-Count"] = str(total)
+        return response
     conn = get_conn()
     cur = conn.cursor()
     scan_id = get_latest_authoritative_scan_id(cur)
@@ -3992,7 +4160,42 @@ def frontend_v2_assets_export(
 
 
 @app.get("/v2/assets/{domain_name}")
-def frontend_v2_asset_detail(domain_name: str):
+def frontend_v2_asset_detail(domain_name: str, scope: str = "current", scan_id: int = None):
+    if scope not in ("current", "retained_history"):
+        raise HTTPException(status_code=400, detail="scope must be current or retained_history")
+    if scope == "retained_history":
+        conn = get_conn()
+        conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
+        cur = conn.cursor()
+        key = identity_sql("%s")
+        cur.execute(retained_inventory_cte() + f"""
+          SELECT domain, scan_id, scan_time, scan_status, current_scan_member, identity_key
+            FROM enriched WHERE identity_key={key}
+        """, (domain_name,))
+        match = cur.fetchone()
+        if match is None:
+            conn.close()
+            raise HTTPException(status_code=404, detail="identity not present in retained scans")
+        if scan_id is not None:
+            cur.execute(f"""
+              SELECT d.domain FROM scan_results sr JOIN domains d ON d.id=sr.domain_id
+               WHERE sr.scan_id=%s AND {identity_sql('d.domain')}={key}
+               ORDER BY d.id LIMIT 1
+            """, (scan_id, domain_name))
+            selected = cur.fetchone()
+            if selected is None:
+                conn.close()
+                raise HTTPException(status_code=404, detail="identity not present in requested scan")
+            domain_for_detail = selected[0]
+            evidence_scan_id = scan_id
+        else:
+            domain_for_detail, evidence_scan_id = match[0], match[1]
+        conn.close()
+        result = _frontend_v2_asset_detail(domain_for_detail, _historical_scan_id=evidence_scan_id)
+        result.update({"scope": "retained_history", "identity_key": match[5],
+                       "current_scan_member": bool(match[4]),
+                       "evidence_scan_status": match[3], "evidence_scan_time": match[2]})
+        return result
     return _frontend_v2_asset_detail(domain_name)
 
 

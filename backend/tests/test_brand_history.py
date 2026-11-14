@@ -26,10 +26,11 @@ class Cursor:
 
 
 class BrandHistoryTests(unittest.TestCase):
-    def test_current_asset_detail_route_exposes_no_historical_scan_selector(self):
+    def test_asset_detail_route_exposes_only_validated_historical_selector(self):
         main = load_main()
         self.assertEqual(list(inspect.signature(main.frontend_v2_asset_detail).parameters),
-                         ['domain_name'])
+                         ['domain_name', 'scope', 'scan_id'])
+        self.assertNotIn('_historical_scan_id', inspect.signature(main.frontend_v2_asset_detail).parameters)
 
     def test_summary_reconciles_and_marks_legacy_retention(self):
         cursor = Cursor(
