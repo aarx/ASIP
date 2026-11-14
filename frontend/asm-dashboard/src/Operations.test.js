@@ -11,6 +11,7 @@ import {
   getSecurityFindingsSummary,
   getDnsSecurityHosts,
   getSensitiveExposure,
+  getSensitivePortHosts,
   getV2Assets,
   getV2Overview,
   getV2ReviewIndicators,
@@ -39,6 +40,7 @@ jest.mock("./services/api", () => ({
   getDisappearedDomains: jest.fn(),
   getFindings: jest.fn(),
   getSensitiveExposure: jest.fn(),
+  getSensitivePortHosts: jest.fn(),
   getExposureSummary: jest.fn(),
   getDnsSecuritySummary: jest.fn(),
   getRiskHistoryAssets: jest.fn(),
@@ -73,6 +75,7 @@ beforeEach(() => {
     getSecurityFindingsSummary,
     getDnsSecurityHosts,
     getSensitiveExposure,
+    getSensitivePortHosts,
     getV2Assets,
     getV2Overview,
     getV2ReviewIndicators,
@@ -233,27 +236,82 @@ test("Risk Overview restores Current Risk Distribution from the legacy route", a
   expect(screen.getByRole("link", { name: /Low 4/ })).toHaveAttribute("href", "#/assets?priority=Low&limit=25");
 });
 
-test("Security Review exposes the existing capped sensitive-port observations", async () => {
+test("Sensitive Ports groups distinct ports by normalized host and expands deduplicated evidence", async () => {
   window.location.hash = "#/risk/security-review?tab=sensitive-ports";
-  getSensitiveExposure.mockResolvedValue(Array.from({ length: 20 }, (_, index) => ({
-    domain: `port-${index}.example.com`, port: 20 + index, risk: 3, service: "Observed service",
-  })));
+  getSensitivePortHosts.mockResolvedValue({
+    scan_id: 20, page: 1, limit: 25, total: 2, assessment_coverage: "UNKNOWN",
+    hosts: [
+      { domain_id: 7, hostname: "PORTAL.Example.", domain: "PORTAL.Example.", scan_id: 20, ports: [
+        { port: 443, service: "https", source_risk: 1, description: "HTTPS", scan_id: 20 },
+        { port: 443, service: "https", source_risk: 1, description: "HTTPS", scan_id: 20 },
+        { port: 8443, service: "https-alt", source_risk: 4, description: "Alternate HTTPS", scan_id: 20 },
+      ] },
+      { domain_id: 8, hostname: "www.example.com", domain: "www.example.com", scan_id: 20, ports: [
+        { port: 80, service: "http", source_risk: 2, description: "HTTP", scan_id: 20 },
+      ] },
+    ],
+  });
   render(<App />);
 
-  expect(await screen.findByText("20+ OBSERVED")).toBeInTheDocument();
-  expect(screen.getByText("Result list capped at 20 rows.")).toBeInTheDocument();
-  expect(screen.queryByText("20 ROWS")).not.toBeInTheDocument();
+  expect(await screen.findByText("2 HOSTS · SCAN #20")).toBeInTheDocument();
+  expect(screen.getByText("portal.example")).toHaveAttribute("href", "#/assets/PORTAL.Example.?return=risk%2Fsecurity-review&return_query=tab%3Dsensitive-ports");
+  expect(screen.getByText("2 ports")).toBeInTheDocument();
+  expect(screen.getByText("Highest sensitivity 4")).toBeInTheDocument();
+  expect(screen.getByText("portal.example").compareDocumentPosition(screen.getByText("www.example.com")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const expand = screen.getByRole("button", { name: "Expand port evidence for portal.example" });
+  expect(expand).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(expand);
+  expect(screen.getByRole("button", { name: "Collapse port evidence for portal.example" })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText("Alternate HTTPS")).toBeInTheDocument();
+  expect(screen.getAllByText("443")).toHaveLength(2);
+  expect(screen.queryByText("Protocol")).not.toBeInTheDocument();
+  expect(getSensitivePortHosts).toHaveBeenCalledWith({ page: 1, limit: 25 });
 });
 
 test("does not describe an empty sensitive-port result as a clean assessment", async () => {
   window.location.hash = "#/risk/security-review?tab=sensitive-ports";
-  getSensitiveExposure.mockResolvedValue([]);
+  getSensitivePortHosts.mockResolvedValue({ scan_id: 20, page: 1, limit: 25, total: 0, assessment_coverage: "UNKNOWN", hosts: [] });
 
   render(<App />);
 
-  expect(await screen.findByText("No port observations recorded for this scan.")).toBeInTheDocument();
+  expect(await screen.findByText("No positive port observations recorded · assessment coverage unknown.")).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Sensitive Ports" })).toHaveAttribute("aria-selected", "true");
   expect(screen.queryByText(/clean assessment/i)).not.toBeInTheDocument();
+});
+
+test("Sensitive Ports pagination uses the backend host total and keeps one scan across pages", async () => {
+  window.location.hash = "#/risk/security-review?tab=sensitive-ports";
+  getSensitivePortHosts.mockImplementation(({ page, limit }) => Promise.resolve({
+    scan_id: 20, page, limit, total: 26, assessment_coverage: "UNKNOWN",
+    hosts: [page === 1
+      ? { domain_id: 1, hostname: "a.example.com", ports: [{ port: 22, service: "ssh", source_risk: 4, scan_id: 20 }] }
+      : { domain_id: 2, hostname: "z.example.com", ports: [{ port: 443, service: "https", source_risk: 1, description: "HTTPS", scan_id: 20 }] }],
+  }));
+  render(<App />);
+
+  expect(await screen.findByText("Page 1 of 2 · 26 observed hosts")).toBeInTheDocument();
+  expect(screen.getByText("a.example.com")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(await screen.findByText("z.example.com")).toBeInTheDocument();
+  expect(getSensitivePortHosts).toHaveBeenLastCalledWith({ page: 2, limit: 25, scan_id: 20 });
+  expect(screen.getByRole("button", { name: "Previous" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  expect(await screen.findByText("a.example.com")).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("combobox", { name: "Sensitive-port hosts per page" }), { target: { value: "50" } });
+  expect(await screen.findByText("Page 1 of 1 · 26 observed hosts")).toBeInTheDocument();
+  expect(getSensitivePortHosts).toHaveBeenLastCalledWith({ page: 1, limit: 50, scan_id: 20 });
+});
+
+test("Sensitive Ports exposes retry after unavailable host results", async () => {
+  window.location.hash = "#/risk/security-review?tab=sensitive-ports";
+  getSensitivePortHosts
+    .mockRejectedValueOnce(new Error("unavailable"))
+    .mockResolvedValueOnce({ scan_id: 20, page: 1, limit: 25, total: 0, assessment_coverage: "UNKNOWN", hosts: [] });
+  render(<App />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Retry request" }));
+  expect(await screen.findByText("No positive port observations recorded · assessment coverage unknown.")).toBeInTheDocument();
+  expect(getSensitivePortHosts).toHaveBeenCalledTimes(2);
 });
 
 test("DNS Security remains reachable from the Risk Overview legacy section URL", async () => {
@@ -398,24 +456,25 @@ test("Security Review priority asset page survives detail navigation and restore
 
 test("Security Review keeps Sensitive Ports as a separate tab with asset return context", async () => {
   window.location.hash = "#/risk/security-review?tab=sensitive-ports";
-  getSensitiveExposure.mockResolvedValue([{ domain: "observed.example.com", port: 22, risk: 4, service: "SSH" }]);
+  getSensitivePortHosts.mockResolvedValue({ scan_id: 20, page: 1, limit: 25, total: 1, assessment_coverage: "UNKNOWN", hosts: [{ domain_id: 13, domain: "observed.example.com", hostname: "observed.example.com", asset_class: "SHADOW", scan_id: 20, ports: [{ port: 22, service: "SSH", source_risk: 4, description: "Remote shell", scan_id: 20 }] }] });
 
   render(<App />);
 
   expect(await screen.findByRole("tab", { name: "Sensitive Ports" })).toHaveAttribute("aria-selected", "true");
   expect(screen.getByRole("tab", { name: "Prioritized Assets" })).toHaveAttribute("aria-selected", "false");
   expect(screen.getByRole("tab", { name: "Evidence & Signals" })).toHaveAttribute("aria-selected", "false");
+  fireEvent.click(screen.getByRole("button", { name: "Expand port evidence for observed.example.com" }));
   expect(screen.getByText("SSH")).toBeInTheDocument();
   expect(screen.getByText("observed.example.com")).toHaveAttribute(
     "href", "#/assets/observed.example.com?return=risk%2Fsecurity-review&return_query=tab%3Dsensitive-ports"
   );
-  expect(getSensitiveExposure).toHaveBeenCalledTimes(1);
+  expect(getSensitivePortHosts).toHaveBeenCalledTimes(1);
   expect(getV2Overview).not.toHaveBeenCalled();
 });
 
 test("legacy Sensitive Ports and Needs Review links redirect to their Security Review views", async () => {
   window.location.hash = "#/risk?section=sensitive-ports";
-  getSensitiveExposure.mockResolvedValue([]);
+  getSensitivePortHosts.mockResolvedValue({ scan_id: 20, page: 1, limit: 25, total: 0, assessment_coverage: "UNKNOWN", hosts: [] });
   const first = render(<App />);
   expect(await screen.findByRole("tab", { name: "Sensitive Ports" })).toHaveAttribute("aria-selected", "true");
   expect(window.location.hash).toBe("#/risk/security-review?tab=sensitive-ports");

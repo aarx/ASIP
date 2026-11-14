@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
-import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getFindings, getHttpStatus, getNamingAssetExposure, getRiskHistorySummary, getSecurityFindings, getSecurityFindingsSummary, getSeeds, getSensitiveExposure, getV2Assets, getV2BrandAssets, getV2Overview, getV2ReviewIndicators, getV2Scans } from "./services/api";
+import { getAssetGrowth, getCertExpiry, getDiscoverySources, getExposureSummary, getFindings, getHttpStatus, getNamingAssetExposure, getRiskHistorySummary, getSecurityFindings, getSecurityFindingsSummary, getSeeds, getSensitiveExposure, getSensitivePortHosts, getV2Assets, getV2BrandAssets, getV2Overview, getV2ReviewIndicators, getV2Scans } from "./services/api";
 
 jest.mock("./services/api", () => ({
   getV2Overview: jest.fn(),
@@ -27,6 +27,7 @@ jest.mock("./services/api", () => ({
   getRiskyDomains: jest.fn(),
   getFindings: jest.fn(),
   getSensitiveExposure: jest.fn(),
+  getSensitivePortHosts: jest.fn(),
   getExposureSummary: jest.fn(),
 }));
 jest.mock("recharts", () => {
@@ -91,6 +92,7 @@ beforeEach(() => {
   getSecurityFindingsSummary.mockReset();
   getFindings.mockReset();
   getSensitiveExposure.mockReset();
+  getSensitivePortHosts.mockReset();
   getV2ReviewIndicators.mockReset();
 });
 
@@ -416,6 +418,7 @@ test("Security Review keeps stable accessible tabs and preserves tab navigation"
   getV2Overview.mockResolvedValue(overview);
   getV2Assets.mockResolvedValue(rankedAssetPage);
   getSensitiveExposure.mockResolvedValue([]);
+  getSensitivePortHosts.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, total: 0, assessment_coverage: "UNKNOWN", hosts: [] });
   getSecurityFindingsSummary.mockResolvedValue({ availability_state: "AVAILABLE", scan_id: 42, counts_by_category: {} });
   getSecurityFindings.mockResolvedValue({ availability_state: "AVAILABLE", scan_id: 42, findings: [], total: 0 });
   render(<App />);
@@ -439,7 +442,7 @@ test("Security Review keeps stable accessible tabs and preserves tab navigation"
   expect(window.location.hash).toBe("#/risk/security-review?tab=sensitive-ports");
   const sensitivePorts = screen.getByRole("tab", { name: "Sensitive Ports" });
   expect(sensitivePorts).toHaveAttribute("aria-selected", "true");
-  expect(await screen.findByText("No port observations recorded for this scan.")).toBeInTheDocument();
+  expect(await screen.findByText("No positive port observations recorded · assessment coverage unknown.")).toBeInTheDocument();
 
   fireEvent.keyDown(sensitivePorts, { key: "ArrowRight" });
   expect(window.location.hash).toBe("#/risk/security-review?tab=prioritized-assets");
