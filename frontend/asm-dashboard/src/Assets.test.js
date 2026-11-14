@@ -477,6 +477,9 @@ test("All scans uses retained identity totals, preserves compatible filters, and
   await screen.findByText("app.example.com");
   fireEvent.click(screen.getByRole("button", { name: "All scans" }));
   expect(await screen.findByText("historical-only.example.com")).toBeInTheDocument();
+  expect(screen.getByText("Distinct retained identities")).toHaveAttribute("title", expect.stringContaining("Risk and HTTP fields reflect the API-selected observation"));
+  expect(screen.getByRole("group", { name: "Inventory scope" })).toContainElement(screen.getByRole("button", { name: "All scans" }));
+  expect(screen.getByRole("button", { name: "All scans" })).toHaveAttribute("aria-pressed", "true");
   expect(window.location.hash).toBe("#/assets?search=app&scope=retained_history&limit=25");
   expect(getV2Assets).toHaveBeenLastCalledWith({
     scope: "retained_history", page: 1, limit: 25, sort_by: "domain", sort_dir: "asc", search: "app",
@@ -485,7 +488,6 @@ test("All scans uses retained identity totals, preserves compatible filters, and
   expect(screen.getByRole("button", { name: "All scans" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByText("2,620 retained identities")).toBeInTheDocument();
   expect(screen.getByText("Needs Verification 1,703")).toBeInTheDocument();
-  expect(screen.getByText("Retained scans · current rules · not exhaustive lifetime history")).toBeInTheDocument();
   const row = within(screen.getByText("historical-only.example.com").closest("tr"));
   expect(row.getByText("Historical-only identity")).toBeInTheDocument();
   expect(row.getByText("Evidence · scan #18 · SUCCEEDED")).toBeInTheDocument();

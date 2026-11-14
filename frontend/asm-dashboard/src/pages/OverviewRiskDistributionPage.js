@@ -23,8 +23,8 @@ export default function OverviewRiskDistributionPage() {
     return () => { active = false; };
   }, [requestVersion]);
 
-  if (status === "loading") return <LoadingState title="Loading Risk Distribution" copy="Retrieving canonical current-scan risk categories." />;
-  if (status === "error") return <ErrorState title="Risk Distribution unavailable" copy="The current risk distribution could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
+  if (status === "loading") return <LoadingState title="Loading Current Risk Distribution" copy="Retrieving canonical current-scan risk categories." />;
+  if (status === "error") return <ErrorState title="Current Risk Distribution unavailable" copy="The current risk distribution could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
   if (!data || data.current_scan_id == null) return <EmptyState />;
 
   return (
@@ -34,7 +34,7 @@ export default function OverviewRiskDistributionPage() {
         <strong>#{data.current_scan_id}</strong>
         <span aria-hidden="true">View scans →</span>
       </a>
-      <Panel title="Risk distribution" subtitle="Canonical priorities across confirmed organizational assets" meta={`SCAN #${data.current_scan_id}`} className="overview-subpage-panel">
+      <Panel title="Current Risk Distribution" subtitle="Canonical priorities across confirmed organizational assets" meta={`SCAN #${data.current_scan_id}`} className="overview-subpage-panel">
         <RiskDistributionChart
           distribution={data.risk_distribution}
           priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}&limit=25`}

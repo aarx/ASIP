@@ -374,8 +374,8 @@ test("redirects the legacy Risk Distribution route to Risk Overview", async () =
   getRiskHistorySummary.mockResolvedValue({ availability_state: "UNAVAILABLE" });
   render(<App />);
 
-  expect(await screen.findByRole("heading", { name: "Risk distribution" })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Risk distribution" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Current Risk Distribution" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Current Risk Distribution" })).toBeInTheDocument();
   expect(document.getElementById("risk-distribution")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /High 1/ })).toHaveAttribute("href", "#/assets?priority=High&limit=25");
   expect(window.location.hash).toBe("#/risk?section=risk-distribution");

@@ -155,10 +155,10 @@ test("Risk Overview keeps its metrics, HTTP drilldowns, and chart above Historic
   ]);
   const actionableKpis = screen.getByRole("region", { name: "Actionable evidence" });
   expect([...actionableKpis.querySelectorAll(".metric-label")].map((node) => node.textContent)).toEqual([
-    "Findings", "Observed sensitive-port exposures", "Review Indicators",
+    "Recorded Findings", "Observed sensitive-port exposures", "Review Indicators",
   ]);
   expect(screen.queryByText("Discovery Sources")).not.toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Risk distribution" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Current Risk Distribution" })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Assets with IP addresses/ })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: /HTTP responding/ })).toHaveAttribute("href", "#/assets?http_live=true");
   expect(screen.getByRole("link", { name: "High 1" })).toBeInTheDocument();
@@ -171,7 +171,7 @@ test("Risk Overview keeps its metrics, HTTP drilldowns, and chart above Historic
   expect(actionable.querySelector('a[href="#/risk/security-review?tab=sensitive-ports"]')).toBeInTheDocument();
   expect(actionable.querySelector('a[href="#/risk/security-review?tab=evidence-signals&signals=review-indicators"]')).toBeInTheDocument();
   const riskHeadings = [...document.querySelectorAll(".panel-title")].map((node) => node.textContent);
-  expect(riskHeadings.indexOf("Risk distribution")).toBeLessThan(riskHeadings.indexOf("Historical High Risk"));
+  expect(riskHeadings.indexOf("Current Risk Distribution")).toBeLessThan(riskHeadings.indexOf("Historical High Risk"));
   expect(screen.queryByRole("tab", { name: "Needs review" })).not.toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: "DNS assessments" })).not.toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: "Sensitive ports" })).not.toBeInTheDocument();
@@ -211,7 +211,7 @@ test("legacy DNS assessment section redirects to the existing DNS Security page"
   expect(getDnsSecuritySummary).toHaveBeenCalledTimes(1);
 });
 
-test("Risk Overview restores Risk Distribution in its own context", async () => {
+test("Risk Overview restores Current Risk Distribution from the legacy route", async () => {
   window.location.hash = "#/risk?section=risk-distribution";
   getV2Overview.mockResolvedValue(overview);
   getV2Assets.mockResolvedValue({ scan_id: 42, page: 1, limit: 25, count: 0, assets: [] });
@@ -225,7 +225,7 @@ test("Risk Overview restores Risk Distribution in its own context", async () => 
 
   render(<App />);
 
-  expect(await screen.findByRole("heading", { name: "Risk distribution" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Current Risk Distribution" })).toBeInTheDocument();
   expect(document.getElementById("risk-distribution")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /High 1/ })).toHaveAttribute("href", "#/assets?priority=High&limit=25");
   expect(screen.getByRole("link", { name: /Low 4/ })).toHaveAttribute("href", "#/assets?priority=Low&limit=25");

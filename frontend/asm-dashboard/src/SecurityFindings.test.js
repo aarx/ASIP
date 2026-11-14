@@ -96,6 +96,10 @@ test("renders live category counts, separate coverage, and the default attention
 
   expect(await screen.findByRole("heading", { name: "Security Review" })).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Evidence & Signals" })).toHaveAttribute("aria-selected", "true");
+  const findingSummary = screen.getByRole("region", { name: "Security findings summary" });
+  expect(within(findingSummary).getByText("Recorded Findings")).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Finding category" })).toHaveDisplayValue("All categories");
+  expect(within(screen.getByRole("combobox", { name: "Finding category" })).getByRole("option", { name: "Recorded Findings" })).toHaveValue("FINDING");
   expect(screen.getByText("0")).toBeInTheDocument();
   expect(screen.getByText("32")).toBeInTheDocument();
   expect(screen.getByText("892")).toBeInTheDocument();

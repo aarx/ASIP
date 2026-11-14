@@ -299,7 +299,7 @@ export default function AssetExplorerPage({ query }) {
           <button type="button" aria-pressed={scope === "current"} onClick={() => changeScope("current")}>Current scan</button>
           <button type="button" aria-pressed={scope === "retained_history"} onClick={() => changeScope("retained_history")}>All scans</button>
         </div>
-        {scope === "retained_history" && <span className="inventory-scope-note" title="Counts are distinct identities from retained scans, classified using current reporting rules; this may not represent exhaustive lifetime history.">Retained scans · current rules · not exhaustive lifetime history</span>}
+        {scope === "retained_history" && <span className="inventory-scope-note" title="Distinct identities observed across retained scans; not exhaustive lifetime history. Risk and HTTP fields reflect the API-selected observation, not necessarily the highest historical values.">Distinct retained identities</span>}
         {summaryMatchesScope ? <div className="inventory-scope-counts" aria-label="Inventory totals">
           <strong>{summary.count.toLocaleString()} {scope === "current" ? "current scan assets" : "retained identities"}</strong>
           {summaryCounts && [["KNOWN", "Known"], ["SHADOW", "Shadow"], ["CANDIDATE", "Candidate"], ["EXTERNAL", "External"]]

@@ -14,12 +14,12 @@ const VIEW_OPTIONS = [
 ];
 const CATEGORY_OPTIONS = [
   ["", "All categories"],
-  ["FINDING", "Findings"],
+  ["FINDING", "Recorded Findings"],
   ["NEEDS_VERIFICATION", "Needs verification"],
   ["EXPOSURE_SIGNAL", "Exposure signals"],
 ];
 const SOURCE_LABELS = {
-  domain_findings: "Findings",
+  domain_findings: "Recorded Findings",
   dns_security_checks: "DNS Security",
   domain_cert: "Certificates",
   redirect_review: "Redirects",
@@ -91,7 +91,7 @@ function sourceLabel(source) {
 }
 
 function categoryLabel(category) {
-  return category === "FINDING" ? "Finding"
+  return category === "FINDING" ? "Recorded finding"
     : category === "NEEDS_VERIFICATION" ? "Needs verification"
       : category === "EXPOSURE_SIGNAL" ? "Exposure signal" : "Unknown category";
 }
@@ -338,7 +338,7 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
       </section>
 
       <section className="findings-summary-grid operation-panel-full" aria-label="Security findings summary">
-        <MetricCard label="Findings" value={categoryCount("FINDING")} support="Source-recorded · not independently verified" accent="#b43d4a" />
+        <MetricCard label="Recorded Findings" value={categoryCount("FINDING")} support="Source-recorded · not independently verified" accent="#b43d4a" />
         <MetricCard label="Needs Verification" value={categoryCount("NEEDS_VERIFICATION")} support="Requires analyst review" accent="#d49a3a" />
         <MetricCard label="Exposure Signals" value={categoryCount("EXPOSURE_SIGNAL")} support="Context or exposure observations" accent="#3d9ac7" />
       </section>

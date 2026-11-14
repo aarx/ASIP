@@ -174,14 +174,14 @@ export default function RiskExposurePage({ query }) {
         <MetricCard
           label="Historical High Risk"
           value={historicalCount ?? "—"}
-          support={historicalAvailable ? "Distinct historical assets" : "Historical data unavailable"}
+          support={historicalAvailable ? "High in at least one successful retained scan" : "Historical data unavailable"}
           accent="#7b5bb5"
           href={historicalCount > 0 ? "#/risk?section=historical-high-risk" : undefined}
         />
       </section>
 
       <section className="actionable-kpis" aria-label="Actionable evidence">
-        <MetricCard label="Findings" value={findings.length} support="Source-recorded observations" accent="#b43d4a" href="#/risk/security-review?tab=evidence-signals" />
+        <MetricCard label="Recorded Findings" value={findings.length} support="Source-recorded observations" accent="#b43d4a" href="#/risk/security-review?tab=evidence-signals" />
         <MetricCard label="Observed sensitive-port exposures" value={portSummary.value} support={portSummary.support} accent="#a96f1f" href="#/risk/security-review?tab=sensitive-ports" />
         <MetricCard label="Review Indicators" value={reviewIndicators.count ?? "—"} support="Review only · not findings" accent="#9a79d6" href="#/risk/security-review?tab=evidence-signals&signals=review-indicators" />
       </section>
@@ -201,7 +201,7 @@ export default function RiskExposurePage({ query }) {
         </nav>
       )}
 
-      <Panel title="Risk distribution" subtitle="Canonical priorities across confirmed organizational assets" meta={`SCAN #${overview.current_scan_id}`} className="operation-panel-full" id="risk-distribution">
+      <Panel title="Current Risk Distribution" subtitle="Canonical priorities across confirmed organizational assets" meta={`SCAN #${overview.current_scan_id}`} className="operation-panel-full" id="risk-distribution">
         <RiskDistributionChart distribution={overview.risk_distribution} priorityHref={(priority) => `#/assets?priority=${encodeURIComponent(priority)}&limit=25`} />
       </Panel>
 
