@@ -20,7 +20,12 @@ from asset_reporting import (
     current_scan_asset_classes,
     current_scan_risks,
 )
-from asset_history import list_retained_assets, retained_inventory_cte, identity_sql
+from asset_history import (
+    historical_identity_lookup_sql,
+    list_retained_assets,
+    retained_inventory_cte,
+    scan_identity_lookup_sql,
+)
 from brand_history import history_summary, history_assets, HISTORY_CTE
 from scan_diagnostics import api_diagnostics
 from risk_engine import ASSET_EXPOSURE_KEYWORDS, calculate_scan_risks, get_asset_exposure_keywords, priority_for_score
@@ -4167,21 +4172,13 @@ def frontend_v2_asset_detail(domain_name: str, scope: str = "current", scan_id: 
         conn = get_conn()
         conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
         cur = conn.cursor()
-        key = identity_sql("%s")
-        cur.execute(retained_inventory_cte() + f"""
-          SELECT domain, scan_id, scan_time, scan_status, current_scan_member, identity_key
-            FROM enriched WHERE identity_key={key}
-        """, (domain_name,))
+        cur.execute(historical_identity_lookup_sql(), (domain_name,))
         match = cur.fetchone()
         if match is None:
             conn.close()
             raise HTTPException(status_code=404, detail="identity not present in retained scans")
         if scan_id is not None:
-            cur.execute(f"""
-              SELECT d.domain FROM scan_results sr JOIN domains d ON d.id=sr.domain_id
-               WHERE sr.scan_id=%s AND {identity_sql('d.domain')}={key}
-               ORDER BY d.id LIMIT 1
-            """, (scan_id, domain_name))
+            cur.execute(scan_identity_lookup_sql(), (domain_name, scan_id))
             selected = cur.fetchone()
             if selected is None:
                 conn.close()

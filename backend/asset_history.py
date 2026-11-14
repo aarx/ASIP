@@ -74,6 +74,29 @@ def retained_inventory_cte():
     """
 
 
+def historical_identity_lookup_sql():
+    """Resolve one requested identity with a single safely bound input value."""
+    return retained_inventory_cte() + f"""
+      SELECT domain, scan_id, scan_time, scan_status, current_scan_member, identity_key
+        FROM enriched
+        CROSS JOIN (SELECT %s::text AS domain) requested
+       WHERE identity_key={identity_sql('requested.domain')}
+    """
+
+
+def scan_identity_lookup_sql():
+    """Resolve a requested identity only when it is a member of one scan."""
+    return f"""
+      SELECT d.domain
+        FROM scan_results sr
+        JOIN domains d ON d.id=sr.domain_id
+        CROSS JOIN (SELECT %s::text AS domain) requested
+       WHERE sr.scan_id=%s
+         AND {identity_sql('d.domain')}={identity_sql('requested.domain')}
+       ORDER BY d.id LIMIT 1
+    """
+
+
 def list_retained_assets(cursor, *, page, limit, filters, sort_by, sort_dir):
     """Apply filters/count/order/page in SQL against the one-row identity CTE."""
     clauses, params = [], []

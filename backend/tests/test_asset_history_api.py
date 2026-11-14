@@ -5,7 +5,13 @@ import unittest
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
-from asset_history import identity_sql, retained_inventory_cte, list_retained_assets
+from asset_history import (
+    historical_identity_lookup_sql,
+    identity_sql,
+    list_retained_assets,
+    retained_inventory_cte,
+    scan_identity_lookup_sql,
+)
 
 
 class Cursor:
@@ -56,6 +62,14 @@ class HistoricalAssetInventoryTests(unittest.TestCase):
         self.assertIn("LIMIT %s OFFSET %s", page_sql)
         self.assertEqual(count_params, page_params[:-2])
         self.assertEqual(page_params[-2:], (25, 25))
+
+    def test_detail_identity_queries_bind_requested_domain_once(self):
+        identity_query = historical_identity_lookup_sql()
+        scan_query = scan_identity_lookup_sql()
+        self.assertEqual(identity_query.count("%s"), 1)
+        self.assertEqual(scan_query.count("%s"), 2)
+        self.assertIn("CROSS JOIN (SELECT %s::text AS domain) requested", identity_query)
+        self.assertIn("CROSS JOIN (SELECT %s::text AS domain) requested", scan_query)
 
 
 if __name__ == "__main__":
