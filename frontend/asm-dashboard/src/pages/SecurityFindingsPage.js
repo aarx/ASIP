@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import AssetLink from "../components/ui/AssetLink";
-import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
@@ -94,6 +93,11 @@ function categoryLabel(category) {
   return category === "FINDING" ? "Recorded finding"
     : category === "NEEDS_VERIFICATION" ? "Needs verification"
       : category === "EXPOSURE_SIGNAL" ? "Exposure signal" : "Unknown category";
+}
+
+function summaryCategoryForFilters(filters) {
+  const compatibleViews = filters.category === "EXPOSURE_SIGNAL" ? ["signals", "all"] : ["attention", "all"];
+  return filters.category && compatibleViews.includes(filters.view) ? filters.category : "";
 }
 
 function displayOptional(value, fallback = "Not recorded") {
@@ -254,15 +258,19 @@ function HostCoveragePanel({ filters, query, routePrefix, onChange, onRetry, onC
   );
 }
 
-function FindingDetail({ finding, query, returnTo }) {
+function FindingDetail({ finding, query, returnTo, id }) {
   const returnQuery = query || "";
   return (
-    <Panel title="Finding details" meta={sourceLabel(finding.source)} className="operation-panel-full finding-detail-panel" id="finding-detail">
+    <Panel title="Finding details" meta={sourceLabel(finding.source)} className="finding-detail-panel" id={id}>
       <div className="finding-detail-grid">
-        <section><span className="finding-detail-label">What</span><h3>{finding.title}</h3><p>{categoryLabel(finding.category)} · {displayOptional(finding.finding_type, "Observation type not recorded")}</p></section>
+        <section><span className="finding-detail-label">Finding / check</span><h3>{finding.title}</h3><p>{categoryLabel(finding.category)} · {displayOptional(finding.finding_type, "Observation type not recorded")}</p></section>
+        <section><span className="finding-detail-label">Source</span><p>{sourceLabel(finding.source)}</p></section>
+        <section><span className="finding-detail-label">Outcome</span><p>{displayOptional(finding.source_outcome, "Not recorded")}</p></section>
+        <section><span className="finding-detail-label">Severity</span><p>{displayOptional(finding.severity, "Not recorded")}</p></section>
+        <section><span className="finding-detail-label">Verification</span><p>{displayOptional(finding.verification_state, "Not recorded")}</p></section>
         <section><span className="finding-detail-label">Where</span><AssetLink domain={finding.asset_domain} returnTo={returnTo} returnQuery={returnQuery} /><p><StatusBadge value={finding.asset_class} /> · scan #{finding.scan_id}</p></section>
         <section className="finding-detail-wide"><span className="finding-detail-label">Why</span><p>{displayOptional(finding.why_it_matters, "No explanation recorded by the source contract.")}</p></section>
-        <section className="finding-detail-wide"><span className="finding-detail-label">Evidence</span><EvidenceValue value={finding.evidence} /></section>
+        <section className="finding-detail-wide"><span className="finding-detail-label">Evidence</span><div className="finding-detail-evidence"><EvidenceValue value={finding.evidence} /></div></section>
         <section className="finding-detail-wide"><span className="finding-detail-label">Action</span><p>{displayOptional(finding.recommended_action, "No recommended action recorded.")}</p></section>
         <section className="finding-detail-wide"><span className="finding-detail-label">Limitations</span>
           {finding.indicators_inferred && <p className="finding-inferred-note">Environment or role indicators are inferred from hostname text, not verified attributes.</p>}
@@ -327,12 +335,26 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
   const total = Number.isInteger(data?.total) ? data.total : 0;
   const totalPages = Math.max(Math.ceil(total / filters.pageSize), 1);
   const listAvailable = data?.availability_state === "AVAILABLE";
+  const selectedSummaryCategory = summaryCategoryForFilters(filters);
 
-  const changeFilter = (key, value) => {
+  const changeFilters = (changes) => {
     const [, currentQuery = ""] = window.location.hash.replace(/^#\/?/, "").split("?");
-    updateFilters({ ...readFilters(currentQuery), [key]: value, page: 1 }, routePrefix, pageTab);
+    updateFilters({ ...readFilters(currentQuery), ...changes, page: 1 }, routePrefix, pageTab);
   };
+  const changeFilter = (key, value) => changeFilters({ [key]: value });
   const changeCoverage = (nextFilters) => updateCoverageFilters(nextFilters, routePrefix, pageTab);
+  const toggleCoverage = (coverageCategory) => {
+    const [, currentQuery = ""] = window.location.hash.replace(/^#\/?/, "").split("?");
+    const current = readFilters(currentQuery);
+    changeCoverage({ ...current, coverageCategory: current.coverageCategory === coverageCategory ? "" : coverageCategory, coveragePage: 1 });
+  };
+  const toggleSummaryCategory = (category) => {
+    if (selectedSummaryCategory === category) {
+      changeFilters({ category: "", view: "attention" });
+      return;
+    }
+    changeFilters({ category, view: category === "EXPOSURE_SIGNAL" ? "signals" : "attention" });
+  };
 
   if (listStatus === "loading" && !data) return <LoadingState title="Loading Security Findings" copy="Retrieving current-scan observations and exposure signals." />;
   if (listStatus === "error") return <ErrorState title="Security Findings unavailable" copy="The unified findings request could not be loaded. No values have been inferred." onRetry={() => setListRequestVersion((value) => value + 1)} />;
@@ -345,16 +367,16 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
       </section>
 
       <section className="findings-summary-grid operation-panel-full" aria-label="Security findings summary">
-        <MetricCard label="Recorded Findings" value={categoryCount("FINDING")} support="Source-recorded · not independently verified" accent="#b43d4a" />
-        <MetricCard label="Needs Verification" value={categoryCount("NEEDS_VERIFICATION")} support="Requires analyst review" accent="#d49a3a" />
-        <MetricCard label="Exposure Signals" value={categoryCount("EXPOSURE_SIGNAL")} support="Context or exposure observations" accent="#3d9ac7" />
+        <button type="button" className={`metric-card findings-summary-card${selectedSummaryCategory === "FINDING" ? " selected" : ""}`} aria-pressed={selectedSummaryCategory === "FINDING"} style={{ "--metric-accent": "#b43d4a" }} onClick={() => toggleSummaryCategory("FINDING")}><span className="metric-label">Recorded Findings</span><span className="metric-value">{categoryCount("FINDING")}</span><span className="metric-support">Source-recorded · not independently verified</span></button>
+        <button type="button" className={`metric-card findings-summary-card${selectedSummaryCategory === "NEEDS_VERIFICATION" ? " selected" : ""}`} aria-pressed={selectedSummaryCategory === "NEEDS_VERIFICATION"} style={{ "--metric-accent": "#d49a3a" }} onClick={() => toggleSummaryCategory("NEEDS_VERIFICATION")}><span className="metric-label">Needs Verification</span><span className="metric-value">{categoryCount("NEEDS_VERIFICATION")}</span><span className="metric-support">Requires analyst review</span></button>
+        <button type="button" className={`metric-card findings-summary-card${selectedSummaryCategory === "EXPOSURE_SIGNAL" ? " selected" : ""}`} aria-pressed={selectedSummaryCategory === "EXPOSURE_SIGNAL"} style={{ "--metric-accent": "#3d9ac7" }} onClick={() => toggleSummaryCategory("EXPOSURE_SIGNAL")}><span className="metric-label">Exposure Signals</span><span className="metric-value">{categoryCount("EXPOSURE_SIGNAL")}</span><span className="metric-support">Context or exposure observations</span></button>
       </section>
 
       <FindingsCoverage
         summary={summary}
         status={summaryStatus}
         selected={filters.coverageCategory}
-        onSelect={(coverageCategory) => changeCoverage({ ...filters, coverageCategory, coveragePage: 1 })}
+        onSelect={toggleCoverage}
       />
       <HostCoveragePanel
         filters={filters}
@@ -362,7 +384,7 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
         routePrefix={routePrefix}
         onChange={changeCoverage}
         onRetry={() => setCoverageRequestVersion((value) => value + 1)}
-        onClose={() => changeCoverage({ ...filters, coverageCategory: "", coveragePage: 1 })}
+        onClose={() => toggleCoverage(filters.coverageCategory)}
         requestVersion={coverageRequestVersion}
       />
 
@@ -383,14 +405,15 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
                 <thead><tr><th>Finding / observation</th><th>Affected asset</th><th>Source</th><th>Severity</th><th>Verification</th><th>Asset class</th></tr></thead>
                 <tbody>{findings.map((finding) => {
                   const selected = selectedFinding?.finding_id === finding.finding_id;
-                  return <tr key={finding.finding_id} className={selected ? "finding-row-selected" : ""}>
-                    <td><div className="finding-name-cell"><div className="finding-name-text"><strong>{finding.title}</strong><span>{displayOptional(finding.finding_type, "Observation")}</span></div><button type="button" className="finding-details-button" aria-expanded={selected} aria-controls="finding-detail" onClick={() => setSelectedFinding(selected ? null : finding)}>{selected ? "Hide details" : "Details"}</button></div></td>
+                  const detailId = `finding-detail-${String(finding.finding_id).replaceAll(/[^a-zA-Z0-9_-]/g, "-")}`;
+                  return <React.Fragment key={finding.finding_id}><tr className={selected ? "finding-row-selected" : ""}>
+                    <td><div className="finding-name-cell"><div className="finding-name-text"><strong>{finding.title}</strong><span>{displayOptional(finding.finding_type, "Observation")}</span></div><button type="button" className="finding-details-button" aria-expanded={selected} aria-controls={detailId} onClick={() => setSelectedFinding(selected ? null : finding)}>{selected ? "Hide details" : "Show details"}</button></div></td>
                     <td><AssetLink domain={finding.asset_domain} returnTo={routePrefix} returnQuery={pageQuery} /></td>
                     <td><span>{sourceLabel(finding.source)}</span><small>{finding.source_outcome || ""}</small></td>
                     <td>{finding.severity ? <StatusBadge value={finding.severity} /> : <span className="not-applicable">Not provided</span>}</td>
                     <td><StatusBadge value={finding.category === "FINDING" ? "Source-recorded" : categoryLabel(finding.category)} />{finding.verification_state && <small>{finding.verification_state}</small>}</td>
                     <td><StatusBadge value={finding.asset_class} /></td>
-                  </tr>;
+                  </tr>{selected && <tr className="finding-detail-row"><td colSpan="6"><FindingDetail finding={finding} query={pageQuery} returnTo={routePrefix} id={detailId} /></td></tr>}</React.Fragment>;
                 })}</tbody>
               </table>
             </div>
@@ -403,7 +426,6 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
         )}
       </Panel>
 
-      {selectedFinding && <FindingDetail finding={selectedFinding} query={pageQuery} returnTo={routePrefix} />}
     </div>
   );
 }

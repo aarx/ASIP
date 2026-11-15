@@ -119,9 +119,85 @@ test("finding name is selectable plain text and its separate Details control ope
   expect(name.closest("button")).toBeNull();
   expect(name.closest(".finding-name-text")).toHaveClass("finding-name-text");
   expect(screen.getAllByText("WARNING").length).toBeGreaterThan(0);
-  fireEvent.click(screen.getByRole("button", { name: "Details" }));
+  fireEvent.click(screen.getByRole("button", { name: "Show details" }));
   expect(await screen.findByText("The recorded DNS assessment outcome may warrant validation.")).toBeInTheDocument();
+  const details = screen.getByRole("heading", { name: "Finding details" }).closest("section");
+  expect(details.closest("tr").previousElementSibling).toHaveClass("finding-row-selected");
+  expect(within(details).getAllByText("DNS Security").length).toBeGreaterThan(0);
+  expect(within(details).getAllByText("WARNING").length).toBeGreaterThan(0);
+  expect(within(details).getByText("Not recorded")).toBeInTheDocument();
+  expect(within(details).getByText("The recorded DNS assessment outcome may warrant validation.")).toBeInTheDocument();
+  expect(within(details).getByText("Does not establish exploitability.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(screen.getByRole("button", { name: "Hide details" }));
+  expect(screen.queryByRole("heading", { name: "Finding details" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Show details" })).toHaveAttribute("aria-expanded", "false");
+});
+
+test("expanding another finding moves inline details and handles missing evidence", async () => {
+  const missingEvidence = { ...attentionPage.findings[0], finding_id: "second-record", title: "second_record — WARNING", evidence: null, limitations: [] };
+  getSecurityFindings.mockResolvedValue({ ...attentionPage, total: 2, findings: [attentionPage.findings[0], missingEvidence] });
+  render(<App />);
+
+  const detailButtons = await screen.findAllByRole("button", { name: "Show details" });
+  fireEvent.click(detailButtons[0]);
+  const firstDetails = (await screen.findByRole("heading", { name: "Finding details" })).closest("section");
+  expect(firstDetails).toHaveTextContent("record type");
+
+  fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+  const secondDetails = (await screen.findAllByRole("heading", { name: "Finding details" }))[0].closest("section");
+  expect(secondDetails).toHaveTextContent("second_record — WARNING");
+  expect(secondDetails).toHaveTextContent("Not recorded");
+  expect(document.querySelectorAll("#finding-detail-second-record")).toHaveLength(1);
+  expect(document.body.textContent).not.toContain("[object Object]");
+});
+
+test.each([
+  ["Recorded Findings", "FINDING", "attention", "spf_policy — WARNING"],
+  ["Needs Verification", "NEEDS_VERIFICATION", "attention", "spf_policy — WARNING"],
+  ["Exposure Signals", "EXPOSURE_SIGNAL", "signals", "redirect_observation — INFORMATIONAL"],
+])("summary card %s filters records, highlights selection, resets pagination, and toggles off", async (label, category, view, title) => {
+  getSecurityFindings.mockImplementation((params) => {
+    const record = category === "EXPOSURE_SIGNAL"
+      ? { ...attentionPage.findings[0], finding_id: "signal-record", category, title, source: "redirect_review", source_outcome: "INFORMATIONAL" }
+      : { ...attentionPage.findings[0], category, title };
+    return Promise.resolve({ ...attentionPage, ...params, total: params.category ? 1 : 32, findings: params.category ? [record] : [attentionPage.findings[0]] });
+  });
+  window.location.hash = "#/risk/security-review?tab=evidence-signals&page=3&limit=50&source=domain_cert&asset_class=KNOWN";
+  render(<App />);
+
+  const card = await screen.findByRole("button", { name: new RegExp(label) });
+  expect(card).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(card);
+  await waitFor(() => expect(getSecurityFindings).toHaveBeenLastCalledWith({
+    page: 1, limit: 50, view, category, source: "domain_cert", asset_class: "KNOWN",
+  }));
+  expect(await screen.findByText(title)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: new RegExp(label) })).toHaveAttribute("aria-pressed", "true");
+  expect(window.location.hash).not.toContain("page=3");
+  expect(within(screen.getByRole("region", { name: "Security findings summary" })).getByText("32")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(label) }));
+  await waitFor(() => expect(getSecurityFindings).toHaveBeenLastCalledWith({
+    page: 1, limit: 50, view: "attention", source: "domain_cert", asset_class: "KNOWN",
+  }));
+  expect(screen.getByRole("button", { name: new RegExp(label) })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByRole("combobox", { name: "Finding category" })).toHaveValue("");
+});
+
+test("summary-card selection follows manual view and category filter changes", async () => {
+  window.location.hash = "#/risk/security-review?tab=evidence-signals&category=FINDING";
+  render(<App />);
+  const recordedCard = await screen.findByRole("button", { name: /Recorded Findings/ });
+  expect(recordedCard).toHaveAttribute("aria-pressed", "true");
+
+  fireEvent.change(screen.getByRole("combobox", { name: "Finding view" }), { target: { value: "signals" } });
+  await waitFor(() => expect(getSecurityFindings).toHaveBeenLastCalledWith({ page: 1, limit: 25, view: "signals", category: "FINDING" }));
+  expect(screen.getByRole("button", { name: /Recorded Findings/ })).toHaveAttribute("aria-pressed", "false");
+
+  fireEvent.change(screen.getByRole("combobox", { name: "Finding category" }), { target: { value: "EXPOSURE_SIGNAL" } });
+  await waitFor(() => expect(getSecurityFindings).toHaveBeenLastCalledWith({ page: 1, limit: 25, view: "signals", category: "EXPOSURE_SIGNAL" }));
+  expect(screen.getByRole("button", { name: /Exposure Signals/ })).toHaveAttribute("aria-pressed", "true");
 });
 
 test("uses the evidence-list scan ID while summary metadata is pending", async () => {
@@ -179,6 +255,7 @@ test("assessment cards select one inline panel and use server-side domain search
   render(<App />);
 
   fireEvent.click(await screen.findByRole("button", { name: /DNS Security/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /DNS Security/ })).toHaveAttribute("aria-pressed", "true"));
   expect(await screen.findByRole("heading", { name: "DNS Security hosts" })).toBeInTheDocument();
   expect(getDnsSecurityHosts).toHaveBeenLastCalledWith({ page: 1, limit: 25 });
   fireEvent.change(screen.getByRole("textbox", { name: "Search hostname or domain" }), { target: { value: "example.com" } });
@@ -205,10 +282,40 @@ test("unassessed DNS and unobserved certificates remain distinct from completed 
   expect(await screen.findByText("UNASSESSED · NO CHECKS")).toBeInTheDocument();
   expect(getDnsSecurityHosts).toHaveBeenLastCalledWith({ page: 1, limit: 25, include_unassessed: true });
   fireEvent.click(screen.getByRole("button", { name: /Certificates/ }));
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: /DNS Security/ })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: /Certificates/ })).toHaveAttribute("aria-pressed", "true");
+  });
   fireEvent.click(await screen.findByLabelText("Show hosts without observations"));
   expect(await screen.findByText("NO OBSERVATION")).toBeInTheDocument();
   expect(getCertificateHosts).toHaveBeenLastCalledWith({ page: 1, limit: 25, include_unobserved: true });
   expect(screen.getByText(/not a successful TLS assessment/i)).toBeInTheDocument();
+});
+
+test.each([
+  ["DNS Security", "dns", getDnsSecurityHosts],
+  ["Certificates", "certificates", getCertificateHosts],
+  ["Sensitive ports", "ports", getSensitivePortHosts],
+])("assessment card %s toggles off and preserves unrelated filters", async (label, coverage, request) => {
+  request.mockResolvedValue({ scan_id: 19, page: 1, limit: 25, total: 0, assessment_coverage: "UNKNOWN", hosts: [] });
+  window.location.hash = "#/risk/security-review?tab=evidence-signals&page=2&limit=50&view=all&source=dns_security_checks&asset_class=KNOWN&coverage_page=3";
+  render(<App />);
+
+  const card = await screen.findByRole("button", { name: new RegExp(label, "i") });
+  expect(card).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(card);
+  await waitFor(() => expect(screen.getByRole("button", { name: new RegExp(label, "i") })).toHaveAttribute("aria-pressed", "true"));
+  await waitFor(() => expect(request).toHaveBeenLastCalledWith({ page: 1, limit: 25 }));
+  expect(window.location.hash).toContain("coverage=" + coverage);
+
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(label, "i") }));
+  await waitFor(() => expect(screen.getByRole("button", { name: new RegExp(label, "i") })).toHaveAttribute("aria-pressed", "false"));
+  expect(screen.queryByRole("heading", { name: /hosts$/i })).not.toBeInTheDocument();
+  expect(window.location.hash).not.toContain("coverage=");
+  expect(window.location.hash).toContain("view=all");
+  expect(window.location.hash).toContain("source=dns_security_checks");
+  expect(window.location.hash).toContain("asset_class=KNOWN");
+  expect(window.location.hash).not.toContain("coverage_page");
 });
 
 test("sensitive-port empty results preserve unknown coverage semantics", async () => {
@@ -240,7 +347,7 @@ test("certificate and positive port evidence display recorded fields without inv
 test("maps source labels, null severity, inferred environment, and nested evidence in details", async () => {
   render(<App />);
 
-  const title = await screen.findByRole("button", { name: "Details" });
+  const title = await screen.findByRole("button", { name: "Show details" });
   expect(screen.getAllByText("DNS Security").length).toBeGreaterThan(0);
   expect(screen.getByText("Not provided")).toBeInTheDocument();
   fireEvent.click(title);
@@ -259,7 +366,7 @@ test("filters by source and asset class and keeps exact pagination totals", asyn
   getSecurityFindings.mockImplementation((params) => Promise.resolve({ ...attentionPage, ...params, total: 51 }));
   render(<App />);
 
-  await screen.findByRole("button", { name: "Details" });
+  await screen.findByRole("button", { name: "Show details" });
   fireEvent.change(screen.getByRole("combobox", { name: "Finding source" }), { target: { value: "domain_cert" } });
   fireEvent.change(screen.getByRole("combobox", { name: "Finding asset class" }), { target: { value: "KNOWN" } });
 
