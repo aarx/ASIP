@@ -43,7 +43,7 @@ services:
   backend:
     # Production backend releases are built from committed source and promoted
     # by updating this exact image reference. Do not add an implicit build here.
-    image: asip-backend:asset-growth-3e169c9-20261115T0949Z
+    image: asip-backend:dns-sec-ui-c5672b9-20261115T112750Z
     pull_policy: never
     container_name: asm_backend
 
@@ -81,7 +81,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   frontend:
-    image: asip-frontend:overview-growth-25b233c-20261115T104454Z
+    image: asip-frontend:dns-sec-ui-c5672b9-20261115T112750Z
     pull_policy: never
     build: ./frontend
     container_name: asm_frontend
