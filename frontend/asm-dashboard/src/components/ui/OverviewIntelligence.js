@@ -137,20 +137,47 @@ export function normalizeGrowth(value) {
       ipPresent: asOptionalCount(row?.ip_present_assets),
       httpResponding: asOptionalCount(row?.http_responding_assets),
     }))
-    .filter((row) => row.scan != null);
+    .filter((row) => row.scan != null)
+    .sort((left, right) => Number(left.scan) - Number(right.scan));
 }
 
-export function GrowthTooltip({ active, payload = [], label }) {
-  if (!active || !payload.length) return null;
-  const entries = payload.filter((entry) => asOptionalCount(entry?.value) !== null);
-  if (!entries.length) return null;
+const GROWTH_SERIES = [
+  ["totalScanAssets", "Total Scan Assets", "#4655a6", undefined],
+  ["organizational", "Organizational Assets", "#327d80", "8 3"],
+  ["known", "Known Assets", "#4e79a7", "3 2"],
+  ["shadow", "Shadow Assets", "#7e91a8", "2 3"],
+  ["ipPresent", "IP-Present Assets", "#398261", "8 2 2 2"],
+  ["httpResponding", "HTTP-Responding Assets", "#d49a3a", "5 3"],
+];
+
+export function growthAxisMax(data, visibleKeys) {
+  const maximum = data.reduce((currentMax, row) => {
+    const rowMax = [...visibleKeys].reduce((seriesMax, key) => (
+      asOptionalCount(row[key]) === null ? seriesMax : Math.max(seriesMax, Number(row[key]))
+    ), 0);
+    return Math.max(currentMax, rowMax);
+  }, 0);
+  if (maximum <= 0) return 1;
+  return Math.max(1, Math.ceil(maximum / 4)) * 4;
+}
+
+export function GrowthTooltip({ active, payload = [], label, data = [] }) {
+  if (!active) return null;
+  const row = data.find((item) => String(item.scan) === String(label))
+    || payload.find((entry) => entry?.payload && String(entry.payload.scan) === String(label))?.payload;
+  if (!row && !payload.length) return null;
+  const entries = GROWTH_SERIES.map(([key, name, color]) => {
+    const payloadEntry = payload.find((entry) => entry?.dataKey === key);
+    const value = row ? row[key] : payloadEntry?.value;
+    return { key, name, color: payloadEntry?.color || color, value: asOptionalCount(value) };
+  });
   return (
     <div className="overview-growth-tooltip" style={chartTooltipStyle} role="status">
       <strong>Scan #{label}</strong>
       {entries.map((entry) => (
-        <div key={entry.dataKey}>
+        <div key={entry.key}>
           <span style={{ color: entry.color }}>{entry.name}</span>
-          <b>{Number(entry.value).toLocaleString()}</b>
+          <b>{entry.value === null ? "Unavailable" : entry.value.toLocaleString("en-US")}</b>
         </div>
       ))}
     </div>
@@ -190,21 +217,16 @@ function ChartState({ title, copy, error = false }) {
 
 export function AssetGrowthPanel({ value, status }) {
   const data = normalizeGrowth(value);
-  const [visibleKeys, setVisibleKeys] = useState(() => new Set(["totalScanAssets"]));
+  const [visibleKeys, setVisibleKeys] = useState(() => new Set(["totalScanAssets", "organizational"]));
   const toggleSeries = (key) => setVisibleKeys((current) => {
     const updated = new Set(current);
     if (updated.has(key)) updated.delete(key);
     else updated.add(key);
     return updated;
   });
-  const visibleSeries = [
-    ["totalScanAssets", "Total Scan Assets", "#4655a6"],
-    ["known", "Known Assets", "#5c6bc0"],
-    ["shadow", "Shadow Assets", "#7e91a8"],
-    ["organizational", "Organizational Assets", "#327d80"],
-    ["ipPresent", "IP-Present Assets", "#398261"],
-    ["httpResponding", "HTTP-Responding Assets", "#d49a3a"],
-  ].filter(([key]) => data.some((row) => row[key] != null));
+  const visibleSeries = GROWTH_SERIES;
+  const axisMax = growthAxisMax(data, visibleKeys);
+  const hasVisibleData = data.some((row) => [...visibleKeys].some((key) => row[key] != null));
   let content;
   if (status === "loading") {
     content = <ChartState title="Loading history" copy="Reading successful-scan asset populations." />;
@@ -214,30 +236,51 @@ export function AssetGrowthPanel({ value, status }) {
     content = <ChartState title="Insufficient scan history" copy="A trend appears after two successful scans." />;
   } else {
     content = (
-      <div className="overview-chart-canvas" data-testid="overview-asset-growth-chart" aria-label={`Asset population growth chart: ${visibleSeries.map(([, label]) => label).join(", ")}`}>
+      <div
+        className="overview-chart-canvas"
+        data-testid="overview-asset-growth-chart"
+        data-y-axis-max={axisMax}
+        data-line-interpolation="linear"
+        data-visible-series={[...visibleKeys].join(",")}
+        aria-label={`Asset population growth chart: ${visibleSeries.filter(([key]) => visibleKeys.has(key)).map(([, label]) => label).join(", ") || "no visible series"}`}
+      >
         <div className="overview-growth-plot">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 4, right: 12, bottom: 4, left: 0 }}>
-              <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
-              <XAxis dataKey="scan" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis allowDecimals={false} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} width={28} />
-              <Tooltip content={<GrowthTooltip />} contentStyle={chartTooltipStyle} includeHidden />
-              {visibleSeries.map(([key, name, color]) => (
-                <Line
-                  key={key}
-                  type="monotone"
-                  dataKey={key}
-                  name={name}
-                  stroke={color}
-                  strokeWidth={key === "totalScanAssets" ? 3 : 2}
-                  strokeDasharray={key === "totalScanAssets" ? undefined : "5 3"}
-                  dot={{ r: key === "totalScanAssets" ? 3 : 2 }}
-                  hide={!visibleKeys.has(key)}
-                  connectNulls={false}
+          {visibleKeys.size === 0 ? (
+            <ChartState title="All series hidden" copy="Choose a legend item to show a series." />
+          ) : !hasVisibleData ? (
+            <ChartState title="No values available" copy="The selected series have no recorded values." />
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data} margin={{ top: 8, right: 20, bottom: 8, left: 4 }}>
+                <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+                <XAxis dataKey="scan" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
+                <YAxis domain={[0, axisMax]} tickCount={5} allowDecimals={false} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} width={36} />
+                <Tooltip
+                  content={<GrowthTooltip data={data} />}
+                  contentStyle={chartTooltipStyle}
+                  includeHidden
+                  wrapperStyle={{ zIndex: 20, pointerEvents: "none" }}
+                  isAnimationActive={false}
                 />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
+                {visibleSeries.map(([key, name, color, dash]) => (
+                  <Line
+                    key={key}
+                    type="linear"
+                    dataKey={key}
+                    name={name}
+                    stroke={color}
+                    strokeWidth={key === "totalScanAssets" ? 3 : 2}
+                    strokeDasharray={dash}
+                    dot={{ r: key === "totalScanAssets" ? 4 : 3, fill: color, strokeWidth: 1 }}
+                    activeDot={{ r: key === "totalScanAssets" ? 5 : 4 }}
+                    hide={!visibleKeys.has(key)}
+                    connectNulls={false}
+                    isAnimationActive={false}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          )}
         </div>
         <GrowthLegend series={visibleSeries} visibleKeys={visibleKeys} onToggle={toggleSeries} />
       </div>

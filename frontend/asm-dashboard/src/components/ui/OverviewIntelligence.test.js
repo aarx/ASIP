@@ -1,6 +1,7 @@
 import React from "react";
 jest.mock("../../services/api", () => ({ getBrandHistorySummary: jest.fn() }));
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Bar, BarChart, Cell, XAxis } from "recharts";
 import OverviewIntelligence, {
   BrandDiscoveryPanel,
@@ -14,6 +15,7 @@ import OverviewIntelligence, {
   normalizeNamingExposure,
   normalizeCertificateRecords,
   normalizeGrowth,
+  growthAxisMax,
   normalizeSeedDistribution,
   parseCertificateExpiry,
   SeedDistributionPanel,
@@ -43,10 +45,14 @@ test("renders supported aggregate charts with their scope", () => {
   expect(screen.getByText("Total scan membership across successful scans · classes use current effective rules")).toBeInTheDocument();
   expect(screen.getByTestId("overview-asset-growth-chart")).toHaveClass("overview-chart-canvas");
   expect(screen.getByTestId("overview-asset-growth-chart")).toHaveAttribute(
-    "aria-label", expect.stringContaining("Total Scan Assets, Known Assets, Shadow Assets, Organizational Assets, IP-Present Assets, HTTP-Responding Assets")
+    "aria-label", "Asset population growth chart: Total Scan Assets, Organizational Assets"
   );
   expect(screen.getByRole("button", { name: "Total Scan Assets" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Organizational Assets" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByRole("button", { name: "Known Assets" })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByRole("button", { name: "Shadow Assets" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "IP-Present Assets" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "HTTP-Responding Assets" })).toBeInTheDocument();
   expect(screen.getByText("Current authoritative confirmed-organizational scan")).toBeInTheDocument();
   expect(screen.getByTestId("overview-http-status-chart")).toHaveClass("overview-chart-canvas");
   expect(screen.getByTestId("overview-http-status-chart").parentElement).toHaveClass("overview-http-status-chart");
@@ -70,15 +76,77 @@ test("asset growth keeps missing totals unavailable and retains API ordering", (
   ]);
 });
 
+test("asset growth sorts scan snapshots chronologically without changing series values", () => {
+  expect(normalizeGrowth([
+    { scan_id: 24, total_scan_assets: 904, organizational_assets: 821, known_assets: 57, shadow_assets: 764, ip_present_assets: 126, http_responding_assets: 74 },
+    { scan_id: 18, total_scan_assets: 921, organizational_assets: 826, known_assets: 60, shadow_assets: 766, ip_present_assets: 129, http_responding_assets: 77 },
+  ])).toEqual([
+    { scan: 18, totalScanAssets: 921, organizational: 826, known: 60, shadow: 766, ipPresent: 129, httpResponding: 77 },
+    { scan: 24, totalScanAssets: 904, organizational: 821, known: 57, shadow: 764, ipPresent: 126, httpResponding: 74 },
+  ]);
+});
+
 test("asset growth tooltip reports scan and exact metric values", () => {
-  render(<GrowthTooltip active label={19} payload={[
+  render(<GrowthTooltip active label={19} data={[{
+    scan: 19, totalScanAssets: 2133, organizational: 829, known: 60,
+    shadow: 769, ipPresent: 128, httpResponding: 57,
+  }]} payload={[
     { dataKey: "totalScanAssets", name: "Total Scan Assets", value: 2133, color: "#4655a6" },
-    { dataKey: "known", name: "Known Assets", value: 60, color: "#5c6bc0" },
   ]} />);
 
   expect(screen.getByText("Scan #19")).toBeInTheDocument();
   expect(screen.getByText("Total Scan Assets").nextSibling).toHaveTextContent("2,133");
+  expect(screen.getByText("Organizational Assets").nextSibling).toHaveTextContent("829");
   expect(screen.getByText("Known Assets").nextSibling).toHaveTextContent("60");
+  expect(screen.getByText("Shadow Assets").nextSibling).toHaveTextContent("769");
+  expect(screen.getByText("IP-Present Assets").nextSibling).toHaveTextContent("128");
+  expect(screen.getByText("HTTP-Responding Assets").nextSibling).toHaveTextContent("57");
+});
+
+test("asset growth rescales the shared integer axis to visible populations", () => {
+  const visible = new Set(["totalScanAssets", "organizational"]);
+  expect(growthAxisMax(normalizeGrowth(growth), visible)).toBe(24);
+  expect(growthAxisMax(normalizeGrowth(growth), new Set(["organizational"]))).toBe(12);
+});
+
+test("asset growth toggles all six series and has a safe all-hidden state", () => {
+  render(<AssetGrowthPanel value={growth} status="ready" />);
+  const labels = [
+    "Total Scan Assets", "Organizational Assets", "Known Assets",
+    "Shadow Assets", "IP-Present Assets", "HTTP-Responding Assets",
+  ];
+  const canvas = screen.getByTestId("overview-asset-growth-chart");
+  expect(canvas).toHaveAttribute("data-y-axis-max", "24");
+  expect(canvas).toHaveAttribute("data-line-interpolation", "linear");
+  fireEvent.click(screen.getByRole("button", { name: "Total Scan Assets" }));
+  expect(canvas).toHaveAttribute("data-y-axis-max", "12");
+  for (const label of labels) {
+    const button = screen.getByRole("button", { name: label });
+    if (button.getAttribute("aria-pressed") === "true") fireEvent.click(button);
+  }
+  labels.forEach((label) => expect(screen.getByRole("button", { name: label })).toHaveAttribute("aria-pressed", "false"));
+  expect(screen.getByText("All series hidden")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Known Assets" }));
+  expect(screen.getByRole("button", { name: "Known Assets" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.queryByText("All series hidden")).not.toBeInTheDocument();
+});
+
+test("asset growth legend toggles from the keyboard and exposes pressed state", () => {
+  render(<AssetGrowthPanel value={growth} status="ready" />);
+  const known = screen.getByRole("button", { name: "Known Assets" });
+  known.focus();
+  userEvent.keyboard("{enter}");
+  expect(known).toHaveAttribute("aria-pressed", "true");
+});
+
+test("asset growth handles snapshots with no metric values without fabricating zeros", () => {
+  render(<AssetGrowthPanel value={[
+    { scan_id: 18, total_scan_assets: null },
+    { scan_id: 19, total_scan_assets: null },
+  ]} status="ready" />);
+  expect(screen.getByText("No values available")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Organizational Assets" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.queryByText("0")).not.toBeInTheDocument();
 });
 
 test("growth legend controls series visibility accessibly", () => {
