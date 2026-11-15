@@ -81,7 +81,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   frontend:
-    image: asip-frontend:scan-centre-expansion-fix-7d89c94-20261115T091559Z
+    image: asip-frontend:scan-centre-expansion-fix-610b774-20261115T092507Z
     pull_policy: never
     build: ./frontend
     container_name: asm_frontend
