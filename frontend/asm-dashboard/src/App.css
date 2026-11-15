@@ -734,6 +734,9 @@
 .scan-worker-row, .scan-event-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(160px, 1fr) auto; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(115, 142, 170, .09); color: var(--asip-text-muted); font-family: var(--asip-font-mono); font-size: 9px; }
 .scan-worker-row strong, .scan-event-row strong { color: var(--asip-text-secondary); font-weight: 500; overflow-wrap: anywhere; }
 .scan-worker-row b { color: var(--asip-text-primary); font-weight: 650; }
+.scan-worker-observations { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-weight: 500; }
+.scan-worker-observations li { overflow-wrap: anywhere; }
+.scan-worker-object { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; font-weight: 500; }
 .scan-event-row { grid-template-columns: auto minmax(160px, 1fr) minmax(150px, auto); }
 .scan-outcome { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding-top: 11px; border-top: 1px solid var(--asip-border); color: var(--asip-text-muted); font-size: 9px; }
 .scan-outcome strong { color: var(--asip-text-secondary); font-family: var(--asip-font-mono); font-weight: 500; }

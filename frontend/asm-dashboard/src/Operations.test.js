@@ -795,6 +795,52 @@ test("Scan Centre loads persistent stage diagnostics on demand", async () => {
   expect(screen.getAllByText("RETRYABLE_INCOMPLETE").length).toBe(2);
 });
 
+test("Scan Centre renders structured worker observations without a React object-child crash", async () => {
+  window.location.hash = "#/scans";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Scans.mockResolvedValue({
+    current_authoritative_scan_id: 24,
+    previous_authoritative_scan_id: null,
+    scans: [
+      { scan_id: 24, status: "SUCCEEDED", started_at: "start", completed_at: "done", duration_seconds: 1, asset_count: 2, seed: "example.com", is_current_authoritative: true, is_previous_authoritative: false },
+      { scan_id: 23, status: "SUCCEEDED", started_at: "start", completed_at: "done", duration_seconds: 1, asset_count: 1, seed: "other.example", is_current_authoritative: false, is_previous_authoritative: false },
+    ],
+  });
+  getV2ScanDetail
+    .mockResolvedValueOnce({
+    scan_id: 24, status: "SUCCEEDED", diagnostics_available: true,
+    stage_attempts: [{
+      stage: "Port Scan", order: 9, attempt: 1, status: "SUCCEEDED",
+      worker_summary: {
+        nmap_destination_observations: [
+          { domain_id: 2401, status: "complete", destination_ip: "192.0.2.24" },
+          { domain_id: 2402, status: "unavailable" },
+        ],
+        unexpected_details: { phase: "finished", counts: { attempted: 2 } },
+        empty_details: {},
+        missing_value: null,
+      },
+    }],
+    })
+    .mockResolvedValueOnce({ scan_id: 23, diagnostics_available: false });
+
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Expand scan 24" }));
+  expect(await screen.findByText("Stage breakdown")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Advanced Diagnostics"));
+  expect(screen.getByText("Domain #2401 · complete · 192.0.2.24")).toBeInTheDocument();
+  expect(screen.getByText("Domain #2402 · unavailable")).toBeInTheDocument();
+  expect(screen.getByText("phase: finished")).toBeInTheDocument();
+  expect(screen.getByText("attempted: 2")).toBeInTheDocument();
+  expect(screen.getByText("No details")).toBeInTheDocument();
+  expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
+
+  fireEvent.click(screen.getByRole("button", { name: "Collapse scan 24" }));
+  expect(screen.queryByText("Stage breakdown")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Expand scan 23" }));
+  expect(await screen.findByText("Diagnostics unavailable")).toBeInTheDocument();
+});
+
 test("Scan Centre shows the current stage for a running scan", async () => {
   window.location.hash = "#/scans";
   getV2Overview.mockResolvedValue(overview);

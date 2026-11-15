@@ -85,6 +85,42 @@ function workerSummaryRows(attempts) {
   })));
 }
 
+function workerSummaryValue(value) {
+  if (value === null || value === undefined || value === "") return "Unavailable";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value)) {
+    if (!value.length) return "No observations";
+    return (
+      <ul className="scan-worker-observations">
+        {value.map((item, index) => (
+          <li key={index}>{workerSummaryValue(item)}</li>
+        ))}
+      </ul>
+    );
+  }
+  if (typeof value === "object") {
+    if (Number.isInteger(value.domain_id) && typeof value.status === "string") {
+      return (
+        <span>
+          Domain #{value.domain_id} · {value.status}
+          {typeof value.destination_ip === "string" ? ` · ${value.destination_ip}` : ""}
+        </span>
+      );
+    }
+    const entries = Object.entries(value);
+    if (!entries.length) return "No details";
+    return (
+      <span className="scan-worker-object">
+        {entries.map(([key, item]) => (
+          <span key={key}>{key}: {workerSummaryValue(item)}</span>
+        ))}
+      </span>
+    );
+  }
+  return "Unavailable";
+}
+
 function DiagnosticStat({ label, value }) {
   return (
     <div className="scan-diagnostic-stat">
@@ -193,7 +229,7 @@ function ScanDiagnostics({ detail }) {
                   <div className="scan-worker-row" key={`${row.stage}-${row.key}-${index}`}>
                     <span>{row.stage}{row.attempt ? ` · attempt ${row.attempt}` : ""}</span>
                     <strong>{row.key}</strong>
-                    <b>{row.value}</b>
+                    <b>{workerSummaryValue(row.value)}</b>
                   </div>
                 ))}
               </div>
