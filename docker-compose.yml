@@ -43,7 +43,7 @@ services:
   backend:
     # Production backend releases are built from committed source and promoted
     # by updating this exact image reference. Do not add an implicit build here.
-    image: asip-backend:sensitive-port-priority-0f55c69-preserved-20261114T182113Z
+    image: asip-backend:asset-growth-3e169c9-20261115T0949Z
     pull_policy: never
     container_name: asm_backend
 
@@ -81,7 +81,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   frontend:
-    image: asip-frontend:scan-centre-expansion-fix-610b774-20261115T092507Z
+    image: asip-frontend:asset-growth-732dcf4-20261115T1005Z
     pull_policy: never
     build: ./frontend
     container_name: asm_frontend
