@@ -809,18 +809,21 @@ test("Scan Centre renders structured worker observations without a React object-
   getV2ScanDetail
     .mockResolvedValueOnce({
     scan_id: 24, status: "SUCCEEDED", diagnostics_available: true,
-    stage_attempts: [{
-      stage: "Port Scan", order: 9, attempt: 1, status: "SUCCEEDED",
-      worker_summary: {
-        nmap_destination_observations: [
-          { domain_id: 2401, status: "complete", destination_ip: "192.0.2.24" },
-          { domain_id: 2402, status: "unavailable" },
-        ],
-        unexpected_details: { phase: "finished", counts: { attempted: 2 } },
-        empty_details: {},
-        missing_value: null,
+    stage_attempts: [
+      {
+        stage: "Port Scan", order: 9, attempt: 1, status: "SUCCEEDED",
+        worker_summary: {
+          nmap_destination_observations: [
+            { domain_id: 2401, status: "complete", destination_ip: "192.0.2.24" },
+            { domain_id: 2402, status: "unavailable" },
+          ],
+          unexpected_details: { phase: "finished", counts: { attempted: 2 } },
+          empty_details: {},
+          missing_value: null,
+        },
       },
-    }],
+      { stage: "Unexpected Shape", order: 10, attempt: 1, status: "SUCCEEDED", worker_summary: "malformed" },
+    ],
     })
     .mockResolvedValueOnce({ scan_id: 23, diagnostics_available: false });
 
@@ -834,6 +837,7 @@ test("Scan Centre renders structured worker observations without a React object-
   expect(screen.getByText("attempted: 2")).toBeInTheDocument();
   expect(screen.getByText("No details")).toBeInTheDocument();
   expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
+  expect(screen.queryByText("0", { selector: ".scan-worker-row strong" })).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Collapse scan 24" }));
   expect(screen.queryByText("Stage breakdown")).not.toBeInTheDocument();

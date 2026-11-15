@@ -77,12 +77,16 @@ function retryCount(attempts) {
 }
 
 function workerSummaryRows(attempts) {
-  return attempts.flatMap((attempt, index) => Object.entries(attempt.worker_summary || {}).map(([key, value]) => ({
-    key,
-    value,
-    stage: attempt.stage || `Attempt ${index + 1}`,
-    attempt: attempt.attempt,
-  })));
+  return attempts.flatMap((attempt, index) => {
+    const summary = attempt.worker_summary;
+    if (!summary || typeof summary !== "object" || Array.isArray(summary)) return [];
+    return Object.entries(summary).map(([key, value]) => ({
+      key,
+      value,
+      stage: attempt.stage || `Attempt ${index + 1}`,
+      attempt: attempt.attempt,
+    }));
+  });
 }
 
 function workerSummaryValue(value) {
