@@ -207,7 +207,7 @@
 .overview-growth-legend button[aria-pressed="true"] { color: var(--asip-text-primary); font-weight: 600; }
 .overview-growth-legend button span { position: relative; width: 12px; height: 2px; border-radius: 2px; }
 .overview-growth-legend button span::after { position: absolute; top: 50%; left: 50%; width: 5px; height: 5px; border: 1px solid #fff; border-radius: 50%; background: inherit; content: ""; transform: translate(-50%, -50%); }
-.overview-growth-legend button[aria-pressed="false"] { opacity: .48; text-decoration: line-through; }
+.overview-growth-legend button[aria-pressed="false"] { opacity: .68; text-decoration: none; }
 .overview-growth-legend button:focus-visible { outline: 2px solid var(--asip-accent); outline-offset: 2px; }
 .overview-growth-tooltip { display: grid; gap: 4px; min-width: 190px; max-width: 240px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #172130; font-size: 11px; box-shadow: 0 6px 18px rgba(31,45,61,.12); }
 .overview-growth-tooltip > div { display: flex; justify-content: space-between; gap: 12px; }
