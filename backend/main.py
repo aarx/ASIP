@@ -4367,6 +4367,7 @@ def _frontend_v2_asset_detail(domain_name: str, _historical_scan_id=None):
     conn.close()
 
     return {
+        "domain_id": domain_id,
         "scan_id": scan_id,
         "scan_time": scan_time,
         "domain": domain_name,
@@ -5022,10 +5023,22 @@ def dns_security_domain_evidence(domain_id: int, scan_id: int = None):
             "evidence": row[6], "remediation": row[7], "checked_at": row[8],
             "verification_status": row[1],
         } for row in cur.fetchall()]
+        scan_execution_state, worker_summary = _dns_security_execution(_diagnostics)
+        if not checks:
+            assessment_state = "NO_RECORDS"
+        elif all(check["outcome"] == "NOT_CHECKED" for check in checks):
+            assessment_state = "NOT_CHECKED_ONLY"
+        elif any(check["outcome"] == "NOT_CHECKED" for check in checks):
+            assessment_state = "PARTIAL"
+        else:
+            assessment_state = "ASSESSED"
         return {
             "scan_id": scan_id, "domain_id": asset[0], "domain": asset[1],
             "asset_class": asset[2], "availability_state": "AVAILABLE",
             "execution_state": "CHECKED" if checks else "UNCHECKED",
+            "assessment_state": assessment_state,
+            "scan_execution_state": scan_execution_state,
+            "worker_summary": worker_summary,
             "checks": checks,
         }
     except HTTPException:

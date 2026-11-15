@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Button } from "@mui/material";
-import { getV2AssetDetail, getV2AssetsSummary, updateV2AssetOwnership } from "../services/api";
+import { getDnsSecurityDomainEvidence, getV2AssetDetail, getV2AssetsSummary, updateV2AssetOwnership } from "../services/api";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { ErrorState, LoadingState } from "../components/ui/AsyncState";
@@ -46,6 +46,61 @@ function statusTone(value) {
 
 function TechnologyStatus({ value, tone }) {
   return <span className={`technology-status technology-status-${tone || statusTone(value)}`}>{value}</span>;
+}
+
+function DnsEvidenceValue({ value }) {
+  if (value === null || value === undefined || value === "") return <span>Unavailable</span>;
+  if (Array.isArray(value)) return <ul className="dns-evidence-value-list">{value.map((item, index) => <li key={index}><DnsEvidenceValue value={item} /></li>)}</ul>;
+  if (typeof value === "object") return <dl className="dns-evidence-value-object">{Object.entries(value).map(([key, item]) => <div key={key}><dt>{key.replaceAll("_", " ")}</dt><dd><DnsEvidenceValue value={item} /></dd></div>)}</dl>;
+  return <span>{String(value)}</span>;
+}
+
+function DnsSecurityEvidencePanel({ status, evidence, error, historical, onRetry }) {
+  const scanId = evidence?.scan_id;
+  const execution = evidence?.scan_execution_state;
+  const checks = Array.isArray(evidence?.checks) ? evidence.checks : [];
+  return (
+    <Panel title="DNS Security" subtitle={historical ? `Historical DNS assessment · scan #${scanId || "unavailable"}` : `DNS assessment · scan #${scanId || "unavailable"}`} className="detail-panel detail-panel-wide">
+      {status === "loading" && <div className="detail-empty" role="status">Loading DNS assessment…</div>}
+      {status === "error" && <div className="detail-empty" role="alert">DNS assessment unavailable. <button type="button" className="dns-inline-action" onClick={onRetry}>Retry</button></div>}
+      {status === "unavailable" && <DetailEmpty>DNS Security records are unavailable for this scan.</DetailEmpty>}
+      {status === "not-eligible" && <DetailEmpty>This asset is outside the DNS Security assessment scope.</DetailEmpty>}
+      {status === "ready" && (
+        <>
+          <div className="dns-evidence-summary">
+            <span><small>Source scan</small><strong>#{scanId}</strong></span>
+            <span><small>DNS stage</small><strong>{readableDnsStatus(execution)}</strong></span>
+            <span><small>Asset assessment</small><strong>{readableDnsStatus(evidence.assessment_state)}</strong></span>
+            {evidence.worker_summary && Object.entries(evidence.worker_summary).filter(([, value]) => typeof value === "number" || typeof value === "boolean").map(([key, value]) => <span key={key}><small>{key.replaceAll("_", " ")}</small><strong>{String(value)}</strong></span>)}
+          </div>
+          {checks.length ? <div className="dns-evidence-list">
+            {checks.map((check, index) => (
+              <section className="dns-check-detail" key={`${check.category || "check"}-${check.checked_at || index}-${index}`}>
+                <div className="dns-check-heading"><strong>{readableDnsStatus(check.category)}</strong><StatusBadge value={check.outcome} /></div>
+                <div className="dns-evidence-grid">
+                  <div><small>Recorded outcome</small><strong>{readableDnsStatus(check.outcome)}</strong></div>
+                  <div><small>Severity</small><strong>{readableDnsStatus(check.severity)}</strong></div>
+                  <div><small>Verification</small><strong>Source-recorded</strong></div>
+                  <div><small>Confidence</small><strong>{readableDnsStatus(check.confidence)}</strong></div>
+                  <div><small>Record type</small><strong>{readableDnsStatus(check.record_type)}</strong></div>
+                  <div><small>Target</small><strong className="technical-value">{readableDnsStatus(check.target)}</strong></div>
+                  <div className="dns-evidence-wide"><small>Evidence</small><strong><DnsEvidenceValue value={check.evidence} /></strong></div>
+                  <div className="dns-evidence-wide"><small>Remediation</small><strong><DnsEvidenceValue value={check.remediation} /></strong></div>
+                  <div className="dns-evidence-wide"><small>Checked</small><strong>{displayEvidence(check.checked_at)}</strong></div>
+                </div>
+              </section>
+            ))}
+          </div> : <DetailEmpty>{execution === "NOT_EXECUTED" ? "DNS Security was not executed for this scan." : execution === "UNKNOWN" ? "No DNS check records are available; execution status is unknown." : "No DNS check records were recorded for this asset in this scan."}</DetailEmpty>}
+          {error && <div className="detail-empty" role="status">{error}</div>}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+function readableDnsStatus(value) {
+  if (value === null || value === undefined || value === "") return "Unavailable";
+  return String(value).replaceAll("_", " ");
 }
 
 function technologyRows(technologies, observations) {
@@ -313,6 +368,10 @@ export default function AssetDetailPage({ domain, returnQuery }) {
   const [status, setStatus] = useState("loading");
   const [requestVersion, setRequestVersion] = useState(0);
   const [currentScanId, setCurrentScanId] = useState(null);
+  const [dnsEvidence, setDnsEvidence] = useState(null);
+  const [dnsEvidenceStatus, setDnsEvidenceStatus] = useState("idle");
+  const [dnsEvidenceRequestVersion, setDnsEvidenceRequestVersion] = useState(0);
+  const [dnsEvidenceError, setDnsEvidenceError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -341,6 +400,41 @@ export default function AssetDetailPage({ domain, returnQuery }) {
       .catch(() => { if (active) setStatus("error"); });
     return () => { active = false; };
   }, [domain, fixtureMode, historicalScope, requestVersion]);
+
+  useEffect(() => {
+    if (status !== "ready" || fixtureMode || !data?.domain_id || !data?.scan_id) {
+      setDnsEvidence(null);
+      setDnsEvidenceStatus(status === "ready" ? "not-eligible" : "idle");
+      return undefined;
+    }
+    if (!["KNOWN", "SHADOW"].includes(data.asset_class)) {
+      setDnsEvidence(null);
+      setDnsEvidenceStatus("not-eligible");
+      return undefined;
+    }
+    let active = true;
+    setDnsEvidence(null);
+    setDnsEvidenceStatus("loading");
+    getDnsSecurityDomainEvidence(data.domain_id, data.scan_id)
+      .then((result) => {
+        if (!active) return;
+        if (result?.availability_state === "SCHEMA_UNAVAILABLE") {
+          setDnsEvidence(result);
+          setDnsEvidenceStatus("unavailable");
+        } else if (Number(result?.scan_id) !== Number(data.scan_id) || Number(result?.domain_id) !== Number(data.domain_id)) {
+          setDnsEvidenceStatus("unavailable");
+        } else {
+          setDnsEvidence(result);
+          setDnsEvidenceStatus("ready");
+        }
+      })
+      .catch((error) => {
+        if (!active) return;
+        if (error?.response?.status === 404) setDnsEvidenceStatus("unavailable");
+        else { setDnsEvidenceError(error?.response?.data?.detail || "The DNS evidence request failed."); setDnsEvidenceStatus("error"); }
+      });
+    return () => { active = false; };
+  }, [data, dnsEvidenceRequestVersion, fixtureMode, status]);
 
   const returnParams = new URLSearchParams(returnQuery);
   const returnTo = returnParams.get("return");
@@ -552,6 +646,8 @@ export default function AssetDetailPage({ domain, returnQuery }) {
             </div>
           ) : <DetailEmpty>No provenance rows are available for this evidence scan.</DetailEmpty>}
         </Panel>
+
+        <DnsSecurityEvidencePanel status={dnsEvidenceStatus} evidence={dnsEvidence} error={dnsEvidenceError} historical={evidenceIsHistorical} onRetry={() => setDnsEvidenceRequestVersion((value) => value + 1)} />
 
         <Panel title="Findings" subtitle={evidenceIsHistorical ? `Historical findings from scan #${data.scan_id}; not current findings` : "Current-scan deterministic observations requiring investigation"} className="detail-panel detail-panel-wide">
           {data.findings?.length ? (

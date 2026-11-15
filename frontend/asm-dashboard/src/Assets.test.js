@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import App from "./App";
 import {
   exportV2AssetsCsv,
+  getDnsSecurityDomainEvidence,
   getV2AssetDetail,
   getV2Assets,
   getV2AssetsSummary,
@@ -13,6 +14,7 @@ jest.mock("./services/api", () => ({
   getV2Assets: jest.fn(),
   getV2AssetsSummary: jest.fn(),
   exportV2AssetsCsv: jest.fn(),
+  getDnsSecurityDomainEvidence: jest.fn(),
   getV2AssetDetail: jest.fn(),
   updateV2AssetOwnership: jest.fn(),
   getV2Scans: jest.fn(),
@@ -179,12 +181,14 @@ beforeEach(() => {
   getV2Assets.mockReset();
   getV2AssetsSummary.mockReset();
   exportV2AssetsCsv.mockReset();
+  getDnsSecurityDomainEvidence.mockReset();
   getV2AssetDetail.mockReset();
   updateV2AssetOwnership.mockReset();
   getV2AssetsSummary.mockResolvedValue({
     scope: "current", scan_id: 42, count: 2133,
     classification_counts: { KNOWN: 60, SHADOW: 769, CANDIDATE: 1304 },
   });
+  getDnsSecurityDomainEvidence.mockResolvedValue({ availability_state: "AVAILABLE", checks: [] });
 });
 
 test("explorer loads current assets, applies server filters, and clears them", async () => {
@@ -753,6 +757,54 @@ test("asset detail renders exact evidence and no risk for a Candidate", async ()
   expect(screen.getByRole("link", { name: "← Back to Assets" })).toHaveAttribute(
     "href", "#/assets?ownership=CANDIDATE&limit=25"
   );
+});
+
+test("Asset Detail loads all DNS outcomes from the exact historical evidence scan", async () => {
+  window.location.hash = "#/assets/mail.example.com?scope=retained_history&return=assets&return_query=scope%3Dretained_history%26page%3D2";
+  getV2AssetDetail.mockResolvedValue({
+    ...technologyDetail, domain_id: 88, scan_id: 12, scan_time: "2026-10-01T00:00:00Z",
+    scope: "retained_history", current_scan_member: false,
+  });
+  getDnsSecurityDomainEvidence.mockResolvedValue({
+    domain_id: 88, domain: "mail.example.com", scan_id: 12,
+    availability_state: "AVAILABLE", scan_execution_state: "PARTIAL",
+    assessment_state: "PARTIAL", worker_summary: { selected: 1, completed: 1 },
+    checks: [
+      { category: "spf_configuration", outcome: "CONFIRMED_ISSUE", severity: "MEDIUM", confidence: "HIGH", evidence: { observed: "-all" }, checked_at: "2026-10-01T00:00:00Z" },
+      { category: "dmarc_configuration", outcome: "WARNING", severity: "LOW", evidence: "Policy is present" },
+      { category: "dnssec_validation", outcome: "INCONCLUSIVE", severity: "UNKNOWN" },
+      { category: "mx_lookup", outcome: "NOT_CHECKED", severity: "UNKNOWN" },
+    ],
+  });
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { name: "DNS Security" })).toBeInTheDocument();
+  expect(getDnsSecurityDomainEvidence).toHaveBeenCalledWith(88, 12);
+  expect(screen.getByText("Historical DNS assessment · scan #12")).toBeInTheDocument();
+  expect(screen.getAllByText("PARTIAL").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Source-recorded").length).toBe(4);
+  expect(screen.getByText("CONFIRMED ISSUE")).toBeInTheDocument();
+  expect(screen.getAllByText("WARNING").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("INCONCLUSIVE").length).toBeGreaterThan(0);
+  expect(screen.getByText("NOT CHECKED")).toBeInTheDocument();
+  expect(screen.getByText("-all")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "← Back to Assets" })).toHaveAttribute("href", "#/assets?scope=retained_history&page=2");
+});
+
+test("Asset Detail distinguishes an unexecuted DNS stage from an empty assessed result", async () => {
+  window.location.hash = "#/assets/technology.example";
+  getV2AssetDetail.mockResolvedValue({ ...technologyDetail, domain_id: 91, scan_id: 24 });
+  getDnsSecurityDomainEvidence.mockResolvedValue({
+    domain_id: 91, domain: "technology.example", scan_id: 24,
+    availability_state: "AVAILABLE", execution_state: "UNCHECKED",
+    assessment_state: "NO_RECORDS", scan_execution_state: "NOT_EXECUTED",
+    worker_summary: null, checks: [],
+  });
+  render(<App />);
+
+  expect(await screen.findByText("DNS Security was not executed for this scan.")).toBeInTheDocument();
+  expect(screen.getByText("NOT EXECUTED")).toBeInTheDocument();
+  expect(screen.queryByText("No DNS check records were recorded for this asset in this scan.")).not.toBeInTheDocument();
 });
 
 test("asset detail separates effective class from stored ownership and groups provenance", async () => {

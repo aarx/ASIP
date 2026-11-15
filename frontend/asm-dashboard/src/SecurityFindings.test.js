@@ -112,6 +112,18 @@ test("renders live category counts, separate coverage, and the default attention
   expect(screen.queryByText("Candidate")).not.toBeInTheDocument();
 });
 
+test("finding name is selectable plain text and its separate Details control opens evidence", async () => {
+  render(<App />);
+
+  const name = await screen.findByText("spf_policy — WARNING");
+  expect(name.closest("button")).toBeNull();
+  expect(name.closest(".finding-name-text")).toHaveClass("finding-name-text");
+  expect(screen.getAllByText("WARNING").length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole("button", { name: "Details" }));
+  expect(await screen.findByText("The recorded DNS assessment outcome may warrant validation.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-expanded", "true");
+});
+
 test("uses the evidence-list scan ID while summary metadata is pending", async () => {
   let resolveSummary;
   getSecurityFindingsSummary.mockReturnValue(new Promise((resolve) => { resolveSummary = resolve; }));
@@ -228,7 +240,7 @@ test("certificate and positive port evidence display recorded fields without inv
 test("maps source labels, null severity, inferred environment, and nested evidence in details", async () => {
   render(<App />);
 
-  const title = await screen.findByRole("button", { name: /spf_policy/ });
+  const title = await screen.findByRole("button", { name: "Details" });
   expect(screen.getAllByText("DNS Security").length).toBeGreaterThan(0);
   expect(screen.getByText("Not provided")).toBeInTheDocument();
   fireEvent.click(title);
@@ -247,7 +259,7 @@ test("filters by source and asset class and keeps exact pagination totals", asyn
   getSecurityFindings.mockImplementation((params) => Promise.resolve({ ...attentionPage, ...params, total: 51 }));
   render(<App />);
 
-  await screen.findByRole("button", { name: /spf_policy/ });
+  await screen.findByRole("button", { name: "Details" });
   fireEvent.change(screen.getByRole("combobox", { name: "Finding source" }), { target: { value: "domain_cert" } });
   fireEvent.change(screen.getByRole("combobox", { name: "Finding asset class" }), { target: { value: "KNOWN" } });
 

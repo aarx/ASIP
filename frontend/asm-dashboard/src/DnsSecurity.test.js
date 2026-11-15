@@ -183,6 +183,47 @@ test("distinguishes filtered empty hosts", async () => {
   expect(getDnsSecurityHosts).toHaveBeenCalledWith({ scan_id: 17, page: 1, limit: 25, outcome: "WARNING" });
 });
 
+test("hostname search is trimmed, server-side, filter-composable, and paginated", async () => {
+  getDnsSecuritySummary.mockResolvedValue(loadedSummary);
+  getDnsSecurityHosts.mockImplementation((params) => Promise.resolve({
+    ...emptyHosts, ...params, total: params.search ? 1 : 51,
+    hosts: params.search ? [{ ...host, domain: "email.abc.com" }] : [host],
+  }));
+  window.location.hash = "#/risk/dns-security";
+  render(<App />);
+
+  expect(await screen.findByText("mail.example.com")).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("searchbox", { name: "Hostname" }), { target: { value: "  EMAIL.ABC.COM  " } });
+  fireEvent.change(screen.getByLabelText("Outcome"), { target: { value: "CONFIRMED_ISSUE" } });
+  fireEvent.change(screen.getByLabelText("Asset class"), { target: { value: "KNOWN" } });
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(getDnsSecurityHosts).toHaveBeenLastCalledWith({
+    scan_id: 17, page: 1, limit: 25, outcome: "CONFIRMED_ISSUE", asset_class: "KNOWN",
+    search: "EMAIL.ABC.COM", search_mode: "fragment",
+  }));
+  expect(await screen.findByText("email.abc.com")).toBeInTheDocument();
+  expect(window.location.hash).toContain("search=EMAIL.ABC.COM");
+  expect(screen.getByText("Page 1 of 1 · 1 matching hosts")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+  await waitFor(() => expect(getDnsSecurityHosts).toHaveBeenLastCalledWith({ scan_id: 17, page: 1, limit: 25 }));
+  expect(screen.getByRole("searchbox", { name: "Hostname" })).toHaveValue("");
+});
+
+test("hostname search returns an explicit no-match state and rejects too-short fragments", async () => {
+  getDnsSecuritySummary.mockResolvedValue(loadedSummary);
+  getDnsSecurityHosts.mockResolvedValue(emptyHosts);
+  window.location.hash = "#/risk/dns-security?search=none.example";
+  render(<App />);
+
+  expect(await screen.findByText("No matching hosts")).toBeInTheDocument();
+  expect(getDnsSecurityHosts).toHaveBeenCalledWith({ scan_id: 17, page: 1, limit: 25, search: "none.example", search_mode: "fragment" });
+  fireEvent.change(screen.getByRole("searchbox", { name: "Hostname" }), { target: { value: "x" } });
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Enter at least 2 characters");
+  expect(getDnsSecurityHosts).toHaveBeenCalledTimes(1);
+});
+
 test("shows a retryable state for summary request failures", async () => {
   getDnsSecuritySummary.mockRejectedValueOnce(new Error("request failed")).mockResolvedValueOnce(summary);
   getDnsSecurityHosts.mockResolvedValue(emptyHosts);

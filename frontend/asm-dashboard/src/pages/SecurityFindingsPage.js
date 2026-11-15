@@ -384,7 +384,7 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
                 <tbody>{findings.map((finding) => {
                   const selected = selectedFinding?.finding_id === finding.finding_id;
                   return <tr key={finding.finding_id} className={selected ? "finding-row-selected" : ""}>
-                    <td><button type="button" className="finding-select-button" aria-expanded={selected} aria-controls="finding-detail" onClick={() => setSelectedFinding(selected ? null : finding)}><strong>{finding.title}</strong><span>{displayOptional(finding.finding_type, "Observation")}</span></button></td>
+                    <td><div className="finding-name-cell"><div className="finding-name-text"><strong>{finding.title}</strong><span>{displayOptional(finding.finding_type, "Observation")}</span></div><button type="button" className="finding-details-button" aria-expanded={selected} aria-controls="finding-detail" onClick={() => setSelectedFinding(selected ? null : finding)}>{selected ? "Hide details" : "Details"}</button></div></td>
                     <td><AssetLink domain={finding.asset_domain} returnTo={routePrefix} returnQuery={pageQuery} /></td>
                     <td><span>{sourceLabel(finding.source)}</span><small>{finding.source_outcome || ""}</small></td>
                     <td>{finding.severity ? <StatusBadge value={finding.severity} /> : <span className="not-applicable">Not provided</span>}</td>

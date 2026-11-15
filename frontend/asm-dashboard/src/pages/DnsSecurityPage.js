@@ -18,13 +18,14 @@ function readQuery(query) {
     limit: [25, 50, 100].includes(requestedLimit) ? requestedLimit : DEFAULT_LIMIT,
     outcome: params.get("outcome") || "",
     asset_class: params.get("asset_class") || "",
+    search: params.get("search") || "",
   };
 }
 
 function dnsHash(filters, page = 1, limit = DEFAULT_LIMIT) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
-    if (key !== "page" && key !== "limit" && value) params.set(key, value);
+    if (key !== "page" && key !== "limit" && value) params.set(key, key === "search" ? value.trim() : value);
   });
   if (page > 1) params.set("page", String(page));
   if (limit !== DEFAULT_LIMIT) params.set("limit", String(limit));
@@ -208,12 +209,21 @@ export default function DnsSecurityPage({ query }) {
       setHostsStatus("idle");
       return undefined;
     }
+    if (applied.search.trim().length === 1) {
+      setHosts(null);
+      setHostsStatus("invalid-search");
+      return undefined;
+    }
     let active = true;
     setHostsStatus("loading");
     const params = { scan_id: summary.scan_id, page: applied.page, limit: applied.limit };
     ["outcome", "asset_class"].forEach((key) => {
       if (applied[key]) params[key] = applied[key];
     });
+    if (applied.search.trim()) {
+      params.search = applied.search.trim();
+      params.search_mode = "fragment";
+    }
     getDnsSecurityHosts(params)
       .then((result) => {
         if (!active) return;
@@ -236,13 +246,16 @@ export default function DnsSecurityPage({ query }) {
 
   useEffect(() => {
     setSelectedHost(null);
-  }, [applied.page, applied.limit, applied.outcome, applied.asset_class]);
+  }, [applied.page, applied.limit, applied.outcome, applied.asset_class, applied.search]);
 
   const applyFilters = (event) => {
     event.preventDefault();
-    window.location.hash = dnsHash(draft, 1, draft.limit);
+    window.location.hash = dnsHash({ ...draft, search: draft.search.trim() }, 1, draft.limit);
   };
-  const clearFilters = () => { window.location.hash = dnsHash({}, 1, DEFAULT_LIMIT); };
+  const clearFilters = () => {
+    setDraft({ page: 1, limit: DEFAULT_LIMIT, outcome: "", asset_class: "", search: "" });
+    window.location.hash = dnsHash({}, 1, DEFAULT_LIMIT);
+  };
   const movePage = (page) => { window.location.hash = dnsHash(applied, page, applied.limit); };
   const changeLimit = (event) => { window.location.hash = dnsHash(applied, 1, Number(event.target.value)); };
 
@@ -250,9 +263,9 @@ export default function DnsSecurityPage({ query }) {
   if (summaryStatus === "error" || summaryStatus === "unavailable") return <ErrorState title="DNS Security unavailable" copy="The DNS Security reporting service could not provide assessment data." onRetry={() => setSummaryRequestVersion((value) => value + 1)} />;
   if (!summary) return <ErrorState title="DNS Security unavailable" copy="No DNS Security summary was returned." onRetry={() => setSummaryRequestVersion((value) => value + 1)} />;
 
-  const total = Number.isInteger(hosts?.total) ? hosts.total : 0;
-  const totalPages = Math.max(Math.ceil(total / applied.limit), 1);
-  const hasFilters = Boolean(applied.outcome || applied.asset_class);
+  const total = Number.isInteger(hosts?.total) && hosts.total >= 0 ? hosts.total : null;
+  const totalPages = total === null ? null : Math.max(Math.ceil(total / applied.limit), 1);
+  const hasFilters = Boolean(draft.outcome || draft.asset_class || draft.search.trim());
 
   return (
     <div className="dns-security-page">
@@ -262,10 +275,12 @@ export default function DnsSecurityPage({ query }) {
         <form className="dns-filter-panel" onSubmit={applyFilters}>
           <FilterSelect label="Outcome" value={draft.outcome} options={OUTCOMES.map((value) => [value, value])} onChange={(event) => setDraft((current) => ({ ...current, outcome: event.target.value }))} />
           <FilterSelect label="Asset class" value={draft.asset_class} options={ASSET_CLASSES.map((value) => [value, displayAssetClass(value)])} onChange={(event) => setDraft((current) => ({ ...current, asset_class: event.target.value }))} />
+          <label className="dns-filter-control"><span>Hostname</span><input aria-label="Hostname" type="search" value={draft.search} onChange={(event) => setDraft((current) => ({ ...current, search: event.target.value }))} placeholder="Search hostnames" /></label>
           <div className="dns-filter-actions"><button type="submit" className="dns-primary-action">Apply</button><button type="button" className="dns-secondary-action" onClick={clearFilters} disabled={!hasFilters}>Clear</button></div>
         </form>
 
         {hostsStatus === "loading" && <div className="dns-table-state" role="status">Loading DNS host assessments…</div>}
+        {hostsStatus === "invalid-search" && <div className="dns-table-state" role="alert">Enter at least 2 characters to search hostnames.</div>}
         {(hostsStatus === "error" || hostsStatus === "unavailable") && <ErrorState title="DNS host assessments unavailable" copy="The DNS host assessment request could not be loaded." onRetry={() => setHostsRequestVersion((value) => value + 1)} />}
         {hostsStatus === "ready" && (
           hosts?.hosts?.length ? (
@@ -291,7 +306,7 @@ export default function DnsSecurityPage({ query }) {
                 </tbody>
               </table>
             </div>
-          ) : <div className="dns-table-state">{hasFilters ? "No matching hosts" : summary.checked_assets === 0 ? "Not Assessed" : Number.isInteger(summary.checked_assets) ? "No DNS host assessments recorded for the assessed assets" : "Assessment coverage unavailable"}</div>
+          ) : <div className="dns-table-state">{total === null ? "Result count unavailable" : hasFilters ? "No matching hosts" : summary.checked_assets === 0 ? "Not Assessed" : Number.isInteger(summary.checked_assets) ? "No DNS host assessments recorded for the assessed assets" : "Assessment coverage unavailable"}</div>
         )}
 
         {hostsStatus === "ready" && total > 0 && (

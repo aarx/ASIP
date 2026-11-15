@@ -283,8 +283,8 @@
 .dns-filter-panel { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; align-items: end; margin-bottom: 16px; }
 .dns-filter-control, .dns-page-size { display: grid; gap: 5px; min-width: 0; }
 .dns-filter-control > span, .dns-page-size { color: var(--asip-text-muted); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.dns-filter-control select, .dns-page-size select { width: 100%; min-height: 36px; padding: 0 9px; border: 1px solid var(--asip-border); border-radius: 4px; background: var(--asip-surface); color: var(--asip-text-secondary); font: inherit; }
-.dns-filter-control select:focus-visible, .dns-page-size select:focus-visible, .dns-domain-button:focus-visible, .dns-primary-action:focus-visible, .dns-secondary-action:focus-visible, .dns-inline-action:focus-visible { outline: 2px solid var(--asip-accent); outline-offset: 2px; }
+.dns-filter-control select, .dns-filter-control input, .dns-page-size select { width: 100%; min-height: 36px; padding: 0 9px; border: 1px solid var(--asip-border); border-radius: 4px; background: var(--asip-surface); color: var(--asip-text-secondary); font: inherit; }
+.dns-filter-control select:focus-visible, .dns-filter-control input:focus-visible, .dns-page-size select:focus-visible, .dns-domain-button:focus-visible, .dns-primary-action:focus-visible, .dns-secondary-action:focus-visible, .dns-inline-action:focus-visible { outline: 2px solid var(--asip-accent); outline-offset: 2px; }
 .dns-filter-actions { display: flex; gap: 8px; align-items: center; }
 .dns-primary-action, .dns-secondary-action, .dns-inline-action { min-height: 34px; padding: 0 11px; border: 1px solid var(--asip-border); border-radius: 4px; background: transparent; color: var(--asip-text-secondary); cursor: pointer; font: inherit; font-size: 10px; }
 .dns-primary-action { border-color: rgba(61, 196, 255, .45); background: rgba(61, 196, 255, .1); color: var(--asip-text-primary); }
@@ -539,7 +539,7 @@
 .findings-filter-panel label { display: grid; gap: 5px; min-width: 0; }
 .findings-filter-panel label > span { color: var(--asip-text-muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .findings-filter-panel select { width: 100%; min-height: 38px; padding: 0 9px; border: 1px solid var(--asip-border); border-radius: 4px; background: var(--asip-surface); color: var(--asip-text-secondary); font: inherit; font-size: 12px; }
-.findings-filter-panel select:focus-visible, .finding-select-button:focus-visible { outline: 2px solid var(--asip-accent); outline-offset: 2px; }
+.findings-filter-panel select:focus-visible, .finding-details-button:focus-visible { outline: 2px solid var(--asip-accent); outline-offset: 2px; }
 .findings-table { min-width: 980px; }
 .findings-table th:first-child { width: 28%; }
 .findings-table th:nth-child(2) { width: 19%; }
@@ -547,9 +547,13 @@
 .findings-table td { vertical-align: top; }
 .findings-table td:nth-child(3), .findings-table td:nth-child(4), .findings-table td:nth-child(5), .findings-table td:nth-child(6) { white-space: nowrap; }
 .findings-table td small { display: block; margin-top: 5px; color: var(--asip-text-muted); font-size: 10px; white-space: normal; }
-.finding-select-button { display: grid; gap: 4px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
-.finding-select-button strong { color: var(--asip-text-primary); font-size: 10px; }
-.finding-select-button span { color: var(--asip-text-muted); font-family: var(--asip-font-mono); font-size: 9px; overflow-wrap: anywhere; }
+.finding-name-cell { display: grid; justify-items: start; gap: 6px; }
+.finding-name-text, .finding-name-text * { user-select: text; cursor: text; }
+.finding-name-text { display: grid; gap: 4px; }
+.finding-name-text strong { color: var(--asip-text-primary); font-size: 10px; }
+.finding-name-text span { color: var(--asip-text-muted); font-family: var(--asip-font-mono); font-size: 9px; overflow-wrap: anywhere; }
+.finding-details-button { padding: 0; border: 0; background: transparent; color: var(--asip-accent-bright); font: inherit; font-size: 9px; cursor: pointer; }
+.finding-details-button:hover { color: var(--asip-text-primary); text-decoration: underline; }
 .finding-row-selected td { background: rgba(61, 196, 255, .045); }
 .findings-pagination { flex-wrap: wrap; gap: 10px 14px; }
 .finding-empty { padding-block: 26px; }
