@@ -145,7 +145,7 @@ export function GrowthTooltip({ active, payload = [], label }) {
   const entries = payload.filter((entry) => asOptionalCount(entry?.value) !== null);
   if (!entries.length) return null;
   return (
-    <div className="overview-growth-tooltip" role="status">
+    <div className="overview-growth-tooltip" style={chartTooltipStyle} role="status">
       <strong>Scan #{label}</strong>
       {entries.map((entry) => (
         <div key={entry.dataKey}>
@@ -215,28 +215,30 @@ export function AssetGrowthPanel({ value, status }) {
   } else {
     content = (
       <div className="overview-chart-canvas" data-testid="overview-asset-growth-chart" aria-label={`Asset population growth chart: ${visibleSeries.map(([, label]) => label).join(", ")}`}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 4, right: 12, bottom: 4, left: 0 }}>
-            <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
-            <XAxis dataKey="scan" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
-            <YAxis allowDecimals={false} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} width={28} />
-            <Tooltip content={<GrowthTooltip />} contentStyle={chartTooltipStyle} includeHidden />
-            {visibleSeries.map(([key, name, color]) => (
-              <Line
-                key={key}
-                type="monotone"
-                dataKey={key}
-                name={name}
-                stroke={color}
-                strokeWidth={key === "totalScanAssets" ? 3 : 2}
-                strokeDasharray={key === "totalScanAssets" ? undefined : "5 3"}
-                dot={{ r: key === "totalScanAssets" ? 3 : 2 }}
-                hide={!visibleKeys.has(key)}
-                connectNulls={false}
-              />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
+        <div className="overview-growth-plot">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 4, right: 12, bottom: 4, left: 0 }}>
+              <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+              <XAxis dataKey="scan" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
+              <YAxis allowDecimals={false} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} width={28} />
+              <Tooltip content={<GrowthTooltip />} contentStyle={chartTooltipStyle} includeHidden />
+              {visibleSeries.map(([key, name, color]) => (
+                <Line
+                  key={key}
+                  type="monotone"
+                  dataKey={key}
+                  name={name}
+                  stroke={color}
+                  strokeWidth={key === "totalScanAssets" ? 3 : 2}
+                  strokeDasharray={key === "totalScanAssets" ? undefined : "5 3"}
+                  dot={{ r: key === "totalScanAssets" ? 3 : 2 }}
+                  hide={!visibleKeys.has(key)}
+                  connectNulls={false}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
         <GrowthLegend series={visibleSeries} visibleKeys={visibleKeys} onToggle={toggleSeries} />
       </div>
     );
