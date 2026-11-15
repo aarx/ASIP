@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Legend, Rectangle, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Rectangle, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import Panel from "./Panel";
 import AssetLink from "./AssetLink";
 import { getBrandHistorySummary } from "../../services/api";
@@ -121,18 +121,62 @@ function asCount(value) {
   return Number.isFinite(count) && count >= 0 ? count : null;
 }
 
-function normalizeGrowth(value) {
+function asOptionalCount(value) {
+  return value === null || value === undefined || value === "" ? null : asCount(value);
+}
+
+export function normalizeGrowth(value) {
   if (!Array.isArray(value)) return [];
   return value
     .map((row) => ({
       scan: row?.scan_id,
-      organizational: asCount(row?.organizational_assets),
-      known: asCount(row?.known_assets),
-      shadow: asCount(row?.shadow_assets),
-      ipPresent: asCount(row?.ip_present_assets),
-      httpResponding: asCount(row?.http_responding_assets),
+      totalScanAssets: asOptionalCount(row?.total_scan_assets),
+      organizational: asOptionalCount(row?.organizational_assets),
+      known: asOptionalCount(row?.known_assets),
+      shadow: asOptionalCount(row?.shadow_assets),
+      ipPresent: asOptionalCount(row?.ip_present_assets),
+      httpResponding: asOptionalCount(row?.http_responding_assets),
     }))
     .filter((row) => row.scan != null);
+}
+
+export function GrowthTooltip({ active, payload = [], label }) {
+  if (!active || !payload.length) return null;
+  const entries = payload.filter((entry) => asOptionalCount(entry?.value) !== null);
+  if (!entries.length) return null;
+  return (
+    <div className="overview-growth-tooltip" role="status">
+      <strong>Scan #{label}</strong>
+      {entries.map((entry) => (
+        <div key={entry.dataKey}>
+          <span style={{ color: entry.color }}>{entry.name}</span>
+          <b>{Number(entry.value).toLocaleString()}</b>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function GrowthLegend({ series, visibleKeys, onToggle }) {
+  return (
+    <div className="overview-growth-legend" role="group" aria-label="Asset growth chart series">
+      {series.map(([key, label, color]) => {
+        const visible = visibleKeys.has(key);
+        return (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={visible}
+            onClick={() => onToggle(key)}
+            className={visible ? "overview-growth-legend-active" : "overview-growth-legend-inactive"}
+          >
+            <span aria-hidden="true" style={{ backgroundColor: color }} />
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function ChartState({ title, copy, error = false }) {
@@ -146,12 +190,20 @@ function ChartState({ title, copy, error = false }) {
 
 export function AssetGrowthPanel({ value, status }) {
   const data = normalizeGrowth(value);
+  const [visibleKeys, setVisibleKeys] = useState(() => new Set(["totalScanAssets"]));
+  const toggleSeries = (key) => setVisibleKeys((current) => {
+    const updated = new Set(current);
+    if (updated.has(key)) updated.delete(key);
+    else updated.add(key);
+    return updated;
+  });
   const visibleSeries = [
-    ["organizational", "Organizational Assets"],
-    ["known", "Known Assets"],
-    ["shadow", "Shadow Assets"],
-    ["ipPresent", "IP-Present Assets"],
-    ["httpResponding", "HTTP-Responding Assets"],
+    ["totalScanAssets", "Total Scan Assets", "#4655a6"],
+    ["known", "Known Assets", "#5c6bc0"],
+    ["shadow", "Shadow Assets", "#7e91a8"],
+    ["organizational", "Organizational Assets", "#327d80"],
+    ["ipPresent", "IP-Present Assets", "#398261"],
+    ["httpResponding", "HTTP-Responding Assets", "#d49a3a"],
   ].filter(([key]) => data.some((row) => row[key] != null));
   let content;
   if (status === "loading") {
@@ -168,21 +220,30 @@ export function AssetGrowthPanel({ value, status }) {
             <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
             <XAxis dataKey="scan" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
             <YAxis allowDecimals={false} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} width={28} />
-            <Tooltip contentStyle={chartTooltipStyle} />
-            <Legend wrapperStyle={{ fontSize: 10 }} />
-            {visibleSeries.some(([key]) => key === "organizational") && <Line type="monotone" dataKey="organizational" name="Organizational Assets" stroke="#4655a6" strokeWidth={2} dot={{ r: 2 }} />}
-            {visibleSeries.some(([key]) => key === "known") && <Line type="monotone" dataKey="known" name="Known Assets" stroke="#5c6bc0" strokeWidth={2} dot={{ r: 2 }} />}
-            {visibleSeries.some(([key]) => key === "shadow") && <Line type="monotone" dataKey="shadow" name="Shadow Assets" stroke="#7e91a8" strokeWidth={2} dot={{ r: 2 }} />}
-            {visibleSeries.some(([key]) => key === "ipPresent") && <Line type="monotone" dataKey="ipPresent" name="IP-Present Assets" stroke="#327d80" strokeWidth={2} dot={{ r: 2 }} />}
-            {visibleSeries.some(([key]) => key === "httpResponding") && <Line type="monotone" dataKey="httpResponding" name="HTTP-Responding Assets" stroke="#d49a3a" strokeWidth={2} dot={{ r: 2 }} />}
+            <Tooltip content={<GrowthTooltip />} contentStyle={chartTooltipStyle} includeHidden />
+            {visibleSeries.map(([key, name, color]) => (
+              <Line
+                key={key}
+                type="monotone"
+                dataKey={key}
+                name={name}
+                stroke={color}
+                strokeWidth={key === "totalScanAssets" ? 3 : 2}
+                strokeDasharray={key === "totalScanAssets" ? undefined : "5 3"}
+                dot={{ r: key === "totalScanAssets" ? 3 : 2 }}
+                hide={!visibleKeys.has(key)}
+                connectNulls={false}
+              />
+            ))}
           </LineChart>
         </ResponsiveContainer>
+        <GrowthLegend series={visibleSeries} visibleKeys={visibleKeys} onToggle={toggleSeries} />
       </div>
     );
   }
 
   return (
-    <Panel title="Asset growth trend" subtitle="Current effective populations across successful scans · historical classes are reconstructed" className="intelligence-panel">
+    <Panel title="Asset growth trend" subtitle="Total scan membership across successful scans · classes use current effective rules" className="intelligence-panel">
       {content}
     </Panel>
   );

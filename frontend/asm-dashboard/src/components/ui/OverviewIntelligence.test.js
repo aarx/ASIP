@@ -4,12 +4,16 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { Bar, BarChart, Cell, XAxis } from "recharts";
 import OverviewIntelligence, {
   BrandDiscoveryPanel,
+  AssetGrowthPanel,
+  GrowthLegend,
+  GrowthTooltip,
   HttpStatusBar,
   HttpStatusTick,
   classifyCertificateExpiry,
   normalizeBrandDiscovery,
   normalizeNamingExposure,
   normalizeCertificateRecords,
+  normalizeGrowth,
   normalizeSeedDistribution,
   parseCertificateExpiry,
   SeedDistributionPanel,
@@ -24,8 +28,8 @@ jest.mock("recharts", () => {
 });
 
 const growth = [
-  { scan_id: 41, organizational_assets: 10, known_assets: 7, shadow_assets: 3, ip_present_assets: 8, http_responding_assets: 6 },
-  { scan_id: 42, organizational_assets: 12, known_assets: 8, shadow_assets: 4, ip_present_assets: 9, http_responding_assets: 7 },
+  { scan_id: 41, total_scan_assets: 21, organizational_assets: 10, known_assets: 7, shadow_assets: 3, ip_present_assets: 8, http_responding_assets: 6 },
+  { scan_id: 42, total_scan_assets: 23, organizational_assets: 12, known_assets: 8, shadow_assets: 4, ip_present_assets: 9, http_responding_assets: 7 },
 ];
 
 test("renders supported aggregate charts with their scope", () => {
@@ -36,11 +40,13 @@ test("renders supported aggregate charts with their scope", () => {
     />
   );
 
-  expect(screen.getByText("Current effective populations across successful scans · historical classes are reconstructed")).toBeInTheDocument();
+  expect(screen.getByText("Total scan membership across successful scans · classes use current effective rules")).toBeInTheDocument();
   expect(screen.getByTestId("overview-asset-growth-chart")).toHaveClass("overview-chart-canvas");
   expect(screen.getByTestId("overview-asset-growth-chart")).toHaveAttribute(
-    "aria-label", expect.stringContaining("Organizational Assets, Known Assets, Shadow Assets, IP-Present Assets, HTTP-Responding Assets")
+    "aria-label", expect.stringContaining("Total Scan Assets, Known Assets, Shadow Assets, Organizational Assets, IP-Present Assets, HTTP-Responding Assets")
   );
+  expect(screen.getByRole("button", { name: "Total Scan Assets" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Known Assets" })).toHaveAttribute("aria-pressed", "false");
   expect(screen.getByText("Current authoritative confirmed-organizational scan")).toBeInTheDocument();
   expect(screen.getByTestId("overview-http-status-chart")).toHaveClass("overview-chart-canvas");
   expect(screen.getByTestId("overview-http-status-chart").parentElement).toHaveClass("overview-http-status-chart");
@@ -52,6 +58,50 @@ test("renders supported aggregate charts with their scope", () => {
   expect(screen.queryByRole("link", { name: /Open confirmed assets with no response/i })).not.toBeInTheDocument();
   expect(screen.queryByText("NO_RESPONSE")).not.toBeInTheDocument();
   expect(screen.queryByText("UNKNOWN")).not.toBeInTheDocument();
+});
+
+test("asset growth keeps missing totals unavailable and retains API ordering", () => {
+  expect(normalizeGrowth([
+    { scan_id: 18, total_scan_assets: 921 },
+    { scan_id: 19, total_scan_assets: null },
+  ])).toEqual([
+    { scan: 18, totalScanAssets: 921, organizational: null, known: null, shadow: null, ipPresent: null, httpResponding: null },
+    { scan: 19, totalScanAssets: null, organizational: null, known: null, shadow: null, ipPresent: null, httpResponding: null },
+  ]);
+});
+
+test("asset growth tooltip reports scan and exact metric values", () => {
+  render(<GrowthTooltip active label={19} payload={[
+    { dataKey: "totalScanAssets", name: "Total Scan Assets", value: 2133, color: "#4655a6" },
+    { dataKey: "known", name: "Known Assets", value: 60, color: "#5c6bc0" },
+  ]} />);
+
+  expect(screen.getByText("Scan #19")).toBeInTheDocument();
+  expect(screen.getByText("Total Scan Assets").nextSibling).toHaveTextContent("2,133");
+  expect(screen.getByText("Known Assets").nextSibling).toHaveTextContent("60");
+});
+
+test("growth legend controls series visibility accessibly", () => {
+  function Harness() {
+    const [visibleKeys, setVisibleKeys] = React.useState(new Set(["totalScanAssets"]));
+    return <GrowthLegend
+      series={[["totalScanAssets", "Total Scan Assets", "#4655a6"], ["known", "Known Assets", "#5c6bc0"]]}
+      visibleKeys={visibleKeys}
+      onToggle={(key) => setVisibleKeys((current) => {
+        const next = new Set(current);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        return next;
+      })}
+    />;
+  }
+  render(<Harness />);
+  const total = screen.getByRole("button", { name: "Total Scan Assets" });
+  const known = screen.getByRole("button", { name: "Known Assets" });
+  expect(total).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(known);
+  expect(known).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(total);
+  expect(total).toHaveAttribute("aria-pressed", "false");
 });
 
 test("HTTP chart bars and labels link only exact server-filtered groups", () => {

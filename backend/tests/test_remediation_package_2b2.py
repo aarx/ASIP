@@ -373,6 +373,7 @@ class AssetGrowthCursor:
         self.executions.append((sql, params))
         normalized = " ".join(sql.lower().split())
         assert "where status = 'succeeded'" in normalized
+        assert "order by ss.scan_id" in normalized
         assert "select distinct sr.scan_id, sr.domain_id" in normalized
         assert "group by ds.scan_id, ds.domain_id" in normalized
         assert "se.scan_id = m.scan_id" in normalized
@@ -388,6 +389,7 @@ class AssetGrowthCursor:
         assert "cm.asset_class = 'candidate'" in normalized
         assert "cm.asset_class = 'external'" in normalized
         assert "else 'candidate' end" in normalized
+        assert "count(distinct cm.domain_id) as total_scan_assets" in normalized
         self.result = self.rows
 
     def fetchall(self):
@@ -736,13 +738,14 @@ class AuthoritativeHistoryTests(unittest.TestCase):
 
     def test_asset_growth_uses_effective_classes_and_preserves_chart_keys(self):
         response, cursor = self.run_asset_growth([
-            (19, 2, 1, 1, 1, 1, 2, 1),
-            (20, 1, 1, 0, 0, 0, 1, 1),
-            (21, 0, 0, 0, 0, 0, 0, 0),
+            (19, 2, 1, 1, 1, 1, 2, 1, 4),
+            (20, 1, 1, 0, 0, 0, 1, 1, 3),
+            (21, 0, 0, 0, 0, 0, 0, 0, 0),
         ])
 
         self.assertEqual(response[0]["scan_id"], 19)
         self.assertEqual(response[0]["total"], 2)
+        self.assertEqual(response[0]["total_scan_assets"], 4)
         self.assertEqual(response[0]["organizational_assets"], 2)
         self.assertEqual(response[0]["known_assets"], 1)
         self.assertEqual(response[0]["shadow"], 1)
@@ -764,8 +767,8 @@ class AuthoritativeHistoryTests(unittest.TestCase):
 
     def test_asset_growth_keeps_scan_specific_ip_and_http_evidence_separate(self):
         response, cursor = self.run_asset_growth([
-            (20, 2, 1, 1, 0, 0, 2, 1),
-            (22, 2, 1, 1, 0, 0, 1, 0),
+            (20, 2, 1, 1, 0, 0, 2, 1, 4),
+            (22, 2, 1, 1, 0, 0, 1, 0, 5),
         ])
 
         self.assertEqual(
@@ -777,6 +780,28 @@ class AuthoritativeHistoryTests(unittest.TestCase):
         self.assertIn("left join state_evidence se", sql)
         self.assertIn("on se.scan_id = m.scan_id", sql)
         self.assertIn("and se.domain_id = m.domain_id", sql)
+
+    def test_asset_growth_exposes_distinct_membership_totals_for_scans_18_to_24(self):
+        rows = [
+            (18, 826, 60, 766, 95, 0, 129, 77, 921),
+            (19, 829, 60, 769, 1304, 0, 128, 57, 2133),
+            (20, 822, 60, 762, 1146, 0, 126, 76, 1968),
+            (21, 819, 60, 759, 1146, 0, 126, 75, 1965),
+            (22, 820, 60, 760, 94, 0, 128, 75, 914),
+            (23, 826, 57, 769, 83, 0, 127, 74, 909),
+            (24, 821, 57, 764, 83, 0, 126, 74, 904),
+        ]
+        response, _ = self.run_asset_growth(rows)
+
+        self.assertEqual(
+            [(row["scan_id"], row["total_scan_assets"]) for row in response],
+            [(18, 921), (19, 2133), (20, 1968), (21, 1965), (22, 914), (23, 909), (24, 904)],
+        )
+        self.assertEqual(
+            [(row["scan_id"], row["known_assets"], row["shadow_assets"], row["organizational_assets"])
+             for row in response],
+            [(scan_id, known, shadow, org) for scan_id, org, known, shadow, *_rest in rows],
+        )
 
     def test_asset_growth_returns_empty_when_there_are_no_successful_scans(self):
         response, _ = self.run_asset_growth([])

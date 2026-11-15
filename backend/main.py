@@ -6078,7 +6078,8 @@ def asset_growth():
             COUNT(DISTINCT cm.domain_id) FILTER (
                 WHERE cm.asset_class IN ('KNOWN', 'SHADOW')
                   AND cm.http_responding
-            ) AS http_responding_assets
+            ) AS http_responding_assets,
+            COUNT(DISTINCT cm.domain_id) AS total_scan_assets
         FROM successful_scans ss
         LEFT JOIN classified_members cm ON cm.scan_id = ss.scan_id
         GROUP BY ss.scan_id
@@ -6101,6 +6102,7 @@ def asset_growth():
             "external_assets": r[5],
             "ip_present_assets": r[6],
             "http_responding_assets": r[7],
+            "total_scan_assets": r[8],
             "classification_basis": "CURRENT_EFFECTIVE_CLASSIFICATION",
             "live_metric": "HTTP_RESPONDING",
             "historical_semantics": (
