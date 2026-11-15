@@ -6,6 +6,7 @@ import pathlib
 import sys
 import types
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -210,14 +211,42 @@ class Package4BApiTests(unittest.TestCase):
         self.assertEqual(result["count"], 2)
         self.assertEqual(len(result["assets"]), 2)
         self.assertEqual(result["assets"][0]["provider"], "Unknown")
-        count_sql, count_params = cursor.executions[0]
-        page_sql, page_params = cursor.executions[1]
-        self.assertIn("COUNT(DISTINCT d.id)", count_sql)
-        self.assertNotIn("dp.provider IS NOT NULL", page_sql)
-        self.assertIn("STRING_AGG(DISTINCT dt.tech", page_sql)
-        self.assertIn("ORDER BY d.domain ASC, d.id ASC", page_sql)
-        self.assertEqual(count_params, (42, None, None, None))
-        self.assertEqual(page_params, (42, None, None, None, 20, 0))
+        query, params = cursor.executions[0]
+        self.assertNotIn("dp.provider IS NOT NULL", query)
+        self.assertIn("STRING_AGG(DISTINCT dt.tech", query)
+        self.assertIn("ORDER BY d.domain ASC, d.id ASC", query)
+        self.assertNotIn("LIMIT", query.upper())
+        self.assertEqual(params, (42, None, None, None))
+
+    def test_investigation_sorts_full_filtered_population_before_pagination(self):
+        rows = [
+            ("a.example", True, "CONFIRMED", "192.0.2.1", True, 200, "Cloud", "AS1", "", ""),
+            ("b.example", True, "CONFIRMED", "192.0.2.2", True, 200, "Cloud", "AS1", "", ""),
+            ("c.example", True, "CONFIRMED", "192.0.2.3", True, 200, "Cloud", "AS1", "", ""),
+        ]
+        cursor = QueueCursor(fetchalls=[rows])
+        self.main.get_conn = lambda: FakeConnection(cursor)
+        risks = [
+            SimpleNamespace(domain=domain, result=SimpleNamespace(
+                score=score, priority="Review", reasons=[]
+            ))
+            for domain, score in (("a.example", 1), ("b.example", 3), ("c.example", 2))
+        ]
+        with mock.patch.object(self.main, "_current_scan_risks", return_value=risks):
+            result = self.main.investigation_assets(
+                page=2, limit=1, sort_by="risk", sort_dir="desc"
+            )
+
+        self.assertEqual(result["count"], 3)
+        self.assertEqual([item["domain"] for item in result["assets"]], ["c.example"])
+        self.assertEqual(result["assets"][0]["risk"], 2)
+        sql, _params = cursor.executions[0]
+        self.assertNotIn("LIMIT", sql.upper())
+
+    def test_investigation_rejects_unallowlisted_sort(self):
+        with self.assertRaises(self.main.HTTPException) as raised:
+            self.main.investigation_assets(sort_by="domain; DROP TABLE domains")
+        self.assertEqual(raised.exception.status_code, 400)
 
     def test_dashboard_organizational_queries_use_effective_known_shadow_scope(self):
         text = (BACKEND / "main.py").read_text(encoding="utf-8")

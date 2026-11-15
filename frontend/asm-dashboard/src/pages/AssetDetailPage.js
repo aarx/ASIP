@@ -6,6 +6,7 @@ import StatusBadge from "../components/ui/StatusBadge";
 import { ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { brandAcceptanceDetail, isBrandAcceptanceFixture } from "../fixtures/brandAcceptance";
 import { displayAssetClass, displayEvidence, displayHttpStatus } from "../utils/presentation";
+import SortableHeader from "../components/ui/SortableHeader";
 
 function EvidenceRow({ label, value, mono = false, wide = false }) {
   return (
@@ -252,7 +253,22 @@ function TechnologyDetails({ observation }) {
 }
 
 function TechnologyIntelligence({ technologies, observations, subtitle }) {
+  const [sort, setSort] = useState({ by: null, dir: "asc" });
   const rows = technologyRows(technologies, observations);
+  const sortedRows = sort.by ? [...rows].sort((left, right) => {
+    const value = (row) => {
+      const lifecycle = lifecycleSummary(row.observation);
+      const cves = cveSummary(row.observation);
+      if (sort.by === "technology") return row.technology ? String(row.technology).toLocaleLowerCase() : null;
+      if (sort.by === "version") return row.observation?.version ? String(row.observation.version) : null;
+      if (sort.by === "support") return lifecycle.label ? String(lifecycle.label).toLocaleLowerCase() : null;
+      return cves.label ? String(cves.label).toLocaleLowerCase() : null;
+    };
+    const leftValue = value(left); const rightValue = value(right);
+    if (leftValue == null || rightValue == null) return leftValue == null ? (rightValue == null ? String(left.key).localeCompare(String(right.key)) : 1) : -1;
+    const compare = String(leftValue).localeCompare(String(rightValue), undefined, { numeric: sort.by === "version", sensitivity: "base" });
+    return (sort.dir === "asc" ? compare : -compare) || String(left.key).localeCompare(String(right.key));
+  }) : rows;
   const hasPartialCoverage = rows.some(({ observation }) => observation?.cve_intelligence?.coverage === "partial");
 
   return (
@@ -266,10 +282,16 @@ function TechnologyIntelligence({ technologies, observations, subtitle }) {
         <div className="technology-table-wrap">
           <table className="technology-table">
             <thead>
-              <tr><th>Technology</th><th>Version</th><th>Support</th><th>Potential CVEs</th><th aria-label="Details" /></tr>
+              <tr>
+                <SortableHeader label="Technology" field="technology" sortBy={sort.by} sortDir={sort.dir} onSort={(field) => setSort((current) => ({ by: field, dir: current.by === field ? (current.dir === "asc" ? "desc" : "asc") : "asc" }))} />
+                <SortableHeader label="Version" field="version" sortBy={sort.by} sortDir={sort.dir} onSort={(field) => setSort((current) => ({ by: field, dir: current.by === field ? (current.dir === "asc" ? "desc" : "asc") : "asc" }))} />
+                <SortableHeader label="Support" field="support" sortBy={sort.by} sortDir={sort.dir} onSort={(field) => setSort((current) => ({ by: field, dir: current.by === field ? (current.dir === "asc" ? "desc" : "asc") : "asc" }))} />
+                <SortableHeader label="Potential CVEs" field="cves" sortBy={sort.by} sortDir={sort.dir} onSort={(field) => setSort((current) => ({ by: field, dir: current.by === field ? (current.dir === "asc" ? "desc" : "asc") : "asc" }))} />
+                <th aria-label="Details" />
+              </tr>
             </thead>
             <tbody>
-              {rows.map(({ key, technology, observation }) => {
+              {sortedRows.map(({ key, technology, observation }) => {
                 const lifecycle = lifecycleSummary(observation);
                 const cves = cveSummary(observation);
                 return (

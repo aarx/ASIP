@@ -797,7 +797,8 @@ def _pagination(page, limit):
     return page, min(limit, MAX_PAGE_SIZE)
 
 
-def list_runs(conn, *, page=1, limit=50, check_id=None, cve_id=None, status=None):
+def list_runs(conn, *, page=1, limit=50, check_id=None, cve_id=None, status=None,
+              sort_by="started_at", sort_dir="desc"):
     page, limit = _pagination(page, limit)
     if status and status not in {"RUNNING", "SUCCEEDED", "PARTIAL", "FAILED"}:
         raise CapdError("Invalid CAPD run status")
@@ -815,16 +816,21 @@ def list_runs(conn, *, page=1, limit=50, check_id=None, cve_id=None, status=None
     if status:
         conditions.append("status = %s")
         params.append(status)
+    sort_fields = {"run_id": "run_id", "check_id": "check_id", "source_scan_id": "source_scan_id",
+                   "status": "status", "started_at": "started_at", "completed_at": "completed_at"}
+    if sort_by not in sort_fields or sort_dir not in {"asc", "desc"}:
+        raise CapdError("Invalid CAPD run sort")
+    order = sort_fields[sort_by] + " " + sort_dir.upper() + " NULLS LAST, run_id DESC"
     where = " WHERE " + " AND ".join(conditions) if conditions else ""
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM capd_runs" + where, tuple(params))
     total = cur.fetchone()[0]
-    cur.execute("""
+    cur.execute(f"""
         SELECT run_id,check_id,check_revision,cve_id,check_definition,source_scan_id,execution_mode,status,
                started_at,completed_at,target_limit,eligible_target_count,selected_target_count,
                skipped_target_count,selection_summary,counts,error_code
           FROM capd_runs
-    """ + where + " ORDER BY started_at DESC,run_id DESC LIMIT %s OFFSET %s",
+    """ + where + f" ORDER BY {order} LIMIT %s OFFSET %s",
                 tuple(params + [limit, (page - 1) * limit]))
     runs = [_run_payload(row) for row in cur.fetchall()]
     for item in runs:
@@ -865,13 +871,20 @@ def get_run(conn, run_id):
     return result
 
 
-def list_results(conn, run_id, *, page=1, limit=50, result_status=None):
+def list_results(conn, run_id, *, page=1, limit=50, result_status=None,
+                 sort_by="domain", sort_dir="asc"):
     run = get_run(conn, run_id)
     page, limit = _pagination(page, limit)
     if result_status:
         result_status = str(result_status).strip().upper()
         if result_status not in RESULT_STATUSES:
             raise CapdError("Invalid CAPD result status")
+    sort_fields = {"domain": "domain_snapshot", "result_status": "result_status",
+                   "product": "product", "version": "version",
+                   "confidence": "detection_confidence", "assessed_at": "assessed_at"}
+    if sort_by not in sort_fields or sort_dir not in {"asc", "desc"}:
+        raise CapdError("Invalid CAPD result sort")
+    order = sort_fields[sort_by] + " " + sort_dir.upper() + " NULLS LAST, domain_id ASC, id ASC"
     where = " WHERE run_id=%s"
     params = [run["run_id"]]
     if result_status:
@@ -880,12 +893,12 @@ def list_results(conn, run_id, *, page=1, limit=50, result_status=None):
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM capd_results" + where, tuple(params))
     total = cur.fetchone()[0]
-    cur.execute("""
+    cur.execute(f"""
         SELECT id,run_id,domain_id,domain_snapshot,asset_class_snapshot,result_status,
                candidate_classification,product,version,detection_confidence,match_confidence,
                evidence,explanation,limitations,assessed_at
           FROM capd_results
-    """ + where + " ORDER BY domain_snapshot,domain_id,evidence_identity LIMIT %s OFFSET %s",
+    """ + where + f" ORDER BY {order} LIMIT %s OFFSET %s",
                 tuple(params + [limit, (page - 1) * limit]))
     return {
         "run": {key: run[key] for key in ("run_id", "check_id", "check_revision", "cve_id", "source_scan_id", "status")},

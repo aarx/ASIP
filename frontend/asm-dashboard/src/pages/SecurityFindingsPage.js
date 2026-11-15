@@ -4,6 +4,7 @@ import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { getCertificateHosts, getDnsSecurityHosts, getSecurityFindings, getSecurityFindingsSummary, getSensitivePortHosts } from "../services/api";
+import SortableHeader from "../components/ui/SortableHeader";
 
 const PAGE_SIZES = [25, 50, 100];
 const VIEW_OPTIONS = [
@@ -54,6 +55,8 @@ function readFilters(query) {
     coveragePage: Math.max(Number(params.get("coverage_page")) || 1, 1),
     dnsIncludeUnassessed: params.get("dns_include_unassessed") === "true",
     certificatesIncludeUnobserved: params.get("certificates_include_unobserved") === "true",
+    sortBy: ["relevance", "domain", "title", "severity", "category", "source", "observed_at", "asset_class", "verification"].includes(params.get("sort_by")) ? params.get("sort_by") : "relevance",
+    sortDir: ["asc", "desc"].includes(params.get("sort_dir")) ? params.get("sort_dir") : "asc",
   };
 }
 
@@ -72,6 +75,8 @@ function queryForFilters(filters, tab = null) {
   if (filters.coveragePage > 1) params.set("coverage_page", String(filters.coveragePage));
   if (filters.dnsIncludeUnassessed) params.set("dns_include_unassessed", "true");
   if (filters.certificatesIncludeUnobserved) params.set("certificates_include_unobserved", "true");
+  if (filters.sortBy !== "relevance") params.set("sort_by", filters.sortBy);
+  if (filters.sortDir !== "asc") params.set("sort_dir", filters.sortDir);
   return params.toString();
 }
 
@@ -313,6 +318,10 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
       limit: filters.pageSize,
       view: filters.view,
     };
+    if (filters.sortBy !== "relevance" || filters.sortDir !== "asc") {
+      params.sort_by = filters.sortBy;
+      params.sort_dir = filters.sortDir;
+    }
     if (filters.category) params.category = filters.category;
     if (filters.source) params.source = filters.source;
     if (filters.assetClass) params.asset_class = filters.assetClass;
@@ -320,7 +329,7 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
       .then((result) => { if (active) { setData(result); setListStatus("ready"); } })
       .catch(() => { if (active) setListStatus("error"); });
     return () => { active = false; };
-  }, [filters.page, filters.pageSize, filters.view, filters.category, filters.source, filters.assetClass, listRequestVersion]);
+  }, [filters.page, filters.pageSize, filters.view, filters.category, filters.source, filters.assetClass, filters.sortBy, filters.sortDir, listRequestVersion]);
 
   const listScanId = Number.isInteger(data?.scan_id) ? data.scan_id : null;
   const summaryReady = summaryStatus === "ready"
@@ -354,6 +363,10 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
       return;
     }
     changeFilters({ category, view: category === "EXPOSURE_SIGNAL" ? "signals" : "attention" });
+  };
+  const changeSort = (field) => {
+    const sortDir = filters.sortBy === field ? (filters.sortDir === "asc" ? "desc" : "asc") : (field === "severity" || field === "observed_at" ? "desc" : "asc");
+    updateFilters({ ...filters, sortBy: field, sortDir, page: 1 }, routePrefix, pageTab);
   };
 
   if (listStatus === "loading" && !data) return <LoadingState title="Loading Security Findings" copy="Retrieving current-scan observations and exposure signals." />;
@@ -402,7 +415,14 @@ export default function SecurityFindingsPage({ query = "", routePrefix = "risk/f
           <>
             <div className="dense-table-wrap">
               <table className="dense-table findings-table">
-                <thead><tr><th>Finding / observation</th><th>Affected asset</th><th>Source</th><th>Severity</th><th>Verification</th><th>Asset class</th></tr></thead>
+                <thead><tr>
+                  <SortableHeader label="Finding / observation" field="title" sortBy={filters.sortBy} sortDir={filters.sortDir} onSort={changeSort} />
+                  <SortableHeader label="Affected asset" field="domain" sortBy={filters.sortBy} sortDir={filters.sortDir} onSort={changeSort} />
+                  <SortableHeader label="Source" field="source" sortBy={filters.sortBy} sortDir={filters.sortDir} onSort={changeSort} />
+                  <SortableHeader label="Severity" field="severity" sortBy={filters.sortBy} sortDir={filters.sortDir} onSort={changeSort} />
+                  <SortableHeader label="Verification" field="verification" sortBy={filters.sortBy} sortDir={filters.sortDir} onSort={changeSort} />
+                  <SortableHeader label="Asset class" field="asset_class" sortBy={filters.sortBy} sortDir={filters.sortDir} onSort={changeSort} />
+                </tr></thead>
                 <tbody>{findings.map((finding) => {
                   const selected = selectedFinding?.finding_id === finding.finding_id;
                   const detailId = `finding-detail-${String(finding.finding_id).replaceAll(/[^a-zA-Z0-9_-]/g, "-")}`;

@@ -17,6 +17,7 @@ import RiskDistributionChart, { RISK_COLORS } from "../components/ui/RiskDistrib
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { displayAssetClass } from "../utils/presentation";
+import SortableHeader from "../components/ui/SortableHeader";
 
 const PRIORITY_LIMIT = 25;
 const HISTORICAL_HIGH_LIMIT = 10;
@@ -57,6 +58,14 @@ function historicalCoverage(summary) {
   return perScan.filter((scan) => scan?.coverage_complete === false && Number.isInteger(scan?.scan_id));
 }
 
+function historySort(query) {
+  const params = new URLSearchParams(query);
+  return {
+    sortBy: ["domain", "maximum_score", "first_high", "last_high", "observations", "current_score"].includes(params.get("historical_sort_by")) ? params.get("historical_sort_by") : "maximum_score",
+    sortDir: ["asc", "desc"].includes(params.get("historical_sort_dir")) ? params.get("historical_sort_dir") : "desc",
+  };
+}
+
 export default function RiskExposurePage({ query }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
@@ -66,6 +75,15 @@ export default function RiskExposurePage({ query }) {
   const [historicalPage, setHistoricalPage] = useState(() => readPositivePage(query, "historical_page"));
   const [historicalData, setHistoricalData] = useState(null);
   const [historicalStatus, setHistoricalStatus] = useState("loading");
+  const { sortBy: historicalSortBy, sortDir: historicalSortDir } = historySort(query);
+  const historicalReturnQuery = (() => {
+    const params = new URLSearchParams({ section: "historical-high-risk", historical_page: String(historicalPage) });
+    if (historicalSortBy !== "maximum_score" || historicalSortDir !== "desc") {
+      params.set("historical_sort_by", historicalSortBy);
+      params.set("historical_sort_dir", historicalSortDir);
+    }
+    return params.toString();
+  })();
 
   useEffect(() => {
     const requestedPage = readPositivePage(query, "historical_page");
@@ -127,7 +145,10 @@ export default function RiskExposurePage({ query }) {
     }
     let active = true;
     setHistoricalStatus("loading");
-    getRiskHistoryAssets({ page: historicalPage, limit: HISTORICAL_HIGH_LIMIT })
+    const sort = historicalSortBy === "maximum_score" && historicalSortDir === "desc"
+      ? {}
+      : { sort_by: historicalSortBy, sort_dir: historicalSortDir };
+    getRiskHistoryAssets({ page: historicalPage, limit: HISTORICAL_HIGH_LIMIT, ...sort })
       .then((result) => {
         if (!active) return;
         if (result?.availability_state !== "AVAILABLE" || !Array.isArray(result.assets) || !Number.isInteger(result.total)) {
@@ -140,7 +161,22 @@ export default function RiskExposurePage({ query }) {
       })
       .catch(() => { if (active) setHistoricalStatus("error"); });
     return () => { active = false; };
-  }, [historicalPage, historicalSummary, status]);
+  }, [historicalPage, historicalSummary, status, historicalSortBy, historicalSortDir]);
+
+  const changeHistoricalSort = (field) => {
+    const params = new URLSearchParams(query);
+    params.set("section", "historical-high-risk");
+    params.set("historical_page", "1");
+    params.set("historical_sort_by", field);
+    params.set("historical_sort_dir", historicalSortBy === field ? (historicalSortDir === "asc" ? "desc" : "asc") : (field === "domain" || field === "first_high" ? "asc" : "desc"));
+    window.location.hash = `#/risk?${params}`;
+  };
+  const changeHistoricalPage = (page) => {
+    const params = new URLSearchParams(query);
+    params.set("section", "historical-high-risk");
+    if (page > 1) params.set("historical_page", String(page)); else params.delete("historical_page");
+    window.location.hash = `#/risk?${params}`;
+  };
 
   useEffect(() => {
     if (status !== "ready") return;
@@ -218,10 +254,18 @@ export default function RiskExposurePage({ query }) {
           <>
             <div className="dense-table-wrap">
               <table className="dense-table risk-history-table">
-                <thead><tr><th>Asset</th><th>Current class</th><th>Maximum High score</th><th>First High</th><th>Last High</th><th>High observations</th><th>Current score</th><th>Current membership</th><th /></tr></thead>
+                <thead><tr>
+                  <SortableHeader label="Asset" field="domain" sortBy={historicalSortBy} sortDir={historicalSortDir} onSort={changeHistoricalSort} />
+                  <th>Current class</th>
+                  <SortableHeader label="Maximum High score" field="maximum_score" sortBy={historicalSortBy} sortDir={historicalSortDir} onSort={changeHistoricalSort} />
+                  <SortableHeader label="First High" field="first_high" sortBy={historicalSortBy} sortDir={historicalSortDir} onSort={changeHistoricalSort} />
+                  <SortableHeader label="Last High" field="last_high" sortBy={historicalSortBy} sortDir={historicalSortDir} onSort={changeHistoricalSort} />
+                  <SortableHeader label="High observations" field="observations" sortBy={historicalSortBy} sortDir={historicalSortDir} onSort={changeHistoricalSort} />
+                  <SortableHeader label="Current score" field="current_score" sortBy={historicalSortBy} sortDir={historicalSortDir} onSort={changeHistoricalSort} />
+                  <th>Current membership</th><th /></tr></thead>
                 <tbody>{historicalData.assets.map((asset) => (
                   <tr key={asset.domain_id || asset.domain}>
-                    <td><AssetLink domain={asset.domain} returnTo="risk" returnQuery={`section=historical-high-risk&historical_page=${historicalPage}`} /></td>
+                    <td><AssetLink domain={asset.domain} returnTo="risk" returnQuery={historicalReturnQuery} /></td>
                     <td><StatusBadge value={displayAssetClass(asset.asset_class)} /></td>
                     <td><span className="risk-score">{asset.maximum_persisted_historical_score ?? "—"}</span></td>
                     <td>{historicalScanLabel(asset.first_recorded_high_scan_id, asset.first_recorded_high_scan_time)}</td>
@@ -229,7 +273,7 @@ export default function RiskExposurePage({ query }) {
                     <td>{Number.isInteger(asset.high_score_observations) ? asset.high_score_observations : "—"}</td>
                     <td>{asset.current_risk_score ?? "—"}{asset.current_priority ? <span className="asset-secondary">{asset.current_priority}</span> : null}</td>
                     <td>{asset.current_scan_member === true ? "In current scan" : asset.current_scan_member === false ? "Not in current scan" : "—"}</td>
-                    <td><AssetLink domain={asset.domain} returnTo="risk" returnQuery={`section=historical-high-risk&historical_page=${historicalPage}`} className="row-action">→</AssetLink></td>
+                    <td><AssetLink domain={asset.domain} returnTo="risk" returnQuery={historicalReturnQuery} className="row-action">→</AssetLink></td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -237,8 +281,8 @@ export default function RiskExposurePage({ query }) {
             <div className="pagination-bar risk-history-pagination">
               <span>Page {historicalPage} of {totalHistoricalPages} · {historicalData.total} distinct assets</span>
               <div>
-                <button type="button" className="secondary-button" disabled={historicalPage <= 1} onClick={() => setHistoricalPage((page) => page - 1)}>Previous</button>
-                <button type="button" className="secondary-button" disabled={historicalPage >= totalHistoricalPages} onClick={() => setHistoricalPage((page) => page + 1)}>Next</button>
+                <button type="button" className="secondary-button" disabled={historicalPage <= 1} onClick={() => changeHistoricalPage(historicalPage - 1)}>Previous</button>
+                <button type="button" className="secondary-button" disabled={historicalPage >= totalHistoricalPages} onClick={() => changeHistoricalPage(historicalPage + 1)}>Next</button>
               </div>
             </div>
           </>

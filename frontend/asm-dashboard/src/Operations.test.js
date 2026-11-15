@@ -621,7 +621,7 @@ test("Shadow Centre uses effective asset class rather than stored ownership stat
   render(<App />);
 
   expect(await screen.findByText("shadow.example.com")).toBeInTheDocument();
-  expect(getV2Assets).toHaveBeenCalledWith({ page: 1, limit: 25, asset_class: "SHADOW" });
+  expect(getV2Assets).toHaveBeenCalledWith({ page: 1, limit: 25, asset_class: "SHADOW", sort_by: "risk_score", sort_dir: "desc" });
   expect(screen.getByText("New in scan #42")).toBeInTheDocument();
   expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
   expect(screen.queryByText("candidate.example.net")).not.toBeInTheDocument();

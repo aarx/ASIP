@@ -144,6 +144,28 @@ class SecurityFindingsApiTests(unittest.TestCase):
         self.assertEqual(cursor.executions[1][1][-2:], (200, 200))
         self.assertTrue(conn.closed)
 
+    def test_severity_sort_uses_explicit_rank_before_page_limit(self):
+        cursor = Cursor(count=2, rows=[])
+        conn = Connection(cursor)
+        with mock.patch.object(main, "get_conn", return_value=conn), \
+             mock.patch.object(main, "get_latest_authoritative_scan_id", return_value=19):
+            result = main.security_findings(page=2, limit=1, sort_by="severity", sort_dir="desc")
+
+        self.assertEqual(result["total"], 2)
+        query, _params = cursor.executions[-1]
+        self.assertIn("ORDER BY CASE severity WHEN 'CRITICAL' THEN 5", query)
+        self.assertIn("END DESC NULLS LAST, LOWER(asset_domain) ASC, source ASC, finding_id ASC", query)
+        self.assertLess(query.index("ORDER BY CASE severity"), query.index("LIMIT %s OFFSET %s"))
+
+    def test_findings_reject_unallowlisted_sort_fields_and_directions(self):
+        for kwargs in (
+            {"sort_by": "asset_domain; DROP TABLE records"},
+            {"sort_by": "severity", "sort_dir": "sideways"},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(main.HTTPException) as raised:
+                main.security_findings(**kwargs)
+            self.assertEqual(raised.exception.status_code, 400)
+
     def test_category_source_and_class_filters_are_validated_and_parameterized(self):
         where, params = main._security_findings_where(
             "NEEDS_VERIFICATION", "SHADOW", "dns_security_checks", "all"

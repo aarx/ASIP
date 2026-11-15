@@ -7,6 +7,7 @@ import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncStat
 import { BrandDiscoveryPanel } from "../components/ui/OverviewIntelligence";
 import { brandAcceptanceInventory, isBrandAcceptanceFixture } from "../fixtures/brandAcceptance";
 import { displayAssetClass, displayEvidence, displayHttpStatus } from "../utils/presentation";
+import SortableHeader from "../components/ui/SortableHeader";
 
 const LIMIT = 25;
 
@@ -20,10 +21,12 @@ function readQuery(query) {
     discovery_source: params.get("discovery_source") || "",
     brand_scope: params.get("brand_scope") || "",
     fixture: params.get("fixture") || "",
+    sortBy: ["domain", "asset_class", "ip", "http_status", "final_status", "destination", "title"].includes(params.get("sort_by")) ? params.get("sort_by") : "domain",
+    sortDir: ["asc", "desc"].includes(params.get("sort_dir")) ? params.get("sort_dir") : "asc",
   };
 }
 
-function brandHash({ page = 1, search = "", ownership = "", asset_class: assetClass = "", discovery_source: discoverySource = "", brand_scope: brandScope = "", fixture = "" }) {
+function brandHash({ page = 1, search = "", ownership = "", asset_class: assetClass = "", discovery_source: discoverySource = "", brand_scope: brandScope = "", fixture = "", sortBy = "domain", sortDir = "asc" }) {
   const params = new URLSearchParams();
   if (search) params.set("search", search);
   if (assetClass) params.set("asset_class", assetClass);
@@ -32,6 +35,8 @@ function brandHash({ page = 1, search = "", ownership = "", asset_class: assetCl
   if (brandScope) params.set("brand_scope", brandScope);
   if (page > 1) params.set("page", String(page));
   if (fixture) params.set("fixture", fixture);
+  if (sortBy !== "domain") params.set("sort_by", sortBy);
+  if (sortDir !== "asc") params.set("sort_dir", sortDir);
   return `#/brand${params.toString() ? `?${params}` : ""}`;
 }
 
@@ -52,7 +57,7 @@ function destinationEvidence(asset) {
 function queryForReturn(query) {
   const params = new URLSearchParams(query);
   const returnParams = new URLSearchParams();
-  ["search", "ownership", "asset_class", "discovery_source", "brand_scope", "page", "fixture"].forEach((key) => {
+  ["search", "ownership", "asset_class", "discovery_source", "brand_scope", "page", "fixture", "sort_by", "sort_dir"].forEach((key) => {
     const value = params.get(key);
     if (value) returnParams.set(key, value);
   });
@@ -76,6 +81,10 @@ export default function BrandPerimeterPage({ query }) {
     let active = true;
     setStatus("loading");
     const inventoryParams = { page: applied.page, limit: LIMIT };
+    if (applied.sortBy !== "domain" || applied.sortDir !== "asc") {
+      inventoryParams.sort_by = applied.sortBy;
+      inventoryParams.sort_dir = applied.sortDir;
+    }
     if (applied.search) inventoryParams.search = applied.search;
     if (applied.asset_class || applied.ownership) inventoryParams.asset_class = applied.asset_class || applied.ownership;
     if (applied.discovery_source) inventoryParams.discovery_source = applied.discovery_source;
@@ -116,6 +125,10 @@ export default function BrandPerimeterPage({ query }) {
   };
   const clear = () => { window.location.hash = brandHash({ brand_scope: applied.brand_scope, fixture: fixtureMode ? "ownership-review" : "" }); };
   const movePage = (page) => { window.location.hash = brandHash({ ...applied, page }); };
+  const changeSort = (field) => {
+    const sortDir = applied.sortBy === field ? (applied.sortDir === "asc" ? "desc" : "asc") : (field === "http_status" || field === "final_status" ? "desc" : "asc");
+    window.location.hash = brandHash({ ...applied, page: 1, sortBy: field, sortDir });
+  };
 
   if (status === "loading") return <LoadingState title="Loading Brand Exposure" copy="Retrieving current Needs Verification and External evidence without assuming ownership." />;
   if (status === "error") return <ErrorState title="Brand Exposure unavailable" copy="The current ownership-investigation inventory could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
@@ -158,7 +171,12 @@ export default function BrandPerimeterPage({ query }) {
       {data.inventory.assets.length ? (
         <div className="dense-table-wrap brand-table-wrap">
           <table className="dense-table brand-table">
-            <thead><tr><th>Domain / current class</th><th>DNS / IP</th><th>HTTP evidence</th><th>Observed destination / title</th><th /></tr></thead>
+            <thead><tr>
+              <SortableHeader label="Domain / current class" field="domain" sortBy={applied.sortBy} sortDir={applied.sortDir} onSort={changeSort} />
+              <SortableHeader label="DNS / IP" field="ip" sortBy={applied.sortBy} sortDir={applied.sortDir} onSort={changeSort} />
+              <SortableHeader label="HTTP evidence" field="http_status" sortBy={applied.sortBy} sortDir={applied.sortDir} onSort={changeSort} />
+              <SortableHeader label="Observed destination / title" field="destination" sortBy={applied.sortBy} sortDir={applied.sortDir} onSort={changeSort} />
+              <th /></tr></thead>
             <tbody>{data.inventory.assets.map((asset) => {
               const destination = destinationEvidence(asset);
               return (

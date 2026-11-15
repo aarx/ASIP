@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Rectangle, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import Panel from "./Panel";
 import AssetLink from "./AssetLink";
-import { getBrandHistorySummary } from "../../services/api";
+import { getBrandHistorySummary, getCertExpiry } from "../../services/api";
+import SortableHeader from "./SortableHeader";
 
 const STATUS_GROUPS = [
   { key: "2xx", label: "2xx", color: "#398261" },
@@ -414,18 +415,32 @@ function CertificateStatus({ record }) {
 }
 
 export function CertificateHealthPanel({ value, status, scanId, now }) {
-  const records = normalizeCertificateRecords(value, now);
+  const [sort, setSort] = useState({ by: null, dir: "asc" });
+  const [sortedValue, setSortedValue] = useState(null);
+  const [sortStatus, setSortStatus] = useState(null);
+  useEffect(() => { setSortedValue(null); setSortStatus(null); }, [value]);
+  const records = normalizeCertificateRecords(sortedValue || value, now);
+  const tableRecords = sort.by ? [...records].sort((left, right) => {
+    const read = (row) => sort.by === "domain" ? row.domain.toLocaleLowerCase()
+      : sort.by === "expiry" ? row.expiryDate?.getTime() ?? null
+        : sort.by === "days" ? row.days ?? null : String(row.status || "").toLocaleLowerCase();
+    const a = read(left); const b = read(right);
+    if (a == null || b == null) return a == null ? (b == null ? left.domain.localeCompare(right.domain) : 1) : -1;
+    const compared = typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b), undefined, { sensitivity: "base" });
+    return (sort.dir === "asc" ? compared : -compared) || left.domain.localeCompare(right.domain);
+  }) : records;
   const counts = {
     expired: records.filter((record) => record.bucket === "expired").length,
     within7: records.filter((record) => record.bucket === "within7").length,
     within30: records.filter((record) => record.bucket === "within30").length,
     unknown: records.filter((record) => record.bucket === "unknown").length,
   };
-  const urgent = records.filter((record) => ["expired", "within7", "within30"].includes(record.bucket)).slice(0, 12);
+  const urgent = tableRecords.filter((record) => ["expired", "within7", "within30"].includes(record.bucket)).slice(0, 12);
   let content;
-  if (status === "loading") {
+  const visibleStatus = sortStatus || status;
+  if (visibleStatus === "loading") {
     content = <ChartState title="Loading certificate observations" copy="Reading the current confirmed-asset certificate set." />;
-  } else if (status === "error") {
+  } else if (visibleStatus === "error") {
     content = <ChartState title="Certificate health unavailable" copy="The overview is available, but certificate observations could not be loaded." error />;
   } else if (!records.length) {
     content = <ChartState title="No certificate observations" copy="No current certificate evidence was returned." />;
@@ -441,7 +456,15 @@ export function CertificateHealthPanel({ value, status, scanId, now }) {
         {urgent.length ? (
           <div className="dense-table-wrap">
             <table className="dense-table certificate-health-table" aria-label="Certificate health priority observations">
-              <thead><tr><th>Domain</th><th>Expiry date</th><th>Days remaining / overdue</th><th>Status</th></tr></thead>
+              <thead><tr>
+                {[["domain", "Domain"], ["expiry", "Expiry date"], ["days", "Days remaining / overdue"], ["status", "Status"]].map(([field, label]) => <SortableHeader key={field} label={label} field={field} sortBy={sort.by} sortDir={sort.dir} onSort={async (nextField) => {
+                  const nextDir = sort.by === nextField ? (sort.dir === "asc" ? "desc" : "asc") : "asc";
+                  setSort({ by: nextField, dir: nextDir });
+                  setSortStatus("loading");
+                  try { setSortedValue(await getCertExpiry({ sort_by: nextField, sort_dir: nextDir })); setSortStatus("ready"); }
+                  catch (_) { setSortStatus("error"); }
+                }} />)}
+              </tr></thead>
               <tbody>{urgent.map((record) => (
                 <tr key={record.domain}>
                   <td><AssetLink domain={record.domain} returnTo="overview" /></td>

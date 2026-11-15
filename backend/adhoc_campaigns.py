@@ -367,7 +367,8 @@ def _progress(cur, campaign_id):
     return dict(zip(keys, row))
 
 
-def list_campaigns(conn, *, page=1, limit=50, status=None, check_id=None, source_scan_id=None):
+def list_campaigns(conn, *, page=1, limit=50, status=None, check_id=None, source_scan_id=None,
+                   sort_by="created_at", sort_dir="desc"):
     page = max(int(page), 1)
     limit = min(max(int(limit), 1), 200)
     if status and status not in CAMPAIGN_STATES:
@@ -384,6 +385,13 @@ def list_campaigns(conn, *, page=1, limit=50, status=None, check_id=None, source
     if source_scan_id is not None:
         conditions.append("c.source_scan_id = %s")
         params.append(source_scan_id)
+    sort_fields = {
+        "campaign_id": "c.id", "check_id": "c.check_id", "source_scan_id": "c.source_scan_id",
+        "status": "c.status", "created_at": "c.created_at", "completed_at": "c.completed_at",
+    }
+    if sort_by not in sort_fields or sort_dir not in {"asc", "desc"}:
+        raise CampaignError("Invalid campaign sort")
+    order = sort_fields[sort_by] + " " + sort_dir.upper() + " NULLS LAST, c.id DESC"
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     cur = conn.cursor()
     try:
@@ -401,7 +409,7 @@ def list_campaigns(conn, *, page=1, limit=50, status=None, check_id=None, source
             LEFT JOIN adhoc_campaign_targets t ON t.campaign_id = c.id
             {where}
             GROUP BY c.id
-            ORDER BY c.created_at DESC, c.id DESC
+            ORDER BY {order}
             LIMIT %s OFFSET %s
         """, tuple(params + [limit, offset]))
         rows = cur.fetchall()

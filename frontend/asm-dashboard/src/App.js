@@ -167,12 +167,12 @@ function App() {
   if (route === "risk-needs-attention") page = <RiskNeedsAttentionPage query={query} />;
   if (route === "risk-dns-security") page = <DnsSecurityPage query={query} />;
   if (route === "shadow") page = <ShadowCentrePage query={query} />;
-  if (route === "scans") page = <ScanCentrePage />;
+  if (route === "scans") page = <ScanCentrePage query={query} />;
   if (route === "brand") page = <BrandPerimeterPage query={query} />;
   if (route === "brand-history") page = <BrandHistoryPage query={query} domain={domain} />;
   if (route === "investigate") page = <InvestigationPage query={query} />;
   if (route === "changes") page = <ChangeIntelligencePage query={query} />;
-  if (route === "adhoc") page = <AdhocChecksPage />;
+  if (route === "adhoc") page = <AdhocChecksPage query={query} />;
   if (route === "capd") page = <CapdPage query={query} />;
 
   return (

@@ -5,6 +5,7 @@ import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import StatusBadge from "../components/ui/StatusBadge";
+import SortableHeader from "../components/ui/SortableHeader";
 import { downloadBlobResponse, downloadErrorKind } from "../utils/download";
 
 const RESULT_LIMIT = 25;
@@ -164,12 +165,12 @@ function ObservationDetails({ observation }) {
   );
 }
 
-function ResultTable({ results, authoritative }) {
+function ResultTable({ results, authoritative, sortBy, sortDir, onSort }) {
   return (
     <div className="adhoc-table-wrap">
       <table className="adhoc-table">
         <thead>
-          <tr><th>Asset</th><th>PHP version</th><th>Lifecycle</th><th>CVE status</th><th>Evidence</th></tr>
+          <tr><SortableHeader label="Asset" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} /><SortableHeader label="PHP version" field="version" sortBy={sortBy} sortDir={sortDir} onSort={onSort} /><SortableHeader label="Lifecycle" field="lifecycle" sortBy={sortBy} sortDir={sortDir} onSort={onSort} /><SortableHeader label="CVE status" field="classification" sortBy={sortBy} sortDir={sortDir} onSort={onSort} /><th>Evidence</th></tr>
         </thead>
         <tbody>
           {results.map((result) => {
@@ -228,7 +229,12 @@ function FilterControl({ name, label, values, value, onChange }) {
   );
 }
 
-export default function AdhocChecksPage() {
+export default function AdhocChecksPage({ query = "" }) {
+  const paramsFromUrl = new URLSearchParams(query);
+  const phpSortBy = ["domain", "version", "evaluation_status", "classification", "lifecycle", "cve_status"].includes(paramsFromUrl.get("php_sort_by")) ? paramsFromUrl.get("php_sort_by") : "domain";
+  const phpSortDir = ["asc", "desc"].includes(paramsFromUrl.get("php_sort_dir")) ? paramsFromUrl.get("php_sort_dir") : "asc";
+  const campaignSortBy = ["campaign_id", "check_id", "source_scan_id", "status", "created_at", "completed_at"].includes(paramsFromUrl.get("campaign_sort_by")) ? paramsFromUrl.get("campaign_sort_by") : "created_at";
+  const campaignSortDir = ["asc", "desc"].includes(paramsFromUrl.get("campaign_sort_dir")) ? paramsFromUrl.get("campaign_sort_dir") : "desc";
   const [scanState, setScanState] = useState("loading");
   const [scanData, setScanData] = useState(null);
   const [selectedScanId, setSelectedScanId] = useState(null);
@@ -261,13 +267,14 @@ export default function AdhocChecksPage() {
   useEffect(() => {
     let active = true;
     setCampaignStatus("loading");
-    getV2AdhocCampaigns({ page: 1, limit: 50 })
+    const campaignSort = campaignSortBy === "created_at" && campaignSortDir === "desc" ? {} : { sort_by: campaignSortBy, sort_dir: campaignSortDir };
+    getV2AdhocCampaigns({ page: 1, limit: 50, ...campaignSort })
       .then((result) => {
         if (active) { setCampaignData(result); setCampaignStatus("ready"); }
       })
       .catch(() => { if (active) setCampaignStatus("error"); });
     return () => { active = false; };
-  }, []);
+  }, [campaignSortBy, campaignSortDir]);
 
   useEffect(() => {
     if (selectedScanId == null) return undefined;
@@ -275,6 +282,10 @@ export default function AdhocChecksPage() {
     setCheckState("loading");
     setCheckData(null);
     const params = { scan_id: selectedScanId, page, limit: RESULT_LIMIT };
+    if (phpSortBy !== "domain" || phpSortDir !== "asc") {
+      params.sort_by = phpSortBy;
+      params.sort_dir = phpSortDir;
+    }
     Object.entries(filters).forEach(([key, value]) => {
       if (value) params[key] = value;
     });
@@ -282,7 +293,16 @@ export default function AdhocChecksPage() {
       .then((result) => { if (active) { setCheckData(result); setCheckState("ready"); } })
       .catch(() => { if (active) setCheckState("error"); });
     return () => { active = false; };
-  }, [checkRequestVersion, filters, page, selectedScanId]);
+  }, [checkRequestVersion, filters, page, selectedScanId, phpSortBy, phpSortDir]);
+
+  const changeSort = (kind, field, currentBy, currentDir) => {
+    const next = new URLSearchParams(query);
+    next.set(`${kind}_sort_by`, field);
+    const firstDirection = ["domain", "check_id", "source_scan_id"].includes(field) ? "asc" : "desc";
+    next.set(`${kind}_sort_dir`, currentBy === field ? (currentDir === "asc" ? "desc" : "asc") : firstDirection);
+    if (kind === "php") setPage(1);
+    window.location.hash = `#/adhoc?${next}`;
+  };
 
   const successfulScans = useMemo(
     () => (scanData?.scans || []).filter((scan) => scan.status === "SUCCEEDED"),
@@ -388,7 +408,7 @@ export default function AdhocChecksPage() {
       )}
       {checkState === "ready" && resultRows.length > 0 && (
         <Panel title="PHP review results" meta={`${checkData.count} MATCHING RESULTS`}>
-          <ResultTable results={resultRows} authoritative={selectedAuthoritative} />
+          <ResultTable results={resultRows} authoritative={selectedAuthoritative} sortBy={phpSortBy} sortDir={phpSortDir} onSort={(field) => changeSort("php", field, phpSortBy, phpSortDir)} />
         </Panel>
       )}
 
@@ -406,7 +426,13 @@ export default function AdhocChecksPage() {
         <Panel title="Ad hoc campaign history" subtitle="Persisted campaign results" meta={`${campaignData.count} CAMPAIGNS`} className="adhoc-campaign-history-panel">
           <div className="dense-table-wrap">
             <table className="dense-table adhoc-campaign-table">
-              <thead><tr><th>Campaign</th><th>Check</th><th>Status</th><th>Source scan</th><th>Completed</th><th>Report</th></tr></thead>
+              <thead><tr>
+                <SortableHeader label="Campaign" field="campaign_id" sortBy={campaignSortBy} sortDir={campaignSortDir} onSort={(field) => changeSort("campaign", field, campaignSortBy, campaignSortDir)} />
+                <SortableHeader label="Check" field="check_id" sortBy={campaignSortBy} sortDir={campaignSortDir} onSort={(field) => changeSort("campaign", field, campaignSortBy, campaignSortDir)} />
+                <SortableHeader label="Status" field="status" sortBy={campaignSortBy} sortDir={campaignSortDir} onSort={(field) => changeSort("campaign", field, campaignSortBy, campaignSortDir)} />
+                <SortableHeader label="Source scan" field="source_scan_id" sortBy={campaignSortBy} sortDir={campaignSortDir} onSort={(field) => changeSort("campaign", field, campaignSortBy, campaignSortDir)} />
+                <SortableHeader label="Completed" field="completed_at" sortBy={campaignSortBy} sortDir={campaignSortDir} onSort={(field) => changeSort("campaign", field, campaignSortBy, campaignSortDir)} />
+                <th>Report</th></tr></thead>
               <tbody>{campaignData.campaigns.map((campaign) => {
                 const reportState = campaignDownloads[campaign.campaign_id]?.status;
                 const feedback = campaignFeedback(reportState);

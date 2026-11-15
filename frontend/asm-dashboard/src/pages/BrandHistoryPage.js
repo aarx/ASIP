@@ -3,6 +3,7 @@ import { Button, MenuItem, TextField } from "@mui/material";
 import { getBrandHistoryAssets, getBrandHistoryDetail } from "../services/api";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import StatusBadge from "../components/ui/StatusBadge";
+import SortableHeader from "../components/ui/SortableHeader";
 
 const LIMIT = 25;
 const CLASSES = ["NEEDS_VERIFICATION", "KNOWN", "SHADOW", "UNKNOWN"];
@@ -95,15 +96,16 @@ export default function BrandHistoryPage({ query = "", domain = null }) {
           <TextField size="small" select label="Review class" value={applied.classification} onChange={(event) => change({ classification: event.target.value, page: 1 })}>
             <MenuItem value="">All classes</MenuItem>{CLASSES.map((key) => <MenuItem value={key} key={key}>{LABELS[key]}</MenuItem>)}
           </TextField>
-          <TextField size="small" select label="Sort by" value={applied.sort_by} onChange={(event) => change({ sort_by: event.target.value, page: 1 })}>
-            <MenuItem value="domain">Domain</MenuItem><MenuItem value="first_seen">First observed scan</MenuItem><MenuItem value="last_seen">Last observed scan</MenuItem>
-          </TextField>
-          <Button size="small" type="button" onClick={() => change({ sort_dir: applied.sort_dir === "asc" ? "desc" : "asc", page: 1 })}>Sort {applied.sort_dir === "asc" ? "descending" : "ascending"}</Button>
           <Button size="small" type="submit" variant="contained">Search</Button>
           <Button size="small" type="button" disabled={!applied.classification && !applied.search} onClick={() => { setDraft(""); change({ classification: "", search: "", page: 1 }); }}>Clear filter</Button>
         </form>
         {status === "loading" ? <LoadingState title="Loading historical brand assets" /> : status === "error" ? <ErrorState title="Historical brand assets unavailable" onRetry={() => setRetry((value) => value + 1)} /> : data?.assets?.length ? <>
-          <div className="dense-table-wrap"><table className="dense-table"><thead><tr><th>Domain</th><th>Review class</th><th>First evidence</th><th>Last evidence</th><th /></tr></thead><tbody>{data.assets.map((asset) => {
+          <div className="dense-table-wrap"><table className="dense-table"><thead><tr>
+            <SortableHeader label="Domain" field="domain" sortBy={applied.sort_by} sortDir={applied.sort_dir} onSort={(field) => change({ sort_by: field, sort_dir: applied.sort_by === field ? (applied.sort_dir === "asc" ? "desc" : "asc") : "asc", page: 1 })} />
+            <th>Review class</th>
+            <SortableHeader label="First evidence" field="first_seen" sortBy={applied.sort_by} sortDir={applied.sort_dir} onSort={(field) => change({ sort_by: field, sort_dir: applied.sort_by === field ? (applied.sort_dir === "asc" ? "desc" : "asc") : "asc", page: 1 })} />
+            <SortableHeader label="Last evidence" field="last_seen" sortBy={applied.sort_by} sortDir={applied.sort_dir} onSort={(field) => change({ sort_by: field, sort_dir: applied.sort_by === field ? (applied.sort_dir === "asc" ? "desc" : "asc") : "desc", page: 1 })} />
+            <th /></tr></thead><tbody>{data.assets.map((asset) => {
             const params = new URLSearchParams({ return_query: new URLSearchParams(query).toString() || `from=${applied.from}` });
             const href = `#/brand/history/${encodeURIComponent(asset.identity)}?${params}`;
             return <tr key={asset.identity}><td><a href={href}>{asset.domain}</a></td><td><StatusBadge value={LABELS[asset.review_class] || asset.review_class} /></td><td>Scan #{asset.first_evidence_scan_id}</td><td>Scan #{asset.last_evidence_scan_id}</td><td><a className="row-action" href={href} aria-label={`Open historical ${asset.domain}`}>→</a></td></tr>;

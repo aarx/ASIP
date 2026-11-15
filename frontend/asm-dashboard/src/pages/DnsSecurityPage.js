@@ -4,6 +4,7 @@ import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { displayAssetClass } from "../utils/presentation";
+import SortableHeader from "../components/ui/SortableHeader";
 
 const DEFAULT_LIMIT = 25;
 const OUTCOMES = ["CONFIRMED_ISSUE", "POTENTIAL_EXPOSURE", "WARNING", "INFORMATIONAL", "CLEAR", "NOT_CHECKED", "INCONCLUSIVE"];
@@ -19,13 +20,17 @@ function readQuery(query) {
     outcome: params.get("outcome") || "",
     asset_class: params.get("asset_class") || "",
     search: params.get("search") || "",
+    sortBy: ["hostname", "asset_class", "check_count", "assessment"].includes(params.get("sort_by")) ? params.get("sort_by") : "hostname",
+    sortDir: ["asc", "desc"].includes(params.get("sort_dir")) ? params.get("sort_dir") : "asc",
   };
 }
 
 function dnsHash(filters, page = 1, limit = DEFAULT_LIMIT) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
-    if (key !== "page" && key !== "limit" && value) params.set(key, key === "search" ? value.trim() : value);
+    if (key !== "page" && key !== "limit" && value && !(key === "sortBy" && value === "hostname") && !(key === "sortDir" && value === "asc")) {
+      params.set(key === "sortBy" ? "sort_by" : key === "sortDir" ? "sort_dir" : key, key === "search" ? value.trim() : value);
+    }
   });
   if (page > 1) params.set("page", String(page));
   if (limit !== DEFAULT_LIMIT) params.set("limit", String(limit));
@@ -217,6 +222,10 @@ export default function DnsSecurityPage({ query }) {
     let active = true;
     setHostsStatus("loading");
     const params = { scan_id: summary.scan_id, page: applied.page, limit: applied.limit };
+    if (applied.sortBy !== "hostname" || applied.sortDir !== "asc") {
+      params.sort_by = applied.sortBy;
+      params.sort_dir = applied.sortDir;
+    }
     ["outcome", "asset_class"].forEach((key) => {
       if (applied[key]) params[key] = applied[key];
     });
@@ -246,7 +255,7 @@ export default function DnsSecurityPage({ query }) {
 
   useEffect(() => {
     setSelectedHost(null);
-  }, [applied.page, applied.limit, applied.outcome, applied.asset_class, applied.search]);
+  }, [applied.page, applied.limit, applied.outcome, applied.asset_class, applied.search, applied.sortBy, applied.sortDir]);
 
   const applyFilters = (event) => {
     event.preventDefault();
@@ -258,6 +267,10 @@ export default function DnsSecurityPage({ query }) {
   };
   const movePage = (page) => { window.location.hash = dnsHash(applied, page, applied.limit); };
   const changeLimit = (event) => { window.location.hash = dnsHash(applied, 1, Number(event.target.value)); };
+  const changeSort = (field) => {
+    const sortDir = applied.sortBy === field ? (applied.sortDir === "asc" ? "desc" : "asc") : (["check_count", "assessment"].includes(field) ? "desc" : "asc");
+    window.location.hash = dnsHash({ ...applied, sortBy: field, sortDir }, 1, applied.limit);
+  };
 
   if (summaryStatus === "loading") return <LoadingState title="Loading DNS Security" copy="Reading the current authoritative DNS assessment." />;
   if (summaryStatus === "error" || summaryStatus === "unavailable") return <ErrorState title="DNS Security unavailable" copy="The DNS Security reporting service could not provide assessment data." onRetry={() => setSummaryRequestVersion((value) => value + 1)} />;
@@ -286,7 +299,13 @@ export default function DnsSecurityPage({ query }) {
           hosts?.hosts?.length ? (
             <div className="dense-table-wrap dns-table-wrap">
               <table className="dense-table dns-host-table">
-                <thead><tr><th>Hostname</th><th>Asset class</th><th>Checks</th><th>Outcome summary</th><th>Assessment</th></tr></thead>
+                <thead><tr>
+                  <SortableHeader label="Hostname" field="hostname" sortBy={applied.sortBy} sortDir={applied.sortDir} onSort={changeSort} />
+                  <SortableHeader label="Asset class" field="asset_class" sortBy={applied.sortBy} sortDir={applied.sortDir} onSort={changeSort} />
+                  <SortableHeader label="Checks" field="check_count" sortBy={applied.sortBy} sortDir={applied.sortDir} onSort={changeSort} />
+                  <th>Outcome summary</th>
+                  <SortableHeader label="Assessment" field="assessment" sortBy={applied.sortBy} sortDir={applied.sortDir} onSort={changeSort} />
+                </tr></thead>
                 <tbody>
                   {hosts.hosts.map((host) => {
                     const expanded = selectedHost?.domain_id === host.domain_id;

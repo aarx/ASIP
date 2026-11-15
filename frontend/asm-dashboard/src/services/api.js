@@ -70,8 +70,8 @@ export const getSecurityFindingsSummary = async () => {
   return res.data;
 };
 
-export const getV2Scans = async (limit = 100) => {
-  const res = await axios.get(`${API_URL}/v2/scans`, { params: { limit } });
+export const getV2Scans = async (limit = 100, sort = {}) => {
+  const res = await axios.get(`${API_URL}/v2/scans`, { params: { limit, ...sort } });
   return res.data;
 };
 
@@ -240,8 +240,8 @@ export const getSeeds = async () => {
   return res.data;
 };
 
-export const getCertExpiry = async () => {
-  const res = await axios.get(`${API_URL}/cert-expiry`);
+export const getCertExpiry = async (params) => {
+  const res = await axios.get(`${API_URL}/cert-expiry`, { params });
   return res.data;
 };
 
@@ -264,9 +264,10 @@ export async function getExposureDrift() {
   return res.json();
 }
 
-export const getInvestigationAssets = async (page, limit, provider) => {
+export const getInvestigationAssets = async (page, limit, provider, extra = {}) => {
   const res = await axios.get(
-    `http://localhost:8555/investigation-assets?page=${page}&limit=${limit}&provider=${provider || ""}`
+    "http://localhost:8555/investigation-assets",
+    { params: { page, limit, provider: provider || "", ...extra } },
   );
   return res.data;
 };

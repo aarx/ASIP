@@ -4,12 +4,20 @@ import Panel from "./Panel";
 import StatusBadge from "./StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "./AsyncState";
 import { getV2Assets, getV2Overview } from "../../services/api";
+import SortableHeader from "./SortableHeader";
 
 const PAGE_SIZE = 25;
 
 function readPage(query) {
   const value = Number.parseInt(new URLSearchParams(query).get("priority_page"), 10);
   return Number.isInteger(value) && value > 0 ? value : 1;
+}
+
+function readSort(query) {
+  const params = new URLSearchParams(query);
+  const sortBy = ["domain", "priority", "risk_score"].includes(params.get("priority_sort_by")) ? params.get("priority_sort_by") : "risk_score";
+  const sortDir = ["asc", "desc"].includes(params.get("priority_sort_dir")) ? params.get("priority_sort_dir") : "desc";
+  return { sortBy, sortDir };
 }
 
 function reasons(reasonsList) {
@@ -25,6 +33,7 @@ export default function PriorityAssetsPanel({ query = "", routePrefix = "risk/se
   const [status, setStatus] = useState("loading");
   const [data, setData] = useState(null);
   const [requestVersion, setRequestVersion] = useState(0);
+  const { sortBy, sortDir } = readSort(query);
 
   useEffect(() => {
     const requestedPage = readPage(query);
@@ -40,20 +49,36 @@ export default function PriorityAssetsPanel({ query = "", routePrefix = "risk/se
           if (active) { setData(null); setStatus("empty"); }
           return null;
         }
-        return getV2Assets({ page, limit: PAGE_SIZE, risk_positive: true, sort_by: "risk_score", sort_dir: "desc" });
+        return getV2Assets({ page, limit: PAGE_SIZE, risk_positive: true, sort_by: sortBy, sort_dir: sortDir });
       })
       .then((result) => {
         if (active && result) { setData(result); setStatus("ready"); }
       })
       .catch(() => { if (active) setStatus("error"); });
     return () => { active = false; };
-  }, [page, requestVersion]);
+  }, [page, requestVersion, sortBy, sortDir]);
 
   const movePage = (nextPage) => {
     const params = new URLSearchParams(query);
     params.delete("section");
     params.set("tab", "prioritized-assets");
     params.set("priority_page", String(nextPage));
+    if (sortBy === "risk_score" && sortDir === "desc") {
+      params.delete("priority_sort_by");
+      params.delete("priority_sort_dir");
+    } else {
+      params.set("priority_sort_by", sortBy);
+      params.set("priority_sort_dir", sortDir);
+    }
+    window.location.hash = `#/${routePrefix}?${params}`;
+  };
+  const changeSort = (field) => {
+    const nextDir = sortBy === field ? (sortDir === "asc" ? "desc" : "asc") : (field === "domain" ? "asc" : "desc");
+    const params = new URLSearchParams(query);
+    params.set("tab", "prioritized-assets");
+    params.set("priority_page", "1");
+    params.set("priority_sort_by", field);
+    params.set("priority_sort_dir", nextDir);
     window.location.hash = `#/${routePrefix}?${params}`;
   };
 
@@ -64,7 +89,12 @@ export default function PriorityAssetsPanel({ query = "", routePrefix = "risk/se
   const assets = Array.isArray(data?.assets) ? data.assets : [];
   const total = Number.isInteger(data?.count) ? data.count : 0;
   const totalPages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
-  const returnQuery = new URLSearchParams({ tab: "prioritized-assets", priority_page: String(page) }).toString();
+  const returnParams = new URLSearchParams({ tab: "prioritized-assets", priority_page: String(page) });
+  if (sortBy !== "risk_score" || sortDir !== "desc") {
+    returnParams.set("priority_sort_by", sortBy);
+    returnParams.set("priority_sort_dir", sortDir);
+  }
+  const returnQuery = returnParams.toString();
 
   return (
     <Panel title="Prioritized assets" subtitle="Current positive-score assets ranked by deterministic risk" meta={`${total} RANKED ASSETS`} className="operation-panel-full">
@@ -73,7 +103,11 @@ export default function PriorityAssetsPanel({ query = "", routePrefix = "risk/se
         <>
           <div className="dense-table-wrap">
             <table className="dense-table risk-assets-table">
-              <thead><tr><th>Asset</th><th>Priority</th><th>Score</th><th>Evidence</th><th /></tr></thead>
+              <thead><tr>
+                <SortableHeader label="Asset" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={changeSort} />
+                <SortableHeader label="Priority" field="priority" sortBy={sortBy} sortDir={sortDir} onSort={changeSort} />
+                <SortableHeader label="Score" field="risk_score" sortBy={sortBy} sortDir={sortDir} onSort={changeSort} />
+                <th>Evidence</th><th /></tr></thead>
               <tbody>{assets.map((asset) => (
                 <tr key={asset.domain}>
                   <td><AssetLink domain={asset.domain} returnTo={routePrefix} returnQuery={returnQuery} /></td>

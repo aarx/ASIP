@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { exportV2ScanReport, getV2Overview, getV2ScanDetail, getV2Scans } from "../services/api";
 import MetricCard from "../components/ui/MetricCard";
 import Panel from "../components/ui/Panel";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { downloadBlobResponse, downloadErrorKind } from "../utils/download";
+import SortableHeader from "../components/ui/SortableHeader";
 
 function timestamp(value) {
   if (!value) return "—";
@@ -19,6 +20,12 @@ function duration(value) {
   const minutes = Math.floor(seconds / 60);
   const remainder = Math.round(seconds % 60);
   return `${minutes}m ${remainder}s`;
+}
+
+function timestampSortValue(value) {
+  if (!value) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function detailValue(value) {
@@ -135,6 +142,30 @@ function DiagnosticStat({ label, value }) {
 }
 
 function ScanDiagnostics({ detail }) {
+  const [attemptSort, setAttemptSort] = useState({ by: null, dir: "asc" });
+  const attemptsState = stageAttemptsState(detail.stage_attempts);
+  const attempts = attemptsState.attempts;
+  const displayedAttempts = useMemo(() => {
+    if (!attemptSort.by) return attempts;
+    const value = (item) => ({
+      stage: String(item.stage || "").toLocaleLowerCase(),
+      status: String(item.status || "").toLocaleLowerCase(),
+      attempt: Number.isFinite(item.attempt) ? item.attempt : null,
+      started_at: timestampSortValue(item.started_at),
+      completed_at: timestampSortValue(item.completed_at),
+      duration: Number.isFinite(item.duration_seconds) ? item.duration_seconds : null,
+      result: String(item.error_category || "").toLocaleLowerCase(),
+    }[attemptSort.by]);
+    return attempts.map((item, index) => ({ item, index, value: value(item) })).sort((a, b) => {
+      if (a.value == null || b.value == null) return a.value == null ? (b.value == null ? a.index - b.index : 1) : -1;
+      const compared = typeof a.value === "number" && typeof b.value === "number" ? a.value - b.value : String(a.value).localeCompare(String(b.value));
+      return (attemptSort.dir === "asc" ? compared : -compared) || a.index - b.index;
+    }).map(({ item }) => item);
+  }, [attempts, attemptSort]);
+  const onAttemptSort = (field) => setAttemptSort((current) => ({
+    by: field,
+    dir: current.by === field ? (current.dir === "asc" ? "desc" : "asc") : (field === "attempt" || field === "duration" ? "desc" : "asc"),
+  }));
   if (!detail.diagnostics_available) {
     return (
       <div className="scan-diagnostics-unavailable">
@@ -143,9 +174,6 @@ function ScanDiagnostics({ detail }) {
       </div>
     );
   }
-
-  const attemptsState = stageAttemptsState(detail.stage_attempts);
-  const attempts = attemptsState.attempts;
   const stageOutcomes = attemptsState.usable ? stageOutcomeSummary(attempts) : null;
   const breakdown = stageOutcomes?.counts;
   const retries = retryCount(attempts);
@@ -205,8 +233,8 @@ function ScanDiagnostics({ detail }) {
         {attempts.length ? (
           <div className="dense-table-wrap">
             <table className="dense-table scan-stage-table">
-              <thead><tr><th>Stage</th><th>Status</th><th>Attempt</th><th>Started</th><th>Completed</th><th>Duration</th><th>Result</th></tr></thead>
-              <tbody>{attempts.map((attempt, index) => (
+              <thead><tr><SortableHeader label="Stage" field="stage" sortBy={attemptSort.by} sortDir={attemptSort.dir} onSort={onAttemptSort} /><SortableHeader label="Status" field="status" sortBy={attemptSort.by} sortDir={attemptSort.dir} onSort={onAttemptSort} /><SortableHeader label="Attempt" field="attempt" sortBy={attemptSort.by} sortDir={attemptSort.dir} onSort={onAttemptSort} /><SortableHeader label="Started" field="started_at" sortBy={attemptSort.by} sortDir={attemptSort.dir} onSort={onAttemptSort} /><SortableHeader label="Completed" field="completed_at" sortBy={attemptSort.by} sortDir={attemptSort.dir} onSort={onAttemptSort} /><SortableHeader label="Duration" field="duration" sortBy={attemptSort.by} sortDir={attemptSort.dir} onSort={onAttemptSort} /><SortableHeader label="Result" field="result" sortBy={attemptSort.by} sortDir={attemptSort.dir} onSort={onAttemptSort} /></tr></thead>
+              <tbody>{displayedAttempts.map((attempt, index) => (
                 <tr key={`${attempt.stage}-${attempt.order}-${attempt.attempt}-${index}`}>
                   <td><span className="technical-value">{detailValue(attempt.stage)}</span></td>
                   <td><StatusBadge value={attempt.status} /></td>
@@ -317,7 +345,10 @@ function ScanDetail({ detail, status, onRetry }) {
   return <ScanDiagnostics detail={detail} />;
 }
 
-export default function ScanCentrePage() {
+export default function ScanCentrePage({ query = "" }) {
+  const sortParams = new URLSearchParams(query);
+  const sortBy = ["scan_id", "status", "started_at", "completed_at", "asset_count"].includes(sortParams.get("sort_by")) ? sortParams.get("sort_by") : "scan_id";
+  const sortDir = ["asc", "desc"].includes(sortParams.get("sort_dir")) ? sortParams.get("sort_dir") : "desc";
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
   const [requestVersion, setRequestVersion] = useState(0);
@@ -329,13 +360,22 @@ export default function ScanCentrePage() {
   useEffect(() => {
     let active = true;
     setStatus("loading");
-    Promise.all([getV2Scans(100), getV2Overview()])
+    const sort = sortBy === "scan_id" && sortDir === "desc" ? {} : { sort_by: sortBy, sort_dir: sortDir };
+    Promise.all([sortBy === "scan_id" && sortDir === "desc" ? getV2Scans(100) : getV2Scans(100, sort), getV2Overview()])
       .then(([scans, overview]) => {
         if (active) { setData({ scans, overview }); setStatus("ready"); }
       })
       .catch(() => { if (active) setStatus("error"); });
     return () => { active = false; };
-  }, [requestVersion]);
+  }, [requestVersion, sortBy, sortDir]);
+
+  const changeSort = (field) => {
+    const direction = sortBy === field ? (sortDir === "asc" ? "desc" : "asc") : (["scan_id", "asset_count", "started_at", "completed_at"].includes(field) ? "desc" : "asc");
+    const params = new URLSearchParams(query);
+    params.set("sort_by", field);
+    params.set("sort_dir", direction);
+    window.location.hash = `#/scans?${params}`;
+  };
 
   const loadDetail = (scanId) => {
     setDetailStatuses((current) => ({ ...current, [scanId]: "loading" }));
@@ -385,7 +425,15 @@ export default function ScanCentrePage() {
       <Panel title="Scan history" subtitle="Lifecycle is explicit; only SUCCEEDED scans may be authoritative" meta={`${scans.scans.length} MOST RECENT`} className="scan-history-panel">
         <div className="dense-table-wrap">
           <table className="dense-table scan-table">
-            <thead><tr><th>Scan</th><th>Lifecycle</th><th>Authority</th><th>Started</th><th>Completed</th><th>Duration</th><th>Assets</th><th>Seed</th><th>Report</th></tr></thead>
+            <thead><tr>
+              <SortableHeader label="Scan" field="scan_id" sortBy={sortBy} sortDir={sortDir} onSort={changeSort} />
+              <SortableHeader label="Lifecycle" field="status" sortBy={sortBy} sortDir={sortDir} onSort={changeSort} />
+              <th>Authority</th>
+              <SortableHeader label="Started" field="started_at" sortBy={sortBy} sortDir={sortDir} onSort={changeSort} />
+              <SortableHeader label="Completed" field="completed_at" sortBy={sortBy} sortDir={sortDir} onSort={changeSort} />
+              <th>Duration</th>
+              <SortableHeader label="Assets" field="asset_count" sortBy={sortBy} sortDir={sortDir} onSort={changeSort} />
+              <th>Seed</th><th>Report</th></tr></thead>
             <tbody>{scans.scans.map((scan) => {
               const isExpanded = expandedScanId === scan.scan_id;
               return (

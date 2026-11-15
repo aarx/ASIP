@@ -133,6 +133,7 @@ def capd_checks():
 def capd_runs(
     page: int = 1, limit: int = 50, check_id: str = None,
     cve_id: str = None, status: str = None,
+    sort_by: str = "started_at", sort_dir: str = "desc",
 ):
     """List persisted local CLI CAPD runs."""
     conn = get_conn()
@@ -140,7 +141,7 @@ def capd_runs(
         try:
             return _capd_list_runs(
                 conn, page=page, limit=limit, check_id=check_id,
-                cve_id=cve_id, status=status,
+                cve_id=cve_id, status=status, sort_by=sort_by, sort_dir=sort_dir,
             )
         except CapdError as exc:
             raise _capd_http_error(exc)
@@ -175,12 +176,14 @@ def capd_run_detail(run_id: str):
 
 
 @app.get("/v2/capd/runs/{run_id}/results")
-def capd_run_results(run_id: str, page: int = 1, limit: int = 50, result_status: str = None):
+def capd_run_results(run_id: str, page: int = 1, limit: int = 50, result_status: str = None,
+                     sort_by: str = "domain", sort_dir: str = "asc"):
     conn = get_conn()
     try:
         try:
             return _capd_list_results(
-                conn, run_id, page=page, limit=limit, result_status=result_status
+                conn, run_id, page=page, limit=limit, result_status=result_status,
+                sort_by=sort_by, sort_dir=sort_dir
             )
         except CapdError as exc:
             raise _capd_http_error(exc)
@@ -1207,15 +1210,28 @@ def risk_history_summary():
 
 
 @app.get("/v2/risk-history/assets")
-def risk_history_assets(page: int = 1, limit: int = 50):
+def risk_history_assets(page: int = 1, limit: int = 50, sort_by: str = None, sort_dir: str = None):
     """Paginated assets with at least one persisted High score in a successful scan."""
     if page < 1 or limit < 1:
         raise HTTPException(status_code=400, detail="page and limit must be positive")
     limit = min(limit, 200)
+    sort_by, sort_dir = _validated_table_sort(
+        sort_by, sort_dir,
+        {"domain", "maximum_score", "first_high", "last_high", "observations", "current_score"},
+        "maximum_score", "desc",
+    )
     conn = get_conn()
     try:
         cur = conn.cursor()
         ctes = _risk_history_ctes()
+        history_order = {
+            "domain": f"LOWER(h.domain) {sort_dir.upper()} NULLS LAST, h.domain_id ASC",
+            "maximum_score": f"h.maximum_historical_score {sort_dir.upper()} NULLS LAST, LOWER(h.domain) ASC, h.domain_id ASC",
+            "first_high": f"h.first_high_scan_id {sort_dir.upper()} NULLS LAST, LOWER(h.domain) ASC, h.domain_id ASC",
+            "last_high": f"h.last_high_scan_id {sort_dir.upper()} NULLS LAST, LOWER(h.domain) ASC, h.domain_id ASC",
+            "observations": f"h.high_score_observations {sort_dir.upper()} NULLS LAST, LOWER(h.domain) ASC, h.domain_id ASC",
+            "current_score": f"current_risk.risk_score {sort_dir.upper()} NULLS LAST, LOWER(h.domain) ASC, h.domain_id ASC",
+        }[sort_by]
         cur.execute(ctes + """
             SELECT COUNT(*), (SELECT MAX(id) FROM successful_scans)
               FROM (SELECT domain_id FROM high_history GROUP BY domain_id) qualifying
@@ -1264,7 +1280,7 @@ def risk_history_assets(page: int = 1, limit: int = 50):
                 ON current_risk.scan_id = latest.scan_id
                AND current_risk.domain_id = h.domain_id
                AND EXISTS (SELECT 1 FROM latest_members lm WHERE lm.domain_id = h.domain_id)
-             ORDER BY h.maximum_historical_score DESC, LOWER(h.domain), h.domain_id
+             ORDER BY """ + history_order + """
              LIMIT %s OFFSET %s
         """, (limit, (page - 1) * limit))
         rows = cur.fetchall()
@@ -1939,9 +1955,14 @@ def export_enriched_csv():
     return response
 
 @app.get("/investigation-assets")
-def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
+def investigation_assets(page: int = 1, limit: int = 20, provider: str = None,
+                         search: str = None, tech: str = None, priority: str = None,
+                         sort_by: str = None, sort_dir: str = None):
 
     offset = (page - 1) * limit
+    sort_by, sort_dir = _validated_table_sort(
+        sort_by, sort_dir, {"domain", "risk", "ip", "provider", "ports", "technology"}, "domain", "asc"
+    )
 
     conn = get_conn()
     cur = conn.cursor()
@@ -1977,12 +1998,6 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
       AND ds.has_ip = TRUE
       AND (%s IS NULL OR %s = '' OR LOWER(dp.provider) = LOWER(%s))
     """
-
-    cur.execute(
-        "SELECT COUNT(DISTINCT d.id) " + population,
-        (scan_id, provider, provider, provider),
-    )
-    total = cur.fetchone()[0]
 
     query = """
     SELECT 
@@ -2039,11 +2054,10 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
     """
 
     cur.execute(
-        query + " LIMIT %s OFFSET %s",
+        query,
         (
             scan_id,
             provider, provider, provider,
-            limit, offset
         )
     )
 
@@ -2071,6 +2085,30 @@ def investigation_assets(page: int = 1, limit: int = 20, provider: str = None):
             if r[0] in canonical_by_domain else [],
         })
 
+    def investigation_value(asset):
+        value = {
+            "domain": asset["domain"].casefold(), "risk": asset["risk"],
+            "ip": asset["ip"] or None,
+            "provider": asset["provider"] if asset["provider"] != "Unknown" else None,
+            "ports": len([part for part in asset["ports"].split(",") if part]),
+            "technology": asset["tech"] or None,
+        }[sort_by]
+        return value.casefold() if isinstance(value, str) else value
+    search_value = str(search or "").strip().casefold()
+    tech_value = str(tech or "").strip().casefold()
+    priority_rank = {"low": 0, "review": 1, "elevated": 2, "high": 3}
+    if priority and str(priority).casefold() not in priority_rank:
+        raise HTTPException(status_code=400, detail="Invalid priority filter")
+    assets = [item for item in assets
+              if (not search_value or search_value in item["domain"].casefold())
+              and (not tech_value or tech_value in item["tech"].casefold())
+              and (not priority or priority_rank.get(str(item["priority"]).casefold(), -1) >= priority_rank[str(priority).casefold()])]
+    total = len(assets)
+    assets.sort(key=lambda item: item["domain"].casefold())
+    present = [item for item in assets if investigation_value(item) is not None]
+    missing = [item for item in assets if investigation_value(item) is None]
+    present.sort(key=investigation_value, reverse=sort_dir == "desc")
+    assets = (present + missing)[offset:offset + limit]
     conn.close()
 
     return {
@@ -2128,13 +2166,17 @@ def findings():
     ]
     
 @app.get("/cert-expiry")
-def cert_expiry():
+def cert_expiry(sort_by: str = None, sort_dir: str = None):
 
     conn = get_conn()
     cur = conn.cursor()
 
     scan_id = get_latest_authoritative_scan_id(cur)
     reporting_class = reporting_asset_class_sql("d.domain", "d.ownership_status")
+    sort_by, sort_dir = _validated_table_sort(
+        sort_by, sort_dir, {"domain", "expiry", "days", "status"}, "expiry", "asc"
+    )
+    sort_expr = {"domain": "LOWER(d.domain)", "expiry": "dc.expiry_date", "days": "dc.days_to_expiry", "status": "dc.cert_status"}[sort_by]
 
     cur.execute(f"""
         SELECT 
@@ -2152,7 +2194,7 @@ def cert_expiry():
               AND sr.domain_id = dc.domain_id
         )
         AND ({reporting_class}) IN ('KNOWN', 'SHADOW')
-        ORDER BY dc.expiry_date ASC NULLS LAST, d.domain ASC
+        ORDER BY {sort_expr} {sort_dir.upper()} NULLS LAST, LOWER(d.domain) ASC, d.id ASC
         LIMIT 50
     """, (scan_id,))
 
@@ -2297,10 +2339,13 @@ def certificate_assessment_hosts(
 @app.get("/v2/sensitive-ports/hosts")
 def sensitive_port_assessment_hosts(
     scan_id: int = None, search: str = None, search_mode: str = "domain",
-    page: int = 1, limit: int = 50,
+    page: int = 1, limit: int = 50, sort_by: str = None, sort_dir: str = None,
 ):
     """Paginated hosts with positive sensitive-port observations only."""
     bounded_limit, offset = _assessment_paging(page, limit)
+    sort_by, sort_dir = _validated_table_sort(
+        sort_by, sort_dir, {"sensitivity", "port_count", "hostname"}, "sensitivity", "desc"
+    )
     search_sql, search_params = _assessment_host_search(search, search_mode)
     conn = get_conn()
     try:
@@ -2321,6 +2366,12 @@ def sensitive_port_assessment_hosts(
         joins = "FROM domain_ports dp JOIN domains d ON d.id = dp.domain_id JOIN sensitive_ports sp ON sp.port = dp.port"
         cur.execute(f"SELECT COUNT(DISTINCT d.id) {joins} WHERE {where_sql}", tuple(params))
         total = cur.fetchone()[0]
+        sort_expr = {
+            "sensitivity": "MAX(sp.risk)",
+            "port_count": "COUNT(DISTINCT dp.port)",
+            "hostname": "LOWER(TRIM(TRAILING '.' FROM d.domain)) COLLATE \"C\"",
+        }[sort_by]
+        direction = sort_dir.upper()
         cur.execute(f"""
             SELECT d.id, d.domain, ({classification}) AS asset_class,
                    MAX(sp.risk) AS highest_sensitivity,
@@ -2328,7 +2379,8 @@ def sensitive_port_assessment_hosts(
               {joins}
              WHERE {where_sql}
              GROUP BY d.id, d.domain, ({classification})
-             ORDER BY MAX(sp.risk) DESC NULLS LAST,
+             ORDER BY {sort_expr} {direction} NULLS LAST,
+                      MAX(sp.risk) DESC NULLS LAST,
                       COUNT(DISTINCT dp.port) DESC,
                       LOWER(TRIM(TRAILING '.' FROM d.domain)) COLLATE "C" ASC,
                       d.id ASC
@@ -2411,6 +2463,8 @@ def security_findings(
     asset_class: str = None,
     source: str = None,
     view: str = "attention",
+    sort_by: str = None,
+    sort_dir: str = None,
 ):
     """Read-only normalized current-scan evidence; coverage is not a finding."""
     if page < 1 or limit < 1:
@@ -2420,6 +2474,11 @@ def security_findings(
     asset_class = asset_class.strip().upper() if asset_class else None
     source = source.strip().lower() if source else None
     view = view.strip().lower()
+    sort_by, sort_dir = _validated_table_sort(
+        sort_by, sort_dir,
+        {"relevance", "domain", "title", "severity", "category", "source", "observed_at", "asset_class", "verification"},
+        "relevance", "asc",
+    )
     where, filter_params = _security_findings_where(category, asset_class, source, view)
 
     conn = get_conn()
@@ -2438,6 +2497,17 @@ def security_findings(
         params = _security_findings_base_params(scan_id)
         cur.execute(cte + f" SELECT COUNT(*) FROM records {where}", tuple(params + filter_params))
         total = cur.fetchone()[0]
+        order_by = {
+            "relevance": "CASE category WHEN 'FINDING' THEN 1 WHEN 'NEEDS_VERIFICATION' THEN 2 ELSE 3 END ASC, observed_at DESC NULLS LAST",
+            "domain": f"LOWER(asset_domain) {sort_dir.upper()} NULLS LAST",
+            "title": f"LOWER(title) {sort_dir.upper()} NULLS LAST",
+            "severity": f"CASE severity WHEN 'CRITICAL' THEN 5 WHEN 'HIGH' THEN 4 WHEN 'MEDIUM' THEN 3 WHEN 'LOW' THEN 2 WHEN 'INFO' THEN 1 ELSE NULL END {sort_dir.upper()} NULLS LAST",
+            "category": f"CASE category WHEN 'FINDING' THEN 1 WHEN 'NEEDS_VERIFICATION' THEN 2 ELSE 3 END {sort_dir.upper()} NULLS LAST",
+            "source": f"source {sort_dir.upper()} NULLS LAST",
+            "observed_at": f"observed_at {sort_dir.upper()} NULLS LAST",
+            "asset_class": f"asset_class {sort_dir.upper()} NULLS LAST",
+            "verification": f"verification_state {sort_dir.upper()} NULLS LAST",
+        }[sort_by]
         cur.execute(
             cte + f"""
                 SELECT finding_id, source, source_record_id, scan_id, domain_id,
@@ -2445,9 +2515,7 @@ def security_findings(
                        severity, source_outcome, confidence, verification_state,
                        evidence, recommended_action, observed_at, provider, limitations
                   FROM records {where}
-                 ORDER BY CASE category WHEN 'FINDING' THEN 1
-                                        WHEN 'NEEDS_VERIFICATION' THEN 2 ELSE 3 END,
-                          observed_at DESC NULLS LAST, source, asset_domain, finding_id
+                 ORDER BY {order_by}, LOWER(asset_domain) ASC, source ASC, finding_id ASC
                  LIMIT %s OFFSET %s
             """,
             tuple(params + filter_params + [limit, (page - 1) * limit]),
@@ -3233,6 +3301,17 @@ def _frontend_sort_options(sort_by=None, sort_dir=None):
     return sort_by, sort_dir
 
 
+def _validated_table_sort(sort_by, sort_dir, allowed, default_by, default_dir="asc"):
+    """Validate a read-only table sort against a per-endpoint SQL allowlist."""
+    sort_by = default_by if sort_by is None else sort_by
+    sort_dir = default_dir if sort_dir is None else str(sort_dir).lower()
+    if sort_by not in allowed:
+        raise HTTPException(status_code=400, detail="Unsupported sort_by value")
+    if sort_dir not in {"asc", "desc"}:
+        raise HTTPException(status_code=400, detail="sort_dir must be asc or desc")
+    return sort_by, sort_dir
+
+
 def _frontend_asset_sort_key(asset, sort_by, sort_dir):
     domain = (asset.get("domain") or "").casefold()
     if sort_by == "domain":
@@ -3362,6 +3441,8 @@ def adhoc_php_rce(
     classification: str = None,
     lifecycle: str = None,
     cve_status: str = None,
+    sort_by: str = "domain",
+    sort_dir: str = "asc",
 ):
     """Return a read-only, scan-bound PHP RCE review population.
 
@@ -3379,6 +3460,11 @@ def adhoc_php_rce(
     classification = _adhoc_filter_value(classification) if classification else None
     lifecycle = _adhoc_filter_value(lifecycle) if lifecycle else None
     cve_status = _adhoc_filter_value(cve_status) if cve_status else None
+    sort_by, sort_dir = _validated_table_sort(
+        sort_by, sort_dir,
+        {"domain", "version", "evaluation_status", "classification", "lifecycle", "cve_status"},
+        "domain", "asc",
+    )
 
     if classification and classification not in _ADHOC_PHP_RCE_CLASSIFICATIONS:
         raise HTTPException(status_code=400, detail="Invalid classification filter")
@@ -3523,6 +3609,27 @@ def adhoc_php_rce(
         result for result in all_results
         if _adhoc_matches_result(result, classification, lifecycle, cve_status)
     ]
+    lifecycle_rank = {"end_of_life": 0, "security_support": 1, "active_support": 2, "unknown": 3}
+    cve_rank = {"potentially_affected": 0, "insufficient_evidence": 1, "not_affected_by_version": 2, "none": 3, "unknown": 4}
+    def php_sort_value(result):
+        if sort_by == "domain": return result["domain"].casefold()
+        if sort_by == "version":
+            version = next((item.get("version") for item in result["observations"] if item.get("version")), None)
+            if version is None: return None
+            try: return (0, tuple(int(part) for part in str(version).split(".")))
+            except ValueError: return (1, str(version).casefold())
+        if sort_by == "evaluation_status": return {"Evaluated": 0, "Unknown": 1, "Not evaluated": 2}.get(result["evaluation_status"])
+        if sort_by == "classification": return str(result["classification"]).casefold()
+        if sort_by == "lifecycle":
+            values = [lifecycle_rank.get(_adhoc_filter_value(item.get("lifecycle", {}).get("status")), 3) for item in result["observations"]]
+            return min(values) if values else None
+        statuses = _adhoc_cve_statuses(result["observations"])
+        return min((cve_rank.get(value, 4) for value in statuses), default=None)
+    filtered_results.sort(key=lambda item: item["domain"].casefold())
+    present = [item for item in filtered_results if php_sort_value(item) is not None]
+    missing = [item for item in filtered_results if php_sort_value(item) is None]
+    present.sort(key=php_sort_value, reverse=sort_dir == "desc")
+    filtered_results = present + missing
     offset = (page - 1) * limit
     paged_results = filtered_results[offset:offset + limit]
     legacy_leads = [
@@ -4869,6 +4976,7 @@ def dns_security_hosts(
     scan_id: int = None, outcome: str = None, asset_class: str = None,
     page: int = 1, limit: int = 50, search: str = None,
     search_mode: str = "domain", include_unassessed: bool = False,
+    sort_by: str = None, sort_dir: str = None,
 ):
     """Return paginated hosts with all their persisted DNS checks.
 
@@ -4878,6 +4986,9 @@ def dns_security_hosts(
     if page < 1 or limit < 1:
         raise HTTPException(status_code=400, detail="page and limit must be positive")
     limit = min(limit, 200)
+    sort_by, sort_dir = _validated_table_sort(
+        sort_by, sort_dir, {"hostname", "asset_class", "check_count", "assessment"}, "hostname", "asc"
+    )
     search_sql, search_params = _assessment_host_search(search, search_mode)
     outcome_value = _dns_filter_value(outcome, DNS_SECURITY_OUTCOMES, "outcome")
     class_value = _dns_filter_value(asset_class, {"KNOWN", "SHADOW"}, "asset_class")
@@ -4917,6 +5028,12 @@ def dns_security_hosts(
               ON c.scan_id = sr.scan_id AND c.domain_id = sr.domain_id
         """
 
+        sort_expr = {
+            "hostname": "host_rows.hostname_sort",
+            "asset_class": "host_rows.asset_class",
+            "check_count": "host_rows.check_count",
+            "assessment": "host_rows.assessment_sort",
+        }[sort_by]
         cur.execute(f"""
             SELECT COUNT(DISTINCT d.id)
               {host_source}
@@ -4925,11 +5042,17 @@ def dns_security_hosts(
         total = cur.fetchone()[0]
 
         cur.execute(f"""
-            SELECT DISTINCT d.id, d.domain, ({classification}) AS asset_class,
-                   COUNT(c.id) OVER (PARTITION BY d.id) AS check_count
-              {host_source}
-             WHERE {where}
-             ORDER BY d.domain ASC, d.id ASC
+            SELECT host_rows.id, host_rows.domain, host_rows.asset_class, host_rows.check_count
+              FROM (
+                SELECT DISTINCT d.id, d.domain, ({classification}) AS asset_class,
+                       COUNT(c.id) OVER (PARTITION BY d.id) AS check_count,
+                       LOWER(d.domain) COLLATE "C" AS hostname_sort,
+                       CASE WHEN COUNT(c.id) OVER (PARTITION BY d.id)=0 THEN 0 ELSE 1 END AS assessment_sort
+                  {host_source}
+                 WHERE {where}
+              ) host_rows
+             ORDER BY {sort_expr} {sort_dir.upper()} NULLS LAST,
+                      LOWER(host_rows.domain) ASC, host_rows.id ASC
              LIMIT %s OFFSET %s
         """, tuple(params + [limit, (page - 1) * limit]))
         host_rows = cur.fetchall()
@@ -5053,20 +5176,30 @@ def dns_security_domain_evidence(domain_id: int, scan_id: int = None):
 
 
 @app.get("/v2/scans")
-def frontend_v2_scans(limit: int = 100):
+def frontend_v2_scans(limit: int = 100, sort_by: str = None, sort_dir: str = None):
     limit = min(max(limit, 1), 500)
+    sort_by, sort_dir = _validated_table_sort(
+        sort_by, sort_dir, {"scan_id", "status", "started_at", "completed_at", "asset_count"}, "scan_id", "desc"
+    )
+    scan_order = {
+        "scan_id": "s.id",
+        "status": "s.status",
+        "started_at": "s.started_at",
+        "completed_at": "s.completed_at",
+        "asset_count": "COUNT(sr.domain_id)",
+    }[sort_by]
     conn = get_conn()
     cur = conn.cursor()
     current = get_latest_authoritative_scan_id(cur)
     previous = get_previous_authoritative_scan_id(cur, current)
-    cur.execute("""
+    cur.execute(f"""
         SELECT s.id, s.status, s.scan_time, s.started_at, s.completed_at,
                s.seed, COUNT(sr.domain_id),
                EXTRACT(EPOCH FROM (s.completed_at - s.started_at))
         FROM scans s
         LEFT JOIN scan_results sr ON sr.scan_id = s.id
         GROUP BY s.id, s.status, s.scan_time, s.started_at, s.completed_at, s.seed
-        ORDER BY s.id DESC
+        ORDER BY {scan_order} {sort_dir.upper()} NULLS LAST, s.id DESC
         LIMIT %s
     """, (limit,))
     rows = cur.fetchall()
@@ -5251,6 +5384,8 @@ def adhoc_campaign_list(
     status: str = None,
     check_id: str = None,
     source_scan_id: int = None,
+    sort_by: str = "created_at",
+    sort_dir: str = "desc",
 ):
     conn = get_conn()
     try:
@@ -5261,6 +5396,8 @@ def adhoc_campaign_list(
             status=status,
             check_id=check_id,
             source_scan_id=source_scan_id,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
         )
     except Exception as exc:
         api_error = _adhoc_campaign_api_error(exc)
@@ -5417,10 +5554,15 @@ def frontend_v2_brand_assets(
     asset_class: str = None,
     search: str = None,
     discovery_source: str = None,
+    sort_by: str = None,
+    sort_dir: str = None,
 ):
     discovery_source = _normalize_brand_discovery_filter(discovery_source)
     page = max(page, 1)
     limit = min(max(limit, 1), 200)
+    sort_by, sort_dir = _validated_table_sort(
+        sort_by, sort_dir, {"domain", "asset_class", "ip", "http_status", "final_status", "destination", "title"}, "domain", "asc"
+    )
     conn = get_conn()
     cur = conn.cursor()
     scan_id = get_latest_authoritative_scan_id(cur)
@@ -5497,6 +5639,16 @@ def frontend_v2_brand_assets(
             "risk": None,
         })
 
+    assets.sort(key=lambda item: (item["domain"].casefold()))
+    def sort_value(item):
+        value = item["domain"] if sort_by == "domain" else item.get(sort_by)
+        if sort_by == "destination":
+            value = (item.get("redirect_evidence") or {}).get("first_hop_destination") or item.get("final_url")
+        return value.casefold() if isinstance(value, str) else value
+    present = [item for item in assets if sort_value(item) is not None]
+    missing = [item for item in assets if sort_value(item) is None]
+    present.sort(key=sort_value, reverse=sort_dir == "desc")
+    assets = present + missing
     total = len(assets)
     offset = (page - 1) * limit
     return {

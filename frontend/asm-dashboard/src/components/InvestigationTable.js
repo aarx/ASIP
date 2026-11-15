@@ -1,184 +1,65 @@
 import React, { useEffect, useState } from "react";
 import { getInvestigationAssets } from "../services/api";
+import SortableHeader from "./ui/SortableHeader";
+
+const PAGE_SIZE = 20;
 
 export default function InvestigationTable({ filter, setFilter }) {
-
-  const [data, setData] = useState([]);
+  const [data, setData] = useState({ assets: [], count: 0 });
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState("all");
   const [page, setPage] = useState(1);
-  const priorityRank = { Low: 0, Review: 1, Elevated: 2, High: 3 };
+  const [sortBy, setSortBy] = useState("domain");
+  const [sortDir, setSortDir] = useState("asc");
 
+  useEffect(() => { setPage(1); }, [filter?.provider, filter?.tech, search, riskFilter]);
   useEffect(() => {
-    async function load() {
-      const res = await getInvestigationAssets(page, 20, filter?.provider);
-  
-      console.log("API RESPONSE:", res);
-  
-      if (Array.isArray(res)) {
-        setData(res);
-      } else if (res && Array.isArray(res.assets)) {
-        setData(res.assets);
-      } else {
-        setData([]);  // SAFE fallback
-      }
-    }
-  
-    load();
-  }, [page, filter]);
-  
-  useEffect(() => {
+    let active = true;
+    getInvestigationAssets(page, PAGE_SIZE, filter?.provider, {
+      search: search || undefined,
+      priority: riskFilter === "all" ? undefined : riskFilter,
+      tech: filter?.tech || undefined,
+      sort_by: sortBy,
+      sort_dir: sortDir,
+    }).then((result) => {
+      if (active) setData({ assets: Array.isArray(result?.assets) ? result.assets : [], count: Number.isInteger(result?.count) ? result.count : 0 });
+    }).catch(() => { if (active) setData({ assets: [], count: 0 }); });
+    return () => { active = false; };
+  }, [page, filter?.provider, filter?.tech, search, riskFilter, sortBy, sortDir]);
+
+  const sort = (field) => {
+    setSortDir((current) => sortBy === field ? (current === "asc" ? "desc" : "asc") : (field === "domain" || field === "provider" || field === "ip" || field === "technology" ? "asc" : "desc"));
+    setSortBy(field);
     setPage(1);
-  }, [filter]);
- 
+  };
+  const providers = [...new Set(data.assets.map((asset) => asset.provider).filter((value) => value && value !== "Unknown"))];
+  if (!filter) return <div className="investigation-table-empty"><h3>Investigation Console</h3><p>Choose a chart category to explore assets.</p></div>;
 
-  const filtered = data.filter(d => {
-  
-    const domain = (d.domain || "").toLowerCase();
-    const provider = (d.provider || "").toLowerCase();
-    const tech = (d.tech || "").toLowerCase();
-  
-    // Search
-    if (search && !domain.includes(search.toLowerCase())) {
-      return false;
-    }
-  
-    // Provider
-    if (filter?.provider) {
-      if (provider !== filter.provider.toLowerCase()) {
-        return false;
-      }
-    }
-  
-    // Tech
-    if (filter?.tech && tech !== filter.tech.toLowerCase()) {
-      return false;
-    }
-  
-    // Canonical priority dropdown. Thresholds remain backend-owned.
-    if (
-      riskFilter !== "all"
-      && (priorityRank[d.priority] ?? -1) < priorityRank[riskFilter]
-    ) {
-      return false;
-    }
-  
-    return true;
-  });        
-
-    const providers = [...new Set(
-    data
-      .map(d => d.provider)
-      .filter(p => p && p !== "Unknown")
-  )];
-  
-    if (!filter) {
-      return (
-        <div style={{ padding: "40px", textAlign: "center", opacity: 0.6 }}>
-          <h3>🔍 Investigation Console</h3>
-          <p>Click on charts (Provider / Risk / Tech) to explore assets</p>
-        </div>
-      );
-    }  
-
+  const totalPages = Math.max(Math.ceil(data.count / PAGE_SIZE), 1);
   return (
-    <div style={{marginTop:"60px"}}>
-
+    <div className="investigation-table-workspace">
       <h2>Investigation Console</h2>
-
-      <div style={{display:"flex", gap:"15px", marginBottom:"20px"}}>
-
-        <input
-          placeholder="Search domain..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-
-        <select
-          value={riskFilter}
-          onChange={e => setRiskFilter(e.target.value)}
-        >
-          <option value="all">All Risk</option>
-          <option value="Review">Review or higher</option>
-          <option value="Elevated">Elevated or higher</option>
-          <option value="High">High</option>
+      <div className="investigation-table-filters">
+        <input aria-label="Search domain" placeholder="Search domain..." value={search} onChange={(event) => setSearch(event.target.value)} />
+        <select aria-label="Canonical priority" value={riskFilter} onChange={(event) => setRiskFilter(event.target.value)}>
+          <option value="all">All Risk</option><option value="Review">Review or higher</option><option value="Elevated">Elevated or higher</option><option value="High">High</option>
         </select>
-
-        <select
-          value={filter?.provider || "all"}
-          onChange={(e) => {
-            const value = e.target.value;
-          
-            if (value === "all") {
-              setFilter(prev => ({ ...prev, provider: null }));
-            } else {
-              setFilter(prev => ({ ...prev, provider: value }));
-            }
-          }}
-
-        >
-          <option value="all">All Providers</option>
-          {(providers || []).map(p => (
-            <option key={p} value={p}>{p}</option>
-          ))}
+        <select aria-label="Provider" value={filter?.provider || "all"} onChange={(event) => setFilter((previous) => ({ ...previous, provider: event.target.value === "all" ? null : event.target.value }))}>
+          <option value="all">All Providers</option>{providers.map((provider) => <option key={provider} value={provider}>{provider}</option>)}
         </select>
-
       </div>
-
-      <table style={{
-        width:"100%",
-        background:"white",
-        borderCollapse:"collapse"
-      }}>
-        <thead style={{background:"#eee"}}>
-          <tr>
-            <th>Domain</th>
-            <th>Risk</th>
-            <th>IP</th>
-            <th>Provider</th>
-            <th>Ports</th>
-            <th>Tech</th>
-          </tr>
-        </thead>
-
-        <tbody>
-          {filtered.map((d,i)=>(
-            <tr key={i} style={{borderBottom:"1px solid #ddd"}}>
-              <td>{d.domain}</td>
-              <td>{d.risk} ({d.priority})</td>
-              <td>{d.ip}</td>
-              <td>{d.provider}</td>
-              <td>{d.ports}</td>
-              <td>{d.tech}</td>
-            </tr>
-          ))}
-        </tbody>
-
-      </table>
-
-      <div style={{marginTop:"10px"}}>
-        Showing {filtered.length} assets
-      </div>
-      
-      <div style={{ marginTop: "20px", display: "flex", gap: "10px" }}>
-        
-        <button 
-          onClick={() => setPage(p => Math.max(p - 1, 1))}
-          disabled={page === 1}
-        >
-          Prev
-        </button>
-      
-        <span>Page {page}</span>
-      
-        <button 
-          onClick={() => setPage(p => p + 1)}
-        >
-          Next
-        </button>
-      
-      </div>      
-
+      <div className="dense-table-wrap"><table className="dense-table investigation-assets-table">
+        <thead><tr>
+          <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={sort} />
+          <SortableHeader label="Risk" field="risk" sortBy={sortBy} sortDir={sortDir} onSort={sort} />
+          <SortableHeader label="IP" field="ip" sortBy={sortBy} sortDir={sortDir} onSort={sort} />
+          <SortableHeader label="Provider" field="provider" sortBy={sortBy} sortDir={sortDir} onSort={sort} />
+          <SortableHeader label="Ports" field="ports" sortBy={sortBy} sortDir={sortDir} onSort={sort} />
+          <SortableHeader label="Tech" field="technology" sortBy={sortBy} sortDir={sortDir} onSort={sort} />
+        </tr></thead>
+        <tbody>{data.assets.map((asset) => <tr key={asset.domain}><td>{asset.domain}</td><td>{asset.risk} ({asset.priority})</td><td>{asset.ip || "Unavailable"}</td><td>{asset.provider}</td><td>{asset.ports || "—"}</td><td>{asset.tech || "—"}</td></tr>)}</tbody>
+      </table></div>
+      <div className="pagination-bar"><span>{data.count.toLocaleString()} assets · Page {page} of {totalPages}</span><div><button type="button" className="secondary-button" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Previous</button><button type="button" className="secondary-button" disabled={page >= totalPages} onClick={() => setPage((value) => value + 1)}>Next</button></div></div>
     </div>
   );
 }

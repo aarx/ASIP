@@ -106,7 +106,7 @@ class CertificateExpiryContractTests(unittest.TestCase):
         query, params = cursor.executions[1]
         normalized = " ".join(query.lower().split())
 
-        self.assertIn("order by dc.expiry_date asc nulls last, d.domain asc", normalized)
+        self.assertIn("order by dc.expiry_date asc nulls last, lower(d.domain) asc, d.id asc", normalized)
         self.assertNotIn("order by dc.days_to_expiry", normalized)
         self.assertIn("limit 50", normalized)
         self.assertIn("'known', 'shadow'", normalized)

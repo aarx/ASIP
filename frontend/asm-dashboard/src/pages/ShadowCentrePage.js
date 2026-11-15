@@ -5,6 +5,7 @@ import AssetLink from "../components/ui/AssetLink";
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { displayHttpStatus } from "../utils/presentation";
+import SortableHeader from "../components/ui/SortableHeader";
 
 const LIMIT = 25;
 
@@ -14,14 +15,18 @@ function queryState(query) {
     page: Math.max(Number(params.get("page")) || 1, 1),
     search: params.get("search") || "",
     priority: params.get("priority") || "",
+    sortBy: ["domain", "priority", "risk_score"].includes(params.get("sort_by")) ? params.get("sort_by") : "risk_score",
+    sortDir: ["asc", "desc"].includes(params.get("sort_dir")) ? params.get("sort_dir") : "desc",
   };
 }
 
-function shadowHash({ page = 1, search = "", priority = "" }) {
+function shadowHash({ page = 1, search = "", priority = "", sortBy = "risk_score", sortDir = "desc" }) {
   const params = new URLSearchParams();
   if (search) params.set("search", search);
   if (priority) params.set("priority", priority);
   if (page > 1) params.set("page", String(page));
+  params.set("sort_by", sortBy);
+  params.set("sort_dir", sortDir);
   return `#/shadow${params.toString() ? `?${params}` : ""}`;
 }
 
@@ -36,7 +41,7 @@ export default function ShadowCentrePage({ query }) {
   useEffect(() => {
     let active = true;
     setStatus("loading");
-    const params = { page: applied.page, limit: LIMIT, asset_class: "SHADOW" };
+    const params = { page: applied.page, limit: LIMIT, asset_class: "SHADOW", sort_by: applied.sortBy, sort_dir: applied.sortDir };
     if (applied.search) params.search = applied.search;
     if (applied.priority) params.priority = applied.priority;
     getV2Assets(params).then((result) => {
@@ -51,6 +56,10 @@ export default function ShadowCentrePage({ query }) {
   };
   const clear = () => { window.location.hash = "#/shadow"; };
   const movePage = (page) => { window.location.hash = shadowHash({ ...applied, page }); };
+  const changeSort = (field) => {
+    const sortDir = applied.sortBy === field ? (applied.sortDir === "asc" ? "desc" : "asc") : (field === "domain" ? "asc" : "desc");
+    window.location.hash = shadowHash({ ...applied, page: 1, sortBy: field, sortDir });
+  };
 
   if (status === "loading") return <LoadingState title="Loading Shadow inventory" copy="Retrieving confirmed current assets outside documented inventory." />;
   if (status === "error") return <ErrorState title="Shadow Centre unavailable" copy="The current Shadow inventory could not be loaded." onRetry={() => setRequestVersion((value) => value + 1)} />;
@@ -79,7 +88,7 @@ export default function ShadowCentrePage({ query }) {
       {assets.length ? (
         <div className="dense-table-wrap">
           <table className="dense-table shadow-table">
-            <thead><tr><th>Shadow asset</th><th>Current context</th><th>Provider</th><th>HTTP</th><th>Canonical risk</th><th /></tr></thead>
+            <thead><tr><SortableHeader label="Shadow asset" field="domain" sortBy={applied.sortBy} sortDir={applied.sortDir} onSort={changeSort} /><th>Current context</th><th>Provider</th><th>HTTP</th><SortableHeader label="Canonical risk" field="risk_score" sortBy={applied.sortBy} sortDir={applied.sortDir} onSort={changeSort} /><th /></tr></thead>
             <tbody>{assets.map((asset) => (
               <tr key={asset.domain}>
                 <td>

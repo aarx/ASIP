@@ -123,7 +123,8 @@ class RiskHistoryApiTests(unittest.TestCase):
         self.assertEqual(result["assets"][0]["current_priority"], "Elevated")
         query, params = cursor.executions[-1]
         self.assertEqual(params, (200, 200))
-        self.assertIn("LOWER(h.domain), h.domain_id", query)
+        self.assertIn("ORDER BY h.maximum_historical_score DESC NULLS LAST, LOWER(h.domain) ASC, h.domain_id ASC", query)
+        self.assertLess(query.index("ORDER BY h.maximum_historical_score"), query.index("LIMIT %s OFFSET %s"))
         self.assertIn("latest_members", query)
         self.assertTrue(conn.closed)
 

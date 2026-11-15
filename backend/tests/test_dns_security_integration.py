@@ -726,6 +726,15 @@ class PostgreSQLDnsSecurityReportingTests(unittest.TestCase):
             "NOT_CHECKED": 1, "INCONCLUSIVE": 1,
         })
 
+    def test_real_sql_host_sort_is_global_before_pagination(self):
+        with mock.patch.object(main, "get_conn", side_effect=self.connect):
+            second = main.dns_security_hosts(
+                scan_id=91, page=2, limit=1,
+                sort_by="check_count", sort_dir="desc",
+            )
+        self.assertEqual(second["total"], 5)
+        self.assertEqual([host["domain_id"] for host in second["hosts"]], [5])
+
     def test_real_sql_host_search_and_optional_unassessed_population(self):
         with mock.patch.object(main, "get_conn", side_effect=self.connect):
             parent = main.dns_security_hosts(scan_id=91, search="example.test", limit=20)

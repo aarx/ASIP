@@ -11,6 +11,7 @@ import { exportV2AssetsCsv, getV2Assets, getV2AssetsSummary } from "../services/
 import StatusBadge from "../components/ui/StatusBadge";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/AsyncState";
 import { displayAssetClass, displayEvidence, displayHttpStatus, isMissingEvidence } from "../utils/presentation";
+import SortableHeader from "../components/ui/SortableHeader";
 
 const DEFAULT_LIMIT = 25;
 const SORT_DEFAULTS = { domain: "asc", priority: "desc", risk_score: "desc" };
@@ -100,34 +101,17 @@ function FilterSelect({ name, label, values, value, onChange }) {
   );
 }
 
-function SortableHeader({ field, sortBy, sortDir, onSort }) {
-  const active = sortBy === field;
-  const direction = sortDir === "asc" ? "↑" : "↓";
-  return (
-    <th aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
-      <button
-        type="button"
-        className="asset-sort-button"
-        onClick={() => onSort(field)}
-        aria-label={`Sort by ${SORT_LABELS[field]}${active ? `, currently ${sortDir === "asc" ? "ascending" : "descending"}` : ""}`}
-      >
-        {SORT_LABELS[field]}{active && <span aria-hidden="true"> {direction}</span>}
-      </button>
-    </th>
-  );
-}
-
 function AssetTable({ assets, returnQuery, sortBy, sortDir, onSort, historical = false }) {
   return (
     <div className="asset-table-wrap">
       <table className="asset-table">
         <thead>
           <tr>
-            <SortableHeader field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+            <SortableHeader field="domain" label={SORT_LABELS.domain} sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
             <th>Class</th><th>Network</th><th>HTTP</th>
             <th>Provider / ASN</th>
-            <SortableHeader field="priority" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-            <SortableHeader field="risk_score" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+            <SortableHeader field="priority" label={SORT_LABELS.priority} sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+            <SortableHeader field="risk_score" label={SORT_LABELS.risk_score} sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
             <th aria-label="Open asset" />
           </tr>
         </thead>
