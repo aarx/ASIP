@@ -199,7 +199,8 @@
 .ownership-divider { margin: 17px 0 15px; border: 0; border-top: 1px solid var(--asip-border); }
 .ownership-note { display: flex; gap: 9px; align-items: flex-start; color: var(--asip-text-muted); font-size: 10px; line-height: 1.5; }
 .ownership-note-marker { margin-top: 4px; width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: var(--asip-accent); }
-.overview-chart-canvas { width: 100%; min-height: 220px; min-width: 0; }
+.overview-chart-canvas { width: 100%; height: 220px; min-width: 0; }
+.overview-chart-canvas[data-testid="overview-asset-growth-chart"] { height: auto; min-height: 220px; }
 .overview-growth-plot { width: 100%; height: 180px; }
 .overview-growth-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px 12px; padding: 0 8px 4px; }
 .overview-growth-legend button { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 2px 0; background: transparent; color: var(--asip-text-muted); font: inherit; font-size: 10px; cursor: pointer; }
