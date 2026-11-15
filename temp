@@ -1,5 +1,55 @@
+cd ~/Desktop/Projects/ASIP
+
 sudo docker compose -p asip exec -T db \
-  psql -U asm -d asm_db -c \
-  "SELECT column_name FROM information_schema.columns
-   WHERE table_name='scans'
-   AND column_name IN ('runner_token','heartbeat_at');"
+  psql -U asm -d asm_db -c "
+SELECT
+    id,
+    domain,
+    is_known,
+    ownership_status,
+    scannable
+FROM domains
+WHERE is_known = TRUE
+ORDER BY domain;"
+
+
+sudo docker compose -p asip exec -T db \
+  psql -U asm -d asm_db -c "
+SELECT
+    ownership_status,
+    is_known,
+    scannable,
+    COUNT(*) AS total
+FROM domains
+GROUP BY ownership_status, is_known, scannable
+ORDER BY total DESC;"
+
+
+sudo docker compose -p asip exec -T db \
+  psql -U asm -d asm_db -c "
+SELECT table_name
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND (
+    table_name ILIKE '%seed%'
+    OR table_name ILIKE '%scope%'
+    OR table_name ILIKE '%domain%'
+  )
+ORDER BY table_name;"
+
+
+
+
+
+sudo docker compose -p asip exec -T db \
+  psql -U asm -d asm_db -c "
+SELECT
+    id,
+    domain,
+    is_known,
+    ownership_status,
+    scannable
+FROM domains
+WHERE domain = 'alico.com'
+   OR domain LIKE '%.alico.com'
+ORDER BY domain;"
