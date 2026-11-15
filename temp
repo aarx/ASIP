@@ -1,0 +1,34 @@
+cd ~/Desktop/Projects/ASIP || exit 1
+
+# Stop the application without deleting the database
+sudo docker compose -p asip stop backend mcp
+
+# Make sure PostgreSQL is running
+sudo docker compose -p asip up -d db
+
+# Apply all numbered migrations in order
+for file in backend/migrations/[0-9][0-9][0-9]_*.sql; do
+    echo "Applying: $file"
+
+    sudo docker compose -p asip exec -T db \
+        psql -v ON_ERROR_STOP=1 \
+        -U asm -d asm_db < "$file" || {
+            echo "FAILED: $file"
+            exit 1
+        }
+done
+
+# Verify the missing columns now exist
+sudo docker compose -p asip exec -T db \
+    psql -U asm -d asm_db -c \
+    "SELECT column_name
+     FROM information_schema.columns
+     WHERE table_name = 'scans'
+       AND column_name IN ('runner_token', 'heartbeat_at');"
+
+# Restart application services
+sudo docker compose -p asip up -d --no-build
+
+# Test database connectivity
+sudo docker compose -p asip exec -T backend \
+    python -c "from db import get_conn; c=get_conn(); print('DATABASE CONNECTION OK'); c.close()"
