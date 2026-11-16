@@ -91,7 +91,7 @@ curl -fsS http://localhost:8666/tools/summary
 
 ### Fresh empty volume
 
-The `db` service mounts `backend/asm_schema_post_guardrails-schema-only.sql` into PostgreSQL's `/docker-entrypoint-initdb.d`. PostgreSQL executes it once, and only when `asm_pgdata` is empty. The current schema already includes scan lifecycle, HTTP observation status, and ownership status introduced by migrations 001–003.
+The `db` service mounts `backend/asm_schema_post_guardrails-schema-only.sql` into PostgreSQL's `/docker-entrypoint-initdb.d`. PostgreSQL executes it once, and only when `asm_pgdata` is empty. The current schema includes scan lifecycle, HTTP observation status, ownership status, and the empty `active_scan_scopes` approval table.
 
 ```bash
 docker compose up -d db
@@ -114,7 +114,7 @@ Migrations 001 and 002 are transactional but not safely re-runnable; migration 0
 
 ### Explicitly approved optional migrations
 
-Some feature migrations are intentionally optional and may be applied out of numeric order only when the change owner has explicitly approved that migration. The supported optional path is deliberately narrow: `backend/optional_migrations.py` allowlists `015_add_capd_runs`, `016_add_capd_http_header_verify_operation`, and `017_add_capd_approval_consumptions`. Migration 014 (Findings Lifecycle) is not optional through this command and must remain unapplied for the CAPD release. Migration 016 requires the existing `active_scan_scopes.active_scan_scopes_testing_level` constraint and independently checks whether that constraint already permits `CAPD_HTTP_HEADER_VERIFY`. Migration 017 depends only on the existing `scans` and `domains` tables; it does not depend on 014, 015, or 016. For a CAPD Apache verification release, review and apply 016 before 017 so the operation permission exists before the single-use approval receipt table is used. Do not add ordinary sequential migrations to the optional allowlist.
+Some feature migrations are intentionally optional and may be applied out of numeric order only when the change owner has explicitly approved that migration. The supported optional path is deliberately narrow: `backend/optional_migrations.py` allowlists `015_add_capd_runs`, `016_add_capd_http_header_verify_operation`, `017_add_capd_approval_consumptions`, `018_add_brand_redirect_observations`, `019_add_brand_redirect_scope_level`, and `020_add_brand_redirect_campaign_policy`. Migration 014 (Findings Lifecycle) is not optional through this command and must remain unapplied for the CAPD release. Migration 016 requires the existing `active_scan_scopes.active_scan_scopes_testing_level` constraint and independently checks whether that constraint already permits `CAPD_HTTP_HEADER_VERIFY`. Migration 017 depends only on the existing `scans` and `domains` tables; it does not depend on 014, 015, or 016. Migration 018 adds only the isolated Brand Redirect Intelligence evidence table and references existing scans, domains, and scan membership. Migration 019 adds one operation-specific value to the existing scan-scope constraint without changing stored scope rows or other operation permissions. Migration 020 adds required campaign purpose, eligible discovery-source, and request-budget fields for Brand Redirect scopes and a request-budget termination state. For a CAPD Apache verification release, review and apply 016 before 017 so the operation permission exists before the single-use approval receipt table is used.
 
 The optional-migration ledger (`public.asip_optional_migration_ledger`) records only migrations applied by this mechanism. It records the stable migration ID, source filename, SHA-256 of the exact SQL file bytes, and PostgreSQL application timestamp. It does not backfill or claim that earlier migrations were applied through this runner. SQL and its receipt are committed in the same PostgreSQL transaction; an error rolls back both. An advisory transaction lock serializes concurrent optional-migration attempts.
 
@@ -137,6 +137,20 @@ Migration 017 can be reviewed with:
 ```bash
 docker compose -p asip exec -T backend \
   python3 /app/optional_migrations.py plan --migration 017_add_capd_approval_consumptions
+```
+
+Migration 018 can be reviewed with:
+
+```bash
+docker compose -p asip exec -T backend \
+  python3 /app/optional_migrations.py plan --migration 018_add_brand_redirect_observations
+```
+
+Migration 019 can be reviewed with:
+
+```bash
+docker compose -p asip exec -T backend \
+  python3 /app/optional_migrations.py plan --migration 019_add_brand_redirect_scope_level
 ```
 
 Review the exact SQL and obtain explicit change approval before applying:
@@ -163,11 +177,35 @@ docker compose -p asip exec -T backend \
     --approve-sha256 <sha256-from-reviewed-plan>
 ```
 
+For migration 018, obtain explicit database-change approval, review its plan and SQL, then apply its exact plan checksum:
+
+```bash
+docker compose -p asip exec -T backend \
+  python3 /app/optional_migrations.py apply --migration 018_add_brand_redirect_observations \
+    --approve-sha256 <sha256-from-reviewed-plan>
+```
+
+For migration 019, obtain explicit database-change approval and apply the exact checksum from its read-only plan:
+
+```bash
+docker compose -p asip exec -T backend \
+  python3 /app/optional_migrations.py apply --migration 019_add_brand_redirect_scope_level \
+    --approve-sha256 <sha256-from-reviewed-plan>
+```
+
 The exact checksum from the reviewed plan is required as the approval token; if the SQL changes between review and application, the command stops. Only IDs compiled into the optional allowlist are accepted. The runner refuses duplicate application, validates a recorded checksum, and rejects untracked pre-existing objects belonging to the selected migration. Never use this command to apply migration 014 or to write synthetic receipts for legacy migrations.
 
 After application, retain the printed receipt with the deployment record and independently verify the ledger checksum/timestamp and expected tables. If execution fails, PostgreSQL rolls back the schema changes and receipt together. Confirm that neither CAPD tables nor a receipt were left behind, correct the cause, rerun the read-only plan, and repeat the approval process. Do not manually edit/delete ledger rows or partially created schema. If a connection is lost during commit and outcome is uncertain, query the ledger and schema read-only before retrying; matching receipt means applied, no receipt and no CAPD objects means the transaction rolled back, and any other state requires operator investigation.
 
 ## Inventory, ownership, and authorization
+
+### Brand Redirect Intelligence
+
+Brand redirect monitoring uses the existing `active_scan_scopes` approval model with the dedicated `BRAND_REDIRECT_OBSERVATION` testing level. A valid campaign scope must include an operator-approved purpose, eligible discovery sources (`brand_tld` and/or `brand_pattern`), a request budget from 1 to 100,000 requests per scan, a domain boundary, expiry, and explicit exclusions. Configure it through the trusted local scope administration process; do not list individual discoveries. Candidate selection requires current scan membership, an eligible discovery-source record, campaign scope coverage, and no manual rejection. Incomplete legacy Brand Redirect scopes without campaign metadata fail closed. Zero or multiple active complete campaigns also fail closed. The pipeline stage is added only while exactly one active, unexpired complete campaign exists.
+
+After an eligible Candidate receives its initial request, redirect destinations do not need their own ownership or scope grant. Each destination still must pass the campaign's exclusions/manual-rejection checks, public-address/DNS-rebinding validation, web-port and protocol policy, and fresh campaign revalidation. Out-of-policy Location values are recorded but never requested. A thread-safe campaign-wide request budget is reserved immediately before every request. This scope level is not accepted by `ASIP_DEFAULT_SCAN_OPERATIONS` and does not grant general HTTP/TLS, technology, Nmap, or other active-scan authorization. The bounded observer uses GET, maximum three followed redirects, two global workers, one request per host, five-second connection timeout, ten-second absolute operation deadline, and at most 64 KiB of response content for title extraction.
+
+Apply migration 018 before deploying code that reads `brand_redirect_observations`, migration 019 before creating the new scope level on an existing database, then migration 020 before enabling a campaign. A fresh installation receives the scope level and campaign columns from the schema-only bootstrap; migration 020 is still required for the evidence request-budget termination state. These are additive schema changes; no existing campaign permissions are populated or broadened. Existing Brand Redirect scopes without the new metadata remain in storage but do not authorize requests. Existing `ASIP_BRAND_REDIRECT_TARGETS` values are ignored. Approval remains an operator-managed scope action; no administrative UI is added.
 
 `backend/seeds.txt` contains approved discovery roots. It is mounted read-only into the backend container, so edits are visible to the next orchestration run without rebuilding.
 

@@ -107,7 +107,7 @@ test("Brand Perimeter separates Candidate and External evidence from organizatio
   expect(screen.getByText("acme-reference.org")).toBeInTheDocument();
   expect(screen.getAllByText("Needs Verification").length).toBeGreaterThan(0);
   expect(screen.getByText("EXTERNAL")).toBeInTheDocument();
-  expect(screen.getByText("https://vendor.example/acme")).toBeInTheDocument();
+  expect(screen.getByText("→ https://vendor.example/acme")).toBeInTheDocument();
   expect(screen.getByText("Outside confirmed surface")).toBeInTheDocument();
   expect(screen.getByText("Potential brand misuse or lookalike domains")).toBeInTheDocument();
   expect(screen.getByText("Brand-related domains")).toBeInTheDocument();
@@ -185,6 +185,77 @@ test("Brand Perimeter has a truthful empty state", async () => {
 
   expect(await screen.findByText("No Brand Exposure assets match")).toBeInTheDocument();
   expect(screen.queryByText("No org. risk")).not.toBeInTheDocument();
+});
+
+test("Brand redirect evidence distinguishes a reported destination from a verified landing", async () => {
+  window.location.hash = "#/brand";
+  const observed = {
+    ...candidate,
+    http_observation_status: "UNKNOWN",
+    http_status: null,
+    final_url: null,
+    title: null,
+    brand_redirect_observation: {
+      evidence_scope: "CURRENT",
+      evidence_source: "BRAND_REDIRECT_INTELLIGENCE",
+      scan_id: 42,
+      operation_id: "op-42",
+      observed_at: "2026-10-01T12:00:00Z",
+      initial_http_status: 302,
+      reported_destination_url: "https://approved.example/landing",
+      verified_final_url: null,
+      observed_hops: [{ status: 302, reported_location: "/landing", reported_destination_url: "https://approved.example/landing", followed: false }],
+      completeness: "STOPPED_AT_AUTHORIZATION_BOUNDARY",
+    },
+  };
+  mockBrandCounts(brandResponse({ count: 1, assets: [observed] }));
+  render(<App />);
+
+  expect(await screen.findByText("Reported destination")).toBeInTheDocument();
+  expect(screen.getByText("→ https://approved.example/landing")).toBeInTheDocument();
+  expect(screen.queryByText("Verified final URL")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "HTTP details" }));
+  expect(screen.getByText(/CURRENT · BRAND_REDIRECT_INTELLIGENCE/)).toBeInTheDocument();
+  expect(screen.getByText(/Scan #42/)).toBeInTheDocument();
+  expect(screen.getByText(/Initial status: 302/)).toBeInTheDocument();
+  expect(screen.getByText(/STOPPED_AT_AUTHORIZATION_BOUNDARY/)).toBeInTheDocument();
+});
+
+test("Brand Exposure labels reused HTTP evidence historical and leaves unverified URLs unverified", async () => {
+  window.location.hash = "#/brand";
+  const historical = {
+    ...external,
+    brand_redirect_observation: {
+      evidence_scope: "HISTORICAL",
+      evidence_source: "HTTP_TLS_OBSERVATION",
+      scan_id: 39,
+      observed_at: "2026-09-01T12:00:00Z",
+      timestamp_basis: "SCAN_COMPLETION",
+      historical_url_unverified: "https://old.example/landing",
+      initial_http_status: 302,
+      completeness: "LEGACY_UNKNOWN",
+    },
+  };
+  mockBrandCounts(brandResponse({ count: 1, assets: [historical] }));
+  render(<App />);
+
+  expect(await screen.findByText("HISTORICAL")).toBeInTheDocument();
+  expect(screen.getByText("Historical URL (unverified)")).toBeInTheDocument();
+  expect(screen.getByText("→ https://old.example/landing")).toBeInTheDocument();
+  expect(screen.queryByText("Verified final URL")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "HTTP details" }));
+  expect(screen.getByText(/Scan #39/)).toBeInTheDocument();
+  expect(screen.getByText(/HTTP_TLS_OBSERVATION/)).toBeInTheDocument();
+});
+
+test("Brand Exposure shows Not assessed when neither current nor historical HTTP evidence exists", async () => {
+  window.location.hash = "#/brand";
+  mockBrandCounts(brandResponse({ count: 1, assets: [external] }));
+  render(<App />);
+
+  expect(await screen.findByText("NOT ASSESSED")).toBeInTheDocument();
+  expect(screen.getAllByText("Not assessed").length).toBeGreaterThan(0);
+  expect(screen.queryByRole("button", { name: "HTTP details" })).not.toBeInTheDocument();
 });
 
 test("Candidate detail keeps the Brand Perimeter return context and no canonical risk", async () => {

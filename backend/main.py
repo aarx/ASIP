@@ -5546,6 +5546,78 @@ def frontend_v2_brand_history_detail(domain_name: str):
     }
 
 
+def _brand_redirect_observation_payload(current, historical, http_history, domain):
+    selected = current or historical
+    if isinstance(selected, dict):
+        evidence = selected.get("evidence")
+        if isinstance(evidence, str):
+            try:
+                evidence = json.loads(evidence)
+            except (TypeError, ValueError):
+                evidence = None
+        if isinstance(evidence, dict):
+            return {
+                **evidence,
+                "originating_domain": evidence.get("originating_domain") or domain,
+                "scan_id": selected.get("scan_id"),
+                "operation_id": selected.get("operation_id"),
+                "observed_at": selected.get("observed_at") or evidence.get("observed_at"),
+                "evidence_source": selected.get("evidence_source") or "BRAND_REDIRECT_INTELLIGENCE",
+                "evidence_scope": "CURRENT" if current else "HISTORICAL",
+                "completeness": selected.get("completeness") or evidence.get("completeness"),
+                "timestamp_basis": "OBSERVATION",
+            }
+
+    if not isinstance(http_history, dict):
+        return None
+    raw_evidence = http_history.get("redirect_evidence")
+    redirect = _redirect_evidence_payload(
+        raw_evidence,
+        http_history.get("final_url"),
+        http_history.get("final_status"),
+    )
+    legacy = redirect.get("completion_status") == "LEGACY_UNKNOWN"
+    return {
+        "originating_domain": domain,
+        "origin_url": redirect.get("requested_url"),
+        "initial_http_status": http_history.get("http_status"),
+        "redirect_location": (
+            redirect.get("first_hop_location") if not legacy else None
+        ),
+        "observed_hops": redirect.get("observed_hops", []) if not legacy else [],
+        "last_reported_destination_url": (
+            redirect.get("last_observed_destination") if not legacy else None
+        ),
+        "reported_destination_url": (
+            redirect.get("first_hop_destination") if not legacy else None
+        ),
+        "verified_final_url": (
+            redirect.get("verified_terminal_url")
+            if redirect.get("completion_status") == "COMPLETE" else None
+        ),
+        "final_status": (
+            http_history.get("final_status")
+            if redirect.get("completion_status") == "COMPLETE" else None
+        ),
+        "historical_url_unverified": (
+            http_history.get("final_url") if legacy else None
+        ),
+        "historical_final_status_unverified": (
+            http_history.get("final_status") if legacy else None
+        ),
+        "page_title": http_history.get("title") or None,
+        "page_title_url": redirect.get("requested_url"),
+        "scan_id": http_history.get("scan_id"),
+        "operation_id": None,
+        "observed_at": http_history.get("observed_at"),
+        "timestamp_basis": http_history.get("timestamp_basis", "SCAN_COMPLETION"),
+        "evidence_source": "HTTP_TLS_OBSERVATION",
+        "evidence_scope": "HISTORICAL",
+        "http_observation_status": http_history.get("http_observation_status") or "UNKNOWN",
+        "completeness": redirect.get("completion_status", "LEGACY_UNKNOWN"),
+    }
+
+
 @app.get("/v2/brand-assets")
 def frontend_v2_brand_assets(
     page: int = 1,
@@ -5578,19 +5650,78 @@ def frontend_v2_brand_assets(
             ds.http_status, ds.final_url, ds.final_status, ds.title,
             STRING_AGG(DISTINCT src.source, ',' ORDER BY src.source),
             STRING_AGG(DISTINCT src.seed, ',' ORDER BY src.seed),
-            ds.http_redirect_evidence
+            ds.http_redirect_evidence,
+            br_current.payload,
+            br_history.payload,
+            http_history.payload
         FROM scan_results sr
         JOIN domains d ON d.id = sr.domain_id
         LEFT JOIN domain_states ds
           ON ds.domain_id = sr.domain_id AND ds.scan_id = sr.scan_id
         LEFT JOIN domain_sources src
           ON src.domain_id = sr.domain_id AND src.scan_id = sr.scan_id
+        LEFT JOIN LATERAL (
+            SELECT jsonb_build_object(
+                'operation_id', br.operation_id,
+                'scan_id', br.scan_id,
+                'observed_at', br.observed_at,
+                'evidence_source', br.evidence_source,
+                'completeness', br.completeness,
+                'evidence', br.evidence
+            ) AS payload
+            FROM brand_redirect_observations br
+            WHERE br.domain_id = sr.domain_id AND br.scan_id = sr.scan_id
+            ORDER BY br.observed_at DESC, br.id DESC
+            LIMIT 1
+        ) br_current ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT jsonb_build_object(
+                'operation_id', br.operation_id,
+                'scan_id', br.scan_id,
+                'observed_at', br.observed_at,
+                'evidence_source', br.evidence_source,
+                'completeness', br.completeness,
+                'evidence', br.evidence
+            ) AS payload
+            FROM brand_redirect_observations br
+            WHERE br.domain_id = sr.domain_id AND br.scan_id < sr.scan_id
+            ORDER BY br.scan_id DESC, br.observed_at DESC, br.id DESC
+            LIMIT 1
+        ) br_history ON br_current.payload IS NULL
+        LEFT JOIN LATERAL (
+            SELECT jsonb_build_object(
+                'scan_id', old_ds.scan_id,
+                'observed_at', COALESCE(old_scan.completed_at, old_scan.scan_time),
+                'timestamp_basis', 'SCAN_COMPLETION',
+                'evidence_source', 'HTTP_TLS_OBSERVATION',
+                'http_observation_status', old_ds.http_observation_status,
+                'http_status', old_ds.http_status,
+                'final_url', old_ds.final_url,
+                'final_status', old_ds.final_status,
+                'title', old_ds.title,
+                'redirect_evidence', old_ds.http_redirect_evidence
+            ) AS payload
+            FROM domain_states old_ds
+            JOIN scans old_scan ON old_scan.id = old_ds.scan_id
+            WHERE old_ds.domain_id = sr.domain_id
+              AND old_ds.scan_id < sr.scan_id
+              AND (
+                  COALESCE(old_ds.http_status, 0) > 0
+                  OR NULLIF(BTRIM(old_ds.final_url), '') IS NOT NULL
+                  OR NULLIF(BTRIM(old_ds.title), '') IS NOT NULL
+                  OR old_ds.http_redirect_evidence IS NOT NULL
+              )
+            ORDER BY old_ds.scan_id DESC, old_scan.scan_time DESC
+            LIMIT 1
+        ) http_history
+          ON br_current.payload IS NULL AND br_history.payload IS NULL
         WHERE sr.scan_id = %s
           AND ({reporting_class}) IN ('CANDIDATE', 'EXTERNAL')
         GROUP BY d.id, d.domain, d.ownership_status,
                  ds.ip, ds.has_ip, ds.http_observation_status,
                  ds.http_status, ds.final_url, ds.final_status, ds.title,
-                 ds.http_redirect_evidence
+                 ds.http_redirect_evidence, br_current.payload,
+                 br_history.payload, http_history.payload
         ORDER BY d.domain ASC, d.id ASC
     """, (scan_id,))
     rows = cur.fetchall()
@@ -5637,13 +5768,26 @@ def frontend_v2_brand_assets(
             "discovery_sources": row[10].split(",") if row[10] else [],
             "seeds": row[11].split(",") if row[11] else [],
             "risk": None,
+            "brand_redirect_observation": _brand_redirect_observation_payload(
+                row[13], row[14], row[15], row[1]
+            ),
         })
 
     assets.sort(key=lambda item: (item["domain"].casefold()))
     def sort_value(item):
+        observation = item.get("brand_redirect_observation") or {}
         value = item["domain"] if sort_by == "domain" else item.get(sort_by)
         if sort_by == "destination":
-            value = (item.get("redirect_evidence") or {}).get("first_hop_destination") or item.get("final_url")
+            value = (
+                observation.get("verified_final_url")
+                or observation.get("reported_destination_url")
+                or observation.get("last_reported_destination_url")
+                or observation.get("historical_url_unverified")
+                or (item.get("redirect_evidence") or {}).get("first_hop_destination")
+                or item.get("final_url")
+            )
+        elif sort_by == "title":
+            value = observation.get("page_title") or item.get("title")
         return value.casefold() if isinstance(value, str) else value
     present = [item for item in assets if sort_value(item) is not None]
     missing = [item for item in assets if sort_value(item) is None]

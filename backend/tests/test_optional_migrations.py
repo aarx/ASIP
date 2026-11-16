@@ -66,11 +66,18 @@ class OptionalMigrationPostgreSQLTests(unittest.TestCase):
                 cursor.execute("""
                     DROP TABLE IF EXISTS public.capd_results,
                         public.capd_runs, public.capd_approval_consumptions,
+                        public.brand_redirect_observations,
                         public.asip_optional_migration_ledger CASCADE
                 """)
                 cursor.execute("""
                     ALTER TABLE public.active_scan_scopes
                         DROP CONSTRAINT IF EXISTS active_scan_scopes_testing_level;
+                    ALTER TABLE public.active_scan_scopes
+                        DROP CONSTRAINT IF EXISTS active_scan_scopes_brand_campaign_policy;
+                    ALTER TABLE public.active_scan_scopes
+                        DROP COLUMN IF EXISTS monitoring_purpose,
+                        DROP COLUMN IF EXISTS eligible_discovery_sources,
+                        DROP COLUMN IF EXISTS max_requests_per_scan;
                     ALTER TABLE public.active_scan_scopes
                         ADD CONSTRAINT active_scan_scopes_testing_level
                         CHECK (testing_level IN (
@@ -351,6 +358,138 @@ class OptionalMigrationPostgreSQLTests(unittest.TestCase):
             self.assertIsNone(cursor.fetchone()[0])
             cursor.execute("SELECT to_regclass('public.asip_optional_migration_ledger')")
             self.assertIsNone(cursor.fetchone()[0])
+        connection.close()
+
+    def test_018_brand_redirect_migration_is_planable_and_additive(self):
+        connection = self.connect()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM scans")
+            scans_before = cursor.fetchone()[0]
+            cursor.execute("SELECT count(*) FROM domains")
+            domains_before = cursor.fetchone()[0]
+
+        migration = optional_migrations.load_migration(
+            "018_add_brand_redirect_observations"
+        )
+        planned = optional_migrations.plan(connection, migration.migration_id)
+        self.assertEqual(planned["state"], "PENDING")
+        self.assertEqual(planned["sha256"], migration.checksum)
+        connection.rollback()
+
+        result = optional_migrations.apply(
+            connection, migration.migration_id,
+            approval_checksum=migration.checksum,
+        )
+        self.assertEqual(result["state"], "APPLIED")
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                 WHERE table_schema='public'
+                   AND table_name='brand_redirect_observations'
+            """)
+            columns = {row[0] for row in cursor.fetchall()}
+            self.assertTrue({
+                "scan_id", "domain_id", "operation_id", "observed_at",
+                "evidence_source", "completeness", "evidence",
+            }.issubset(columns))
+            cursor.execute("SELECT count(*) FROM scans")
+            self.assertEqual(cursor.fetchone()[0], scans_before)
+            cursor.execute("SELECT count(*) FROM domains")
+            self.assertEqual(cursor.fetchone()[0], domains_before)
+        connection.close()
+
+    def test_019_brand_redirect_scope_level_extends_existing_constraint(self):
+        connection = self.connect()
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    ALTER TABLE public.active_scan_scopes
+                        DROP CONSTRAINT active_scan_scopes_testing_level;
+                    ALTER TABLE public.active_scan_scopes
+                        ADD CONSTRAINT active_scan_scopes_testing_level CHECK (
+                            testing_level IN (
+                                'TECHNOLOGY_HTTP', 'PORT_SCAN', 'ADHOC_CHECK',
+                                'HTTP_TLS_OBSERVATION', 'DNS_SECURITY',
+                                'ASN_METADATA', 'CAPD_HTTP_HEADER_VERIFY'
+                            )
+                        )
+                """)
+        migration = optional_migrations.load_migration(
+            "019_add_brand_redirect_scope_level"
+        )
+        planned = optional_migrations.plan(connection, migration.migration_id)
+        self.assertEqual(planned["state"], "PENDING")
+        connection.rollback()
+        result = optional_migrations.apply(
+            connection, migration.migration_id,
+            approval_checksum=migration.checksum,
+        )
+        self.assertEqual(result["state"], "APPLIED")
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT pg_get_constraintdef(oid)
+                  FROM pg_constraint
+                 WHERE conrelid='public.active_scan_scopes'::regclass
+                   AND conname='active_scan_scopes_testing_level'
+            """)
+            definition = cursor.fetchone()[0]
+        for value in (
+            "TECHNOLOGY_HTTP", "PORT_SCAN", "HTTP_TLS_OBSERVATION",
+            "DNS_SECURITY", "ASN_METADATA", "CAPD_HTTP_HEADER_VERIFY",
+            "BRAND_REDIRECT_OBSERVATION",
+        ):
+            self.assertIn(value, definition)
+        connection.close()
+
+    def test_020_campaign_policy_is_additive_and_legacy_scopes_fail_closed(self):
+        connection = self.connect()
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    ALTER TABLE public.active_scan_scopes
+                        ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'ACTIVE'
+                """)
+        for migration_id in (
+            "018_add_brand_redirect_observations",
+            "019_add_brand_redirect_scope_level",
+        ):
+            migration = optional_migrations.load_migration(migration_id)
+            optional_migrations.apply(
+                connection, migration_id, approval_checksum=migration.checksum,
+            )
+        migration = optional_migrations.load_migration(
+            "020_add_brand_redirect_campaign_policy"
+        )
+        planned = optional_migrations.plan(connection, migration.migration_id)
+        self.assertEqual(planned["state"], "PENDING")
+        connection.rollback()
+        optional_migrations.apply(
+            connection, migration.migration_id,
+            approval_checksum=migration.checksum,
+        )
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                 WHERE table_schema='public' AND table_name='active_scan_scopes'
+            """)
+            columns = {row[0] for row in cursor.fetchall()}
+            self.assertTrue({
+                "monitoring_purpose", "eligible_discovery_sources",
+                "max_requests_per_scan",
+            }.issubset(columns))
+            cursor.execute("""
+                SELECT pg_get_constraintdef(oid)
+                  FROM pg_constraint
+                 WHERE conrelid='public.brand_redirect_observations'::regclass
+                   AND conname='brand_redirect_observations_completeness_check'
+            """)
+            self.assertIn("REQUEST_BUDGET_EXHAUSTED", cursor.fetchone()[0])
+            cursor.execute("""
+                SELECT convalidated FROM pg_constraint
+                 WHERE conrelid='public.active_scan_scopes'::regclass
+                   AND conname='active_scan_scopes_brand_campaign_policy'
+            """)
+            self.assertFalse(cursor.fetchone()[0])
         connection.close()
 
 

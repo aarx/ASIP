@@ -16,6 +16,7 @@ from authorization_policy import (
     default_operation_enabled,
     normalize_dns_security_target_ids,
 )
+from brand_redirect_intelligence import optional_pipeline_stage
 from worker_outcome import RETRYABLE_INCOMPLETE_EXIT_CODE
 from scan_diagnostics import (
     extract_worker_summary,
@@ -793,6 +794,14 @@ def run_pipeline(dns_security_target_ids=None):
             # FINAL
             ("Risk Scoring", f"python -u risk_worker.py {scan_id}")
         ]
+
+        # Brand redirect monitoring has its own exact-origin permission list.
+        # It is intentionally independent of general HTTP/TLS authorization.
+        brand_stage = optional_pipeline_stage(scan_id)
+        if brand_stage:
+            insertion = next(i for i, item in enumerate(pipeline)
+                             if item[0] == "HTTP/TLS Observation") + 1
+            pipeline.insert(insertion, brand_stage)
 
         # DNS Security is absent unless the centralized process operation
         # policy enables it. A scan-row target list can only narrow selection.

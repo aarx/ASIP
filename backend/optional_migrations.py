@@ -3,7 +3,7 @@
 Only explicitly allowlisted optional migrations are supported here.
 Sequential historical migrations remain governed by the operator procedure
 in docs/OPERATIONS.md.
-"""
+                """
 
 import argparse
 import hashlib
@@ -23,11 +23,23 @@ OPTIONAL_MIGRATIONS = {
         MIGRATION_DIR / "016_add_capd_http_header_verify_operation.sql"
     ),
     "017_add_capd_approval_consumptions": MIGRATION_DIR / "017_add_capd_approval_consumptions.sql",
+    "018_add_brand_redirect_observations": (
+        MIGRATION_DIR / "018_add_brand_redirect_observations.sql"
+    ),
+    "019_add_brand_redirect_scope_level": (
+        MIGRATION_DIR / "019_add_brand_redirect_scope_level.sql"
+    ),
+    "020_add_brand_redirect_campaign_policy": (
+        MIGRATION_DIR / "020_add_brand_redirect_campaign_policy.sql"
+    ),
 }
 MIGRATION_OBJECTS = {
     "015_add_capd_runs": ("public.capd_runs", "public.capd_results"),
     "017_add_capd_approval_consumptions": (
         "public.capd_approval_consumptions",
+    ),
+    "018_add_brand_redirect_observations": (
+        "public.brand_redirect_observations",
     ),
 }
 LEDGER = "public.asip_optional_migration_ledger"
@@ -127,6 +139,35 @@ def _migration_objects(cursor, migration_id):
                 "Migration 016 prerequisite testing-level constraint is absent"
             )
         return ("CAPD_HTTP_HEADER_VERIFY" in row[0],)
+
+    if migration_id == "019_add_brand_redirect_scope_level":
+        cursor.execute(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conrelid=%s::regclass AND conname=%s",
+            ("public.active_scan_scopes", "active_scan_scopes_testing_level"),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise OptionalMigrationError(
+                "Migration 019 prerequisite testing-level constraint is absent"
+            )
+        return ("BRAND_REDIRECT_OBSERVATION" in row[0],)
+
+    if migration_id == "020_add_brand_redirect_campaign_policy":
+        cursor.execute("SELECT to_regclass(%s)", ("public.brand_redirect_observations",))
+        if cursor.fetchone()[0] is None:
+            raise OptionalMigrationError(
+                "Migration 020 prerequisite brand_redirect_observations is absent; apply 018 first"
+            )
+        cursor.execute("""
+            SELECT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                     WHERE conrelid='public.brand_redirect_observations'::regclass
+                       AND conname='brand_redirect_observations_completeness_check'
+                       AND pg_get_constraintdef(oid) LIKE '%REQUEST_BUDGET_EXHAUSTED%'
+                )
+        """)
+        return cursor.fetchone()
 
     objects = MIGRATION_OBJECTS[migration_id]
     cursor.execute(
