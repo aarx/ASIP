@@ -22,6 +22,9 @@ SCOPE_TESTING_LEVELS = frozenset({
 DEFAULT_SCAN_OPERATION_LEVELS = SCOPE_TESTING_LEVELS - {
     "BRAND_REDIRECT_OBSERVATION",
 }
+CONFIGURABLE_SCAN_OPERATION_LEVELS = (
+    DEFAULT_SCAN_OPERATION_LEVELS | {"BRAND_REDIRECT_OBSERVATION"}
+)
 DEFAULT_SCAN_OPERATIONS_ENV = "ASIP_DEFAULT_SCAN_OPERATIONS"
 MAX_DNS_SECURITY_RUN_TARGETS = 3
 
@@ -191,7 +194,10 @@ def configured_scan_operations(value=None):
         return frozenset()
     entries = value.split(",")
     normalized = [entry.strip().upper() for entry in entries]
-    if not normalized or any(not item or item not in DEFAULT_SCAN_OPERATION_LEVELS for item in normalized):
+    if not normalized or any(
+        not item or item not in CONFIGURABLE_SCAN_OPERATION_LEVELS
+        for item in normalized
+    ):
         return frozenset()
     return frozenset(normalized)
 
@@ -236,6 +242,10 @@ def is_authorized(
     if trusted_domains is None or not is_within_trusted_boundary(domain, trusted_domains):
         return False
     normalized_level = str(testing_level or "").strip().upper()
+    # Brand redirect observation uses its own source-provenance and public-web
+    # policy. It must never inherit the broader known/scannable-host grant.
+    if normalized_level == "BRAND_REDIRECT_OBSERVATION":
+        return False
     if not default_operation_enabled(normalized_level):
         return False
     if (
@@ -294,6 +304,10 @@ def default_operation_policy_sql(testing_level):
     level = str(testing_level or "").strip().upper()
     if level not in SCOPE_TESTING_LEVELS:
         raise ScopePolicyError("unsupported scope testing level")
+    # The deployment operation flag schedules the dedicated provenance-aware
+    # observer; it is never a grant through generic active-scan SQL.
+    if level == "BRAND_REDIRECT_OBSERVATION":
+        return "FALSE"
     return "TRUE" if default_operation_enabled(level) else "FALSE"
 
 
