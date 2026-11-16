@@ -1,4 +1,4 @@
-"""Execute one explicitly approved Brand Redirect monitoring campaign."""
+"""Run bounded redirect observations for provenance-linked Candidates."""
 
 import json
 import logging
@@ -8,8 +8,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
-from authorization_policy import SCOPE_STATUS_ACTIVE
+from authorization_policy import default_operation_enabled
 from brand_redirect_intelligence import (
+    BRAND_DISCOVERY_SOURCES,
     BRAND_REDIRECT_SCOPE,
     EVIDENCE_SOURCE,
     MAX_CONCURRENCY,
@@ -18,116 +19,91 @@ from brand_redirect_intelligence import (
     observe_redirect_chain,
 )
 from db import get_conn, require_running_scan
-from ownership import normalize_hostname, reporting_asset_class_sql
+from ownership import normalize_hostname
 
 
 logger = logging.getLogger("brand_redirect_intelligence")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
-_CAMPAIGN_FIELDS = """
-    NULLIF(BTRIM(scope.monitoring_purpose), '') IS NOT NULL
-    AND COALESCE(cardinality(scope.eligible_discovery_sources), 0) > 0
-    AND scope.eligible_discovery_sources <@ ARRAY['brand_tld', 'brand_pattern']::text[]
-    AND scope.max_requests_per_scan BETWEEN 1 AND 100000
-"""
-
-
-def _active_campaigns(cur):
-    cur.execute(f"""
-        SELECT scope.id, scope.scope_domain, scope.include_subdomains,
-               scope.excluded_domains, scope.eligible_discovery_sources,
-               scope.max_requests_per_scan, scope.monitoring_purpose
-          FROM active_scan_scopes scope
-         WHERE scope.testing_level = %s
-           AND scope.status = %s
-           AND (scope.expires_at IS NULL OR scope.expires_at > CURRENT_TIMESTAMP)
-           AND ({_CAMPAIGN_FIELDS})
-         ORDER BY scope.id
-         LIMIT 2
-    """, (BRAND_REDIRECT_SCOPE, SCOPE_STATUS_ACTIVE))
-    return cur.fetchall()
-
-
-def select_targets(scan_id, *, include_campaign=False):
-    """Select Candidates by campaign scope and configured discovery sources.
-
-    An incomplete legacy Brand Redirect scope is not a campaign and grants no
-    requests. Multiple active campaigns fail closed until orchestration can
-    account for their separate budgets without ambiguity.
+def _exclusion_sql(domain_expression):
+    """Keep legacy explicit campaign exclusions as deny-only rules."""
+    canonical = f"LOWER(TRIM(TRAILING '.' FROM {domain_expression}))"
+    return f"""
+        EXISTS (
+            SELECT 1
+              FROM active_scan_scopes scope_block
+              CROSS JOIN LATERAL unnest(scope_block.excluded_domains)
+                    AS excluded(domain)
+             WHERE scope_block.testing_level = '{BRAND_REDIRECT_SCOPE}'
+               AND scope_block.status = 'ACTIVE'
+               AND (scope_block.expires_at IS NULL
+                    OR scope_block.expires_at > CURRENT_TIMESTAMP)
+               AND (
+                    {canonical} = LOWER(TRIM(TRAILING '.' FROM excluded.domain))
+                    OR RIGHT(
+                        {canonical},
+                        LENGTH(LOWER(TRIM(TRAILING '.' FROM excluded.domain))) + 1
+                    ) = '.' || LOWER(TRIM(TRAILING '.' FROM excluded.domain))
+               )
+        )
     """
+
+
+def select_targets(scan_id):
+    """Select only current-scan Candidates with brand discovery provenance.
+
+    ``domain_sources.seed`` records which configured discovery input produced
+    each result. Database trusted seeds are not joined and do not become
+    discovery inputs. Brand TLD/pattern provenance also permits related
+    lookalikes outside the seed's DNS suffix.
+    """
+    if not default_operation_enabled(BRAND_REDIRECT_SCOPE):
+        return []
+
     conn = get_conn()
     try:
         cur = conn.cursor()
         require_running_scan(cur, scan_id)
-        campaigns = _active_campaigns(cur)
-        if len(campaigns) != 1:
-            conn.rollback()
-            return ([], None) if include_campaign else []
-        campaign = campaigns[0]
-        campaign_id, _root, _subs, exclusions, sources, request_budget, _purpose = campaign
-        classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
         cur.execute(f"""
-            SELECT DISTINCT d.id, d.domain
+            SELECT d.id, d.domain,
+                   array_agg(DISTINCT source.source ORDER BY source.source),
+                   array_agg(DISTINCT BTRIM(source.seed) ORDER BY BTRIM(source.seed))
               FROM scan_results sr
               JOIN domains d ON d.id = sr.domain_id
-              JOIN active_scan_scopes scope ON scope.id = %s
+              JOIN domain_sources source
+                ON source.scan_id = sr.scan_id
+               AND source.domain_id = sr.domain_id
              WHERE sr.scan_id = %s
-               AND ({classification}) = 'CANDIDATE'
+               AND d.ownership_status = 'CANDIDATE'
                AND NOT COALESCE(
                    'manually rejected' = ANY(d.confidence_reasons), FALSE
                )
-               AND scope.testing_level = %s
-               AND scope.status = %s
-               AND (scope.expires_at IS NULL OR scope.expires_at > CURRENT_TIMESTAMP)
-               AND ({_CAMPAIGN_FIELDS})
-               AND NOT EXISTS (
-                    SELECT 1 FROM unnest(scope.excluded_domains) excluded(domain)
-                     WHERE LOWER(TRIM(TRAILING '.' FROM d.domain))
-                               = LOWER(TRIM(TRAILING '.' FROM excluded.domain))
-                        OR RIGHT(LOWER(TRIM(TRAILING '.' FROM d.domain)),
-                                 LENGTH(LOWER(TRIM(TRAILING '.' FROM excluded.domain))) + 1)
-                               = '.' || LOWER(TRIM(TRAILING '.' FROM excluded.domain))
-               )
-               AND NOT EXISTS (
-                    SELECT 1 FROM active_scan_scopes revoked
-                     WHERE revoked.testing_level = %s
-                       AND revoked.status = 'REVOKED'
-                       AND (
-                            LOWER(TRIM(TRAILING '.' FROM d.domain)) = revoked.scope_domain
-                            OR (revoked.include_subdomains AND RIGHT(
-                                LOWER(TRIM(TRAILING '.' FROM d.domain)),
-                                LENGTH(revoked.scope_domain) + 1
-                            ) = '.' || revoked.scope_domain)
-                       )
-               )
-               AND EXISTS (
-                    SELECT 1 FROM domain_sources source
-                     WHERE source.scan_id = sr.scan_id
-                       AND source.domain_id = sr.domain_id
-                       AND source.source = ANY(scope.eligible_discovery_sources)
-                       AND LOWER(TRIM(TRAILING '.' FROM BTRIM(source.seed)))
-                           = scope.scope_domain
-               )
+               AND source.source = ANY(%s)
+               AND NULLIF(BTRIM(source.seed), '') IS NOT NULL
+               AND NOT ({_exclusion_sql('d.domain')})
+             GROUP BY d.id, d.domain
              ORDER BY d.id
              LIMIT %s
-        """, (campaign_id, scan_id, BRAND_REDIRECT_SCOPE,
-              SCOPE_STATUS_ACTIVE, BRAND_REDIRECT_SCOPE, request_budget))
+        """, (int(scan_id), list(BRAND_DISCOVERY_SOURCES), MAX_REQUESTS_PER_SCAN))
         selected = []
-        for domain_id, domain in cur.fetchall():
+        for domain_id, domain, sources, seeds in cur.fetchall():
             hostname = normalize_hostname(domain, require_fqdn=True)
             if hostname:
-                selected.append((domain_id, domain, f"https://{hostname}/"))
+                selected.append((
+                    domain_id, domain, f"https://{hostname}/",
+                    list(sources or ()), list(seeds or ()),
+                ))
         conn.rollback()
-        return (selected, campaign) if include_campaign else selected
+        return selected
     finally:
         conn.close()
 
 
 class _RequestBudget:
-    """Thread-safe campaign-wide request counter for one scan operation."""
+    """Thread-safe deployment-wide request counter for one scan stage."""
 
-    def __init__(self, limit):
+    def __init__(self, limit=MAX_REQUESTS_PER_SCAN):
         self.limit = min(MAX_REQUESTS_PER_SCAN, max(0, int(limit)))
         self.used = 0
         self.lock = threading.Lock()
@@ -135,25 +111,23 @@ class _RequestBudget:
     def reserve(self):
         with self.lock:
             if self.used >= self.limit:
-                raise RequestBudgetExceeded("campaign request budget exhausted")
+                raise RequestBudgetExceeded("brand redirect request budget exhausted")
             self.used += 1
 
 
-def _run_target(row, scan_id, operation_id, campaign, request_budget):
-    domain_id, domain, initial_url = row
-    campaign_id, campaign_root, _subs, _excluded, sources, request_limit, purpose = campaign
+def _run_target(row, scan_id, operation_id, request_budget):
+    domain_id, domain, initial_url, discovery_sources, discovery_seeds = row
     conn = get_conn()
     try:
         cur = conn.cursor()
-        candidate_class = reporting_asset_class_sql(
-            "candidate.domain", "candidate.ownership_status"
-        )
-
         def authorize(origin):
-            # Redirect destinations are not required to be owned or separately
-            # scoped. They remain subject to the approved campaign exclusions,
-            # explicit manual rejection, current Candidate grant, and the
-            # observer's independent URL/IP safety checks.
+            # Redirect destinations need no ownership or DNS-suffix grant.
+            # Each request still rechecks the enabled operation, the current
+            # Candidate's scan provenance, explicit exclusions, and manual
+            # rejections. IP and URL safety are independently enforced by the
+            # observer immediately before connecting.
+            if not default_operation_enabled(BRAND_REDIRECT_SCOPE):
+                return False
             try:
                 parsed = urlsplit(origin)
                 if parsed.scheme not in {"http", "https"} or parsed.port not in (
@@ -165,46 +139,26 @@ def _run_target(row, scan_id, operation_id, campaign, request_budget):
                 return False
             if target_host is None:
                 return False
+
             cur.execute(f"""
                 SELECT 1
                   FROM scans scan
                   JOIN scan_results sr
                     ON sr.scan_id = scan.id AND sr.domain_id = %s
                   JOIN domains candidate ON candidate.id = sr.domain_id
-                  JOIN active_scan_scopes scope ON scope.id = %s
                  WHERE scan.id = %s AND scan.status = 'RUNNING'
-                   AND ({candidate_class}) = 'CANDIDATE'
+                   AND candidate.ownership_status = 'CANDIDATE'
                    AND NOT COALESCE(
                        'manually rejected' = ANY(candidate.confidence_reasons), FALSE
                    )
-                   AND scope.testing_level = %s AND scope.status = %s
-                   AND (scope.expires_at IS NULL OR scope.expires_at > CURRENT_TIMESTAMP)
-                   AND ({_CAMPAIGN_FIELDS})
                    AND EXISTS (
                         SELECT 1 FROM domain_sources source
                          WHERE source.scan_id = sr.scan_id
                            AND source.domain_id = sr.domain_id
-                           AND source.source = ANY(scope.eligible_discovery_sources)
-                           AND LOWER(TRIM(TRAILING '.' FROM BTRIM(source.seed)))
-                               = scope.scope_domain
+                           AND source.source = ANY(%s)
+                           AND NULLIF(BTRIM(source.seed), '') IS NOT NULL
                    )
-                   AND NOT EXISTS (
-                        SELECT 1 FROM unnest(scope.excluded_domains) excluded(domain)
-                         WHERE LOWER(TRIM(TRAILING '.' FROM excluded.domain)) = %s
-                            OR RIGHT(%s, LENGTH(LOWER(TRIM(TRAILING '.' FROM excluded.domain))) + 1)
-                               = '.' || LOWER(TRIM(TRAILING '.' FROM excluded.domain))
-                   )
-                   AND NOT EXISTS (
-                        SELECT 1 FROM active_scan_scopes revoked
-                         WHERE revoked.testing_level = %s
-                           AND revoked.status = 'REVOKED'
-                           AND (
-                                %s = revoked.scope_domain
-                                OR (revoked.include_subdomains AND RIGHT(
-                                    %s, LENGTH(revoked.scope_domain) + 1
-                                ) = '.' || revoked.scope_domain)
-                           )
-                   )
+                   AND NOT ({_exclusion_sql('%s')})
                    AND NOT EXISTS (
                        SELECT 1 FROM domains rejected_destination
                         WHERE LOWER(TRIM(TRAILING '.' FROM rejected_destination.domain)) = %s
@@ -214,9 +168,10 @@ def _run_target(row, scan_id, operation_id, campaign, request_budget):
                           )
                    )
                  LIMIT 1
-            """, (domain_id, campaign_id, scan_id, BRAND_REDIRECT_SCOPE,
-                  SCOPE_STATUS_ACTIVE, target_host, target_host, BRAND_REDIRECT_SCOPE,
-                  target_host, target_host, target_host))
+            """, (
+                domain_id, int(scan_id), list(BRAND_DISCOVERY_SOURCES),
+                target_host, target_host, target_host,
+            ))
             return cur.fetchone() is not None
 
         evidence = observe_redirect_chain(
@@ -228,11 +183,10 @@ def _run_target(row, scan_id, operation_id, campaign, request_budget):
             on_request=request_budget.reserve,
         )
         evidence.update({
-            "campaign_id": campaign_id,
-            "campaign_scope": campaign_root,
-            "campaign_purpose": purpose,
-            "eligible_discovery_sources": list(sources or ()),
-            "campaign_request_budget": int(request_limit),
+            "monitoring_policy": "deployment_default_brand_provenance",
+            "discovery_sources": discovery_sources,
+            "discovery_seeds": discovery_seeds,
+            "request_budget": MAX_REQUESTS_PER_SCAN,
         })
         require_running_scan(cur, scan_id)
         cur.execute("""
@@ -254,39 +208,38 @@ def _run_target(row, scan_id, operation_id, campaign, request_budget):
 
 
 def run(scan_id):
-    rows, campaign = select_targets(scan_id, include_campaign=True)
     operation_id = uuid.uuid4()
-    if campaign is None:
+    if not default_operation_enabled(BRAND_REDIRECT_SCOPE):
         return {
             "scan_id": int(scan_id), "operation_id": str(operation_id),
             "selected": 0, "completed": 0,
-            "disabled_reason": "no single complete, active brand-monitoring campaign is configured",
+            "disabled_reason": "deployment operation policy does not enable brand redirect observation",
         }
-    campaign_budget = int(campaign[5])
+
+    rows = select_targets(scan_id)
     if not rows:
         return {
             "scan_id": int(scan_id), "operation_id": str(operation_id),
             "selected": 0, "completed": 0,
-            "request_budget": campaign_budget,
-            "disabled_reason": "no current Candidate members match the campaign discovery sources and scope",
+            "request_budget": MAX_REQUESTS_PER_SCAN,
+            "disabled_reason": "no current Candidate members have brand_tld or brand_pattern provenance",
         }
 
-    request_budget = _RequestBudget(campaign_budget)
+    request_budget = _RequestBudget()
     with ThreadPoolExecutor(
         max_workers=MAX_CONCURRENCY,
         thread_name_prefix="brand-redirect",
     ) as executor:
         states = list(executor.map(
-            lambda row: _run_target(
-                row, scan_id, operation_id, campaign, request_budget
-            ), rows
+            lambda row: _run_target(row, scan_id, operation_id, request_budget),
+            rows,
         ))
     counts = {state: states.count(state) for state in sorted(set(states))}
     summary = {
         "scan_id": int(scan_id), "operation_id": str(operation_id),
         "selected": len(rows), "completed": len(states),
         "concurrency_limit": MAX_CONCURRENCY,
-        "request_budget": campaign_budget,
+        "request_budget": MAX_REQUESTS_PER_SCAN,
         "requests_attempted": request_budget.used,
         "completeness": counts,
     }

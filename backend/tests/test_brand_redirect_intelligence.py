@@ -17,6 +17,7 @@ import brand_redirect_worker as worker  # noqa: E402
 import db  # noqa: E402
 from authorization_policy import (  # noqa: E402
     ScopeApproval,
+    DEFAULT_SCAN_OPERATION_LEVELS,
     active_scan_authorization_sql,
     active_scope_coverage_sql,
     configured_scan_operations,
@@ -28,106 +29,156 @@ from authorization_policy import (  # noqa: E402
 
 
 class BrandRedirectConfigurationTests(unittest.TestCase):
-    def test_fresh_schema_bootstrap_includes_scope_table_and_redirect_level(self):
+    def test_fresh_install_initializes_scope_and_brand_migrations(self):
         schema = (BACKEND / "asm_schema_post_guardrails-schema-only.sql").read_text(
             encoding="utf-8"
         )
         self.assertIn("CREATE TABLE public.active_scan_scopes", schema)
         self.assertIn("'BRAND_REDIRECT_OBSERVATION'", schema)
+        compose = (BACKEND.parent / "docker-compose.yml").read_text(encoding="utf-8")
+        expected_operations = (
+            "HTTP_TLS_OBSERVATION,TECHNOLOGY_HTTP,PORT_SCAN,DNS_SECURITY,"
+            "BRAND_REDIRECT_OBSERVATION"
+        )
+        self.assertIn(expected_operations, compose)
+        for migration in (
+            "018_add_brand_redirect_observations.sql",
+            "019_add_brand_redirect_scope_level.sql",
+            "020_add_brand_redirect_campaign_policy.sql",
+        ):
+            self.assertIn(migration, compose)
+        migration_020 = (BACKEND / "migrations/020_add_brand_redirect_campaign_policy.sql").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("REQUEST_BUDGET_EXHAUSTED", migration_020)
 
-    def test_pipeline_stage_requires_a_live_scope_and_ignores_legacy_origin_setting(self):
-        cursor = mock.Mock()
-        cursor.fetchone.return_value = (0,)
-        connection = mock.Mock()
-        connection.cursor.return_value = cursor
-        with mock.patch.object(db, "get_conn", return_value=connection), \
-             mock.patch.dict("os.environ", {"ASIP_BRAND_REDIRECT_TARGETS": "https://brand.example"}):
-            self.assertIsNone(bri.optional_pipeline_stage(19))
-        cursor.fetchone.return_value = (1,)
-        with mock.patch.object(db, "get_conn", return_value=connection):
+    def test_pipeline_stage_uses_the_regular_deployment_operation_allowlist(self):
+        with mock.patch.dict("os.environ", {
+            "ASIP_DEFAULT_SCAN_OPERATIONS": (
+                "HTTP_TLS_OBSERVATION,TECHNOLOGY_HTTP,PORT_SCAN,DNS_SECURITY,"
+                "BRAND_REDIRECT_OBSERVATION"
+            ),
+        }, clear=True):
             self.assertEqual(bri.optional_pipeline_stage(19), (
                 "Brand Redirect Intelligence",
                 "python -u brand_redirect_worker.py 19",
             ))
-        self.assertEqual(cursor.execute.call_args.args[1], (bri.BRAND_REDIRECT_SCOPE,))
+        with mock.patch.dict("os.environ", {
+            "ASIP_DEFAULT_SCAN_OPERATIONS": (
+                "HTTP_TLS_OBSERVATION,TECHNOLOGY_HTTP,PORT_SCAN,DNS_SECURITY"
+            ),
+        }, clear=True):
+            self.assertIsNone(bri.optional_pipeline_stage(19))
 
-    def test_campaign_seed_provenance_selects_thousands_without_individual_entries(self):
-        domains = [(index, f"candidate-{index}.lookalike.test")
+    def test_brand_provenance_selects_thousands_without_campaign_or_allowlist(self):
+        domains = [(index, f"candidate-{index}.lookalike.test", ["brand_tld"], ["abc.com"])
                    for index in range(1, 2001)]
         cursor = mock.Mock()
-        cursor.fetchall.side_effect = [[(
-            77, "example.com", True, [], ["brand_tld", "brand_pattern"], 2000,
-            "Brand abuse monitoring",
-        )], domains]
+        cursor.fetchall.return_value = domains
         connection = mock.Mock()
         connection.cursor.return_value = cursor
         with mock.patch.object(worker, "get_conn", return_value=connection), \
-             mock.patch.object(worker, "require_running_scan"):
+             mock.patch.object(worker, "require_running_scan"), \
+             mock.patch.object(worker, "default_operation_enabled", return_value=True):
             selected = worker.select_targets(24)
         self.assertEqual(len(selected), 2000)
-        self.assertEqual(selected[0], (1, "candidate-1.lookalike.test", "https://candidate-1.lookalike.test/"))
-        candidate_sql = cursor.execute.call_args_list[1].args[0]
-        self.assertIn("scope.eligible_discovery_sources", candidate_sql)
-        self.assertIn("source.source = ANY(scope.eligible_discovery_sources)", candidate_sql)
-        self.assertIn("LOWER(TRIM(TRAILING '.' FROM BTRIM(source.seed)))", candidate_sql)
-        self.assertIn("= scope.scope_domain", candidate_sql)
-        self.assertNotIn("d.domain)) = scope.scope_domain", candidate_sql)
+        self.assertEqual(selected[0], (
+            1, "candidate-1.lookalike.test", "https://candidate-1.lookalike.test/",
+            ["brand_tld"], ["abc.com"],
+        ))
+        candidate_sql, params = cursor.execute.call_args.args
+        self.assertIn("source.source = ANY(%s)", candidate_sql)
+        self.assertIn("source.scan_id = sr.scan_id", candidate_sql)
+        self.assertIn("source.domain_id = sr.domain_id", candidate_sql)
+        self.assertIn("NULLIF(BTRIM(source.seed), '') IS NOT NULL", candidate_sql)
         self.assertIn("manually rejected", candidate_sql)
         self.assertIn("= 'CANDIDATE'", candidate_sql)
         self.assertNotIn("scannable", candidate_sql.lower())
-        self.assertEqual(cursor.execute.call_count, 2)
+        self.assertNotIn("JOIN seed_domains", candidate_sql)
+        self.assertNotIn("JOIN active_scan_scopes scope ON scope.id", candidate_sql)
+        self.assertEqual(params, (24, ["brand_tld", "brand_pattern"], 2000))
+        self.assertEqual(cursor.execute.call_count, 1)
 
-    def test_seed_subdomain_can_be_selected_by_campaign_source_provenance(self):
+    def test_lookalike_outside_seed_suffix_is_selected_from_current_provenance(self):
         cursor = mock.Mock()
-        campaign = (77, "example.com", True, [], ["brand_pattern"], 25,
-                    "Brand impersonation monitoring")
-        cursor.fetchall.side_effect = [[campaign], [(1, "portal.example.com")]]
+        cursor.fetchall.return_value = [(
+            1, "abandoned-example.net", ["brand_pattern"], ["example.com"],
+        )]
         connection = mock.Mock()
         connection.cursor.return_value = cursor
         with mock.patch.object(worker, "get_conn", return_value=connection), \
-             mock.patch.object(worker, "require_running_scan"):
+             mock.patch.object(worker, "require_running_scan"), \
+             mock.patch.object(worker, "default_operation_enabled", return_value=True):
             selected = worker.select_targets(24)
-        self.assertEqual(selected, [(1, "portal.example.com", "https://portal.example.com/")])
+        self.assertEqual(selected, [(
+            1, "abandoned-example.net", "https://abandoned-example.net/",
+            ["brand_pattern"], ["example.com"],
+        )])
+        self.assertNotIn("seed_domains", cursor.execute.call_args.args[0])
 
-    def test_unrelated_candidate_without_matching_campaign_seed_is_not_selected(self):
+    def test_multiple_discovery_seeds_and_sources_are_retained_as_provenance(self):
         cursor = mock.Mock()
-        campaign = (77, "example.com", True, [], ["brand_tld"], 25,
-                    "Brand impersonation monitoring")
-        cursor.fetchall.side_effect = [[campaign], []]
+        cursor.fetchall.return_value = [(
+            2, "join-example.org", ["brand_pattern", "brand_tld"],
+            ["abc.com", "xyz.com"],
+        )]
         connection = mock.Mock()
         connection.cursor.return_value = cursor
         with mock.patch.object(worker, "get_conn", return_value=connection), \
-             mock.patch.object(worker, "require_running_scan"):
+             mock.patch.object(worker, "require_running_scan"), \
+             mock.patch.object(worker, "default_operation_enabled", return_value=True):
             selected = worker.select_targets(24)
-        self.assertEqual(selected, [])
-        sql = cursor.execute.call_args_list[1].args[0]
-        self.assertIn("source.source = ANY(scope.eligible_discovery_sources)", sql)
-        self.assertIn("LOWER(TRIM(TRAILING '.' FROM BTRIM(source.seed)))", sql)
-        self.assertIn("= scope.scope_domain", sql)
+        self.assertEqual(selected[0][3:], (
+            ["brand_pattern", "brand_tld"], ["abc.com", "xyz.com"],
+        ))
+        self.assertIn("source.source = ANY(%s)", cursor.execute.call_args.args[0])
 
-    def test_no_campaign_approval_means_no_targets(self):
+    def test_default_monitoring_limits_stay_bounded(self):
+        self.assertEqual(bri.MAX_REQUESTS_PER_SCAN, 2000)
+        self.assertEqual(bri.MAX_REDIRECTS, 3)
+        self.assertEqual(bri.MAX_CONCURRENCY, 2)
+        self.assertEqual(bri.CONNECT_TIMEOUT_SECONDS, 5)
+        self.assertEqual(bri.OVERALL_TIMEOUT_SECONDS, 10)
+
+    def test_unrelated_candidate_without_brand_source_provenance_is_not_selected(self):
         cursor = mock.Mock()
         cursor.fetchall.return_value = []
         connection = mock.Mock()
         connection.cursor.return_value = cursor
         with mock.patch.object(worker, "get_conn", return_value=connection), \
-             mock.patch.object(worker, "require_running_scan"):
-            self.assertEqual(worker.select_targets(24), [])
-        self.assertEqual(cursor.execute.call_count, 1)
-        self.assertIn("scope.monitoring_purpose", cursor.execute.call_args.args[0])
+             mock.patch.object(worker, "require_running_scan"), \
+             mock.patch.object(worker, "default_operation_enabled", return_value=True):
+            selected = worker.select_targets(24)
+        self.assertEqual(selected, [])
+        sql = cursor.execute.call_args.args[0]
+        self.assertIn("JOIN domain_sources source", sql)
+        self.assertIn("source.source = ANY(%s)", sql)
+        self.assertIn("sr.scan_id = %s", sql)
 
-    def test_excluded_or_manually_rejected_candidates_are_filtered(self):
+    def test_no_database_campaign_is_needed_for_target_selection(self):
         cursor = mock.Mock()
-        campaign = (77, "example.com", True, ["blocked-lookalike.test"],
-                    ["brand_pattern"], 25, "Brand impersonation monitoring")
-        cursor.fetchall.side_effect = [[campaign], []]
+        cursor.fetchall.return_value = [(1, "lookalike.net", ["brand_tld"], ["abc.com"])]
         connection = mock.Mock()
         connection.cursor.return_value = cursor
         with mock.patch.object(worker, "get_conn", return_value=connection), \
-             mock.patch.object(worker, "require_running_scan"):
+             mock.patch.object(worker, "require_running_scan"), \
+             mock.patch.object(worker, "default_operation_enabled", return_value=True):
+            selected = worker.select_targets(24)
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertNotIn("monitoring_purpose", cursor.execute.call_args.args[0])
+
+    def test_excluded_or_manually_rejected_candidates_are_filtered(self):
+        cursor = mock.Mock()
+        cursor.fetchall.return_value = []
+        connection = mock.Mock()
+        connection.cursor.return_value = cursor
+        with mock.patch.object(worker, "get_conn", return_value=connection), \
+             mock.patch.object(worker, "require_running_scan"), \
+             mock.patch.object(worker, "default_operation_enabled", return_value=True):
             self.assertEqual(worker.select_targets(24), [])
-        sql = cursor.execute.call_args_list[1].args[0]
-        self.assertIn("scope.excluded_domains", sql)
+        sql = cursor.execute.call_args.args[0]
+        self.assertIn("scope_block.excluded_domains", sql)
         self.assertIn("manually rejected", sql)
 
     def test_scope_permission_is_separate_from_other_scan_operations(self):
@@ -144,7 +195,11 @@ class BrandRedirectConfigurationTests(unittest.TestCase):
         ))
         for level in ("HTTP_TLS_OBSERVATION", "TECHNOLOGY_HTTP", "PORT_SCAN"):
             self.assertFalse(scope_authorizes([approved], "brand.example.com", level))
-        self.assertEqual(configured_scan_operations("BRAND_REDIRECT_OBSERVATION"), frozenset())
+        self.assertEqual(
+            configured_scan_operations("BRAND_REDIRECT_OBSERVATION"),
+            frozenset({"BRAND_REDIRECT_OBSERVATION"}),
+        )
+        self.assertNotIn("BRAND_REDIRECT_OBSERVATION", DEFAULT_SCAN_OPERATION_LEVELS)
         sql = active_scan_authorization_sql("d", "BRAND_REDIRECT_OBSERVATION")
         self.assertIn("AND FALSE", sql)
         self.assertNotIn(
@@ -158,6 +213,23 @@ class BrandRedirectConfigurationTests(unittest.TestCase):
             validation_source=None, domain="brand.example.com",
             testing_level="PORT_SCAN",
         ))
+        with mock.patch.dict("os.environ", {
+            "ASIP_DEFAULT_SCAN_OPERATIONS": (
+                "HTTP_TLS_OBSERVATION,TECHNOLOGY_HTTP,PORT_SCAN,DNS_SECURITY,"
+                "BRAND_REDIRECT_OBSERVATION"
+            ),
+        }, clear=True):
+            self.assertTrue(bri.optional_pipeline_stage(24))
+            self.assertFalse(is_authorized(
+                ownership_status="CANDIDATE", scannable=False,
+                validation_source=None, domain="lookalike-example.com",
+                testing_level="BRAND_REDIRECT_OBSERVATION",
+            ))
+            self.assertFalse(is_authorized(
+                ownership_status="CANDIDATE", scannable=False,
+                validation_source=None, domain="lookalike-example.com",
+                testing_level="PORT_SCAN",
+            ))
 
     def test_brand_scope_requires_purpose_sources_and_bounded_campaign_budget(self):
         with self.assertRaisesRegex(ValueError, "purpose"):
@@ -344,23 +416,20 @@ class RedirectChainTests(unittest.TestCase):
             self.assertFalse(kwargs["authorize"]("https://blocked.example.org"))
             return evidence
 
-        campaign = (
-            77, "example.com", True, ["blocked.example.org"],
-            ["brand_tld"], 1000, "Brand abuse monitoring",
-        )
         with mock.patch.object(worker, "get_conn", return_value=conn), \
              mock.patch.object(worker, "require_running_scan"), \
+             mock.patch.object(worker, "default_operation_enabled", return_value=True), \
              mock.patch.object(worker, "observe_redirect_chain", side_effect=observe):
             worker._run_target(
-                (5, "abandoned-example.com", "https://abandoned-example.com/"),
-                24, "operation", campaign, worker._RequestBudget(1000),
+                (5, "abandoned-example.com", "https://abandoned-example.com/",
+                 ["brand_tld"], ["example.com"]),
+                24, "operation", worker._RequestBudget(),
             )
         auth_sql = cursor.execute.call_args_list[0].args[0]
-        self.assertIn("scope.eligible_discovery_sources", auth_sql)
-        self.assertIn("scope.excluded_domains", auth_sql)
-        self.assertNotIn("scope_authorization_sql", auth_sql)
+        self.assertIn("source.source = ANY(%s)", auth_sql)
+        self.assertIn("scope_block.excluded_domains", auth_sql)
         self.assertNotIn("destination_scope", auth_sql)
-        self.assertNotIn("candidate.domain)) = scope.scope_domain", auth_sql)
+        self.assertNotIn("scope_block.scope_domain", auth_sql)
 
     def test_redirect_loop_is_reported_without_fabricating_a_final_url(self):
         evidence, calls = self._chain({
@@ -581,7 +650,7 @@ class PinnedRequestTests(unittest.TestCase):
 
 
 class RedirectPersistenceTests(unittest.TestCase):
-    def test_worker_rechecks_candidate_and_destination_scope_before_request(self):
+    def test_worker_rechecks_operation_and_provenance_before_each_request(self):
         cursor = mock.Mock()
         cursor.fetchone.return_value = (1,)
         connection = mock.Mock()
@@ -596,23 +665,22 @@ class RedirectPersistenceTests(unittest.TestCase):
 
         with mock.patch.object(worker, "get_conn", return_value=connection), \
              mock.patch.object(worker, "observe_redirect_chain", side_effect=observe), \
-             mock.patch.object(worker, "require_running_scan"):
+             mock.patch.object(worker, "require_running_scan"), \
+             mock.patch.object(worker, "default_operation_enabled", return_value=True):
             permitted = worker._run_target(
-                (17, "brand.example", "https://brand.example/"), 24, "operation-24",
-                (77, "brand.example", True, [], ["brand_tld"], 1000, "Brand review"),
-                worker._RequestBudget(1000),
+                (17, "brand.example", "https://brand.example/",
+                 ["brand_tld"], ["abc.com"]),
+                24, "operation-24", worker._RequestBudget(),
             )
         self.assertEqual(permitted, "NO_REDIRECT")
         auth_sql, auth_params = cursor.execute.call_args_list[0].args
         self.assertIn("scan.status = 'RUNNING'", auth_sql)
-        self.assertIn("scope.testing_level = %s", auth_sql)
-        self.assertIn("scope.eligible_discovery_sources", auth_sql)
-        self.assertIn("revoked.status = 'REVOKED'", auth_sql)
-        self.assertIn("scope.excluded_domains", auth_sql)
+        self.assertIn("source.source = ANY(%s)", auth_sql)
+        self.assertIn("scope_block.excluded_domains", auth_sql)
         self.assertIn("rejected_destination", auth_sql)
         self.assertIn("manually rejected", auth_sql)
-        self.assertIn("LOWER(TRIM(TRAILING '.' FROM BTRIM(source.seed)))", auth_sql)
-        self.assertEqual(auth_params[:5], (17, 77, 24, bri.BRAND_REDIRECT_SCOPE, "ACTIVE"))
+        self.assertIn("NULLIF(BTRIM(source.seed), '') IS NOT NULL", auth_sql)
+        self.assertEqual(auth_params[:3], (17, 24, ["brand_tld", "brand_pattern"]))
         self.assertIn("brand.example", auth_params)
 
         cursor.reset_mock()
@@ -621,16 +689,17 @@ class RedirectPersistenceTests(unittest.TestCase):
         connection.cursor.return_value = cursor
         with mock.patch.object(worker, "get_conn", return_value=connection), \
              mock.patch.object(worker, "observe_redirect_chain", side_effect=observe), \
-             mock.patch.object(worker, "require_running_scan"):
+             mock.patch.object(worker, "require_running_scan"), \
+             mock.patch.object(worker, "default_operation_enabled", return_value=True):
             denied = worker._run_target(
-                (17, "brand.example", "https://brand.example/"), 24, "operation-24",
-                (77, "brand.example", True, [], ["brand_tld"], 1000, "Brand review"),
-                worker._RequestBudget(1000),
+                (17, "brand.example", "https://brand.example/",
+                 ["brand_tld"], ["abc.com"]),
+                24, "operation-24", worker._RequestBudget(),
             )
         self.assertEqual(denied, "STOPPED_AT_AUTHORIZATION_BOUNDARY")
-        self.assertIn(bri.BRAND_REDIRECT_SCOPE, cursor.execute.call_args_list[0].args[1])
+        self.assertIn("domain_sources", cursor.execute.call_args_list[0].args[0])
 
-    def test_persists_scoped_evidence_only_while_the_scan_is_running(self):
+    def test_persists_provenance_and_evidence_only_while_the_scan_is_running(self):
         cursor = mock.Mock()
         cursor.fetchone.return_value = ("RUNNING",)
         connection = mock.Mock()
@@ -639,19 +708,15 @@ class RedirectPersistenceTests(unittest.TestCase):
             "scan_id": 24, "operation_id": "operation-24",
             "evidence_source": bri.EVIDENCE_SOURCE,
             "completeness": "STOPPED_AT_AUTHORIZATION_BOUNDARY",
-            "campaign_id": 77, "campaign_scope": "brand.example",
-            "campaign_purpose": "Brand review",
-            "eligible_discovery_sources": ["brand_tld"],
-            "campaign_request_budget": 1000,
         }
         with mock.patch.object(worker, "get_conn", return_value=connection), \
              mock.patch.object(worker, "observe_redirect_chain", return_value=evidence) as observe, \
-             mock.patch.object(worker, "require_running_scan") as require_running:
+             mock.patch.object(worker, "require_running_scan") as require_running, \
+             mock.patch.object(worker, "default_operation_enabled", return_value=True):
             result = worker._run_target(
-                (17, "brand.example", "https://brand.example/"),
-                24, "operation-24",
-                (77, "brand.example", True, [], ["brand_tld"], 1000, "Brand review"),
-                worker._RequestBudget(1000),
+                (17, "brand.example", "https://brand.example/",
+                 ["brand_tld"], ["abc.com"]),
+                24, "operation-24", worker._RequestBudget(),
             )
         self.assertEqual(result, "STOPPED_AT_AUTHORIZATION_BOUNDARY")
         observe.assert_called_once()
@@ -672,13 +737,13 @@ class RedirectPersistenceTests(unittest.TestCase):
         connection.cursor.return_value = cursor
         with mock.patch.object(worker, "get_conn", return_value=connection), \
              mock.patch.object(worker, "observe_redirect_chain", return_value={"completeness": "NO_REDIRECT"}), \
-             mock.patch.object(worker, "require_running_scan", side_effect=RuntimeError("scan stopped")):
+             mock.patch.object(worker, "require_running_scan", side_effect=RuntimeError("scan stopped")), \
+             mock.patch.object(worker, "default_operation_enabled", return_value=True):
             with self.assertRaisesRegex(RuntimeError, "scan stopped"):
                 worker._run_target(
-                    (17, "brand.example", "https://brand.example/"),
-                    24, "operation-24",
-                    (77, "brand.example", True, [], ["brand_tld"], 1000, "Brand review"),
-                    worker._RequestBudget(1000),
+                    (17, "brand.example", "https://brand.example/",
+                     ["brand_tld"], ["abc.com"]),
+                    24, "operation-24", worker._RequestBudget(),
                 )
         self.assertNotIn("INSERT INTO brand_redirect_observations", str(cursor.execute.call_args))
         connection.rollback.assert_called_once()

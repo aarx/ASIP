@@ -795,8 +795,8 @@ def run_pipeline(dns_security_target_ids=None):
             ("Risk Scoring", f"python -u risk_worker.py {scan_id}")
         ]
 
-        # Brand redirect monitoring has its own exact-origin permission list.
-        # It is intentionally independent of general HTTP/TLS authorization.
+        # Brand redirect monitoring is an independent, provenance-limited
+        # operation. Its deployment allowlist does not grant other scan work.
         brand_stage = optional_pipeline_stage(scan_id)
         if brand_stage:
             insertion = next(i for i, item in enumerate(pipeline)

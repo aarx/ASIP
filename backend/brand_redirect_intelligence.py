@@ -1,4 +1,4 @@
-"""Dedicated, explicitly allowlisted HTTP redirect observation for Brand Exposure."""
+"""Bounded HTTP redirect observation for provenance-linked Brand Exposure Candidates."""
 
 import http.client
 import ipaddress
@@ -20,6 +20,7 @@ from ownership import normalize_hostname
 
 
 BRAND_REDIRECT_SCOPE = "BRAND_REDIRECT_OBSERVATION"
+BRAND_DISCOVERY_SOURCES = ("brand_tld", "brand_pattern")
 MAX_REDIRECTS = 3
 MAX_CONCURRENCY = 2
 CONNECT_TIMEOUT_SECONDS = 5
@@ -27,7 +28,7 @@ OVERALL_TIMEOUT_SECONDS = 10
 MAX_RESPONSE_BYTES = 64 * 1024
 EVIDENCE_SOURCE = "BRAND_REDIRECT_INTELLIGENCE"
 MAX_REQUESTS_PER_TARGET = 1 + MAX_REDIRECTS
-MAX_REQUESTS_PER_SCAN = 100000
+MAX_REQUESTS_PER_SCAN = 2000
 
 _host_locks = {}
 _host_locks_guard = threading.Lock()
@@ -40,7 +41,7 @@ class RedirectObservationError(RuntimeError):
 
 
 class RequestBudgetExceeded(PermissionError):
-    """The approved campaign's request budget has been consumed."""
+    """The deployment's per-scan request budget has been consumed."""
 
 
 def _origin(url):
@@ -58,30 +59,10 @@ def _origin(url):
 
 
 def optional_pipeline_stage(scan_id):
-    """Add the stage only when at least one unexpired redirect scope exists."""
-    from db import get_conn
+    """Add the standard stage when the deployment operation policy enables it."""
+    from authorization_policy import default_operation_enabled
 
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT COUNT(*) FROM active_scan_scopes
-             WHERE testing_level = %s AND status = 'ACTIVE'
-               AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
-               AND NULLIF(BTRIM(monitoring_purpose), '') IS NOT NULL
-               AND COALESCE(cardinality(eligible_discovery_sources), 0) > 0
-               AND eligible_discovery_sources <@ ARRAY['brand_tld', 'brand_pattern']::text[]
-               AND max_requests_per_scan BETWEEN 1 AND 100000
-        """, (BRAND_REDIRECT_SCOPE,))
-        row = cur.fetchone()
-        enabled = bool(row and row[0] == 1)
-        conn.rollback()
-    except Exception:
-        conn.rollback()
-        return None
-    finally:
-        conn.close()
-    if not enabled:
+    if not default_operation_enabled(BRAND_REDIRECT_SCOPE):
         return None
     return (
         "Brand Redirect Intelligence",
