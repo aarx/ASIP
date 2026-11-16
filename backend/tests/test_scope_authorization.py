@@ -148,6 +148,22 @@ class ScopeAdministrationTests(unittest.TestCase):
                 operator_authorizer=None,
             )
 
+    def test_brand_scope_creation_requires_campaign_policy(self):
+        with self.assertRaisesRegex(ScopePolicyError, "purpose"):
+            create_scope(
+                object(), scope_domain="example.com", include_subdomains=True,
+                testing_level="BRAND_REDIRECT_OBSERVATION", approved_by="analyst",
+                operator_authorizer=lambda _actor: True,
+            )
+
+    def test_brand_scope_creation_requires_campaign_policy(self):
+        with self.assertRaisesRegex(ScopePolicyError, "purpose"):
+            create_scope(
+                object(), scope_domain="example.com", include_subdomains=True,
+                testing_level="BRAND_REDIRECT_OBSERVATION", approved_by="analyst",
+                operator_authorizer=lambda _actor: True,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

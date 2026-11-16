@@ -752,6 +752,68 @@ CREATE INDEX idx_scans_succeeded_id_desc ON public.scans USING btree (id DESC) W
 
 
 --
+-- Name: active_scan_scopes; Type: TABLE; Schema: public; Owner: asm
+--
+
+CREATE TABLE public.active_scan_scopes (
+    id bigserial PRIMARY KEY,
+    scope_domain text NOT NULL,
+    include_subdomains boolean NOT NULL,
+    testing_level text NOT NULL,
+    approved_by text NOT NULL,
+    approved_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status text NOT NULL DEFAULT 'ACTIVE',
+    expires_at timestamp with time zone,
+    excluded_domains text[] NOT NULL DEFAULT ARRAY[]::text[],
+    monitoring_purpose text,
+    eligible_discovery_sources text[],
+    max_requests_per_scan integer,
+    revoked_by text,
+    revoked_at timestamp with time zone,
+    revocation_reason text,
+    CONSTRAINT active_scan_scopes_domain_format CHECK (
+        scope_domain = lower(btrim(scope_domain))
+        AND scope_domain ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'
+        AND length(scope_domain) BETWEEN 1 AND 253
+    ),
+    CONSTRAINT active_scan_scopes_testing_level CHECK (
+        testing_level IN (
+            'TECHNOLOGY_HTTP', 'PORT_SCAN', 'ADHOC_CHECK',
+            'HTTP_TLS_OBSERVATION', 'DNS_SECURITY', 'ASN_METADATA',
+            'CAPD_HTTP_HEADER_VERIFY', 'BRAND_REDIRECT_OBSERVATION'
+        )
+    ),
+    CONSTRAINT active_scan_scopes_status CHECK (status IN ('ACTIVE', 'REVOKED')),
+    CONSTRAINT active_scan_scopes_expiry CHECK (
+        expires_at IS NULL OR expires_at > approved_at
+    ),
+    CONSTRAINT active_scan_scopes_revocation_metadata CHECK (
+        (status = 'ACTIVE' AND revoked_by IS NULL AND revoked_at IS NULL)
+        OR
+        (status = 'REVOKED' AND revoked_by IS NOT NULL AND revoked_at IS NOT NULL)
+    ),
+    CONSTRAINT active_scan_scopes_brand_campaign_policy CHECK (
+        testing_level <> 'BRAND_REDIRECT_OBSERVATION'
+        OR status = 'REVOKED'
+        OR (
+            NULLIF(BTRIM(monitoring_purpose), '') IS NOT NULL
+            AND COALESCE(cardinality(eligible_discovery_sources), 0) > 0
+            AND eligible_discovery_sources <@ ARRAY['brand_tld', 'brand_pattern']::text[]
+            AND max_requests_per_scan BETWEEN 1 AND 100000
+        )
+    )
+);
+
+ALTER TABLE public.active_scan_scopes OWNER TO asm;
+
+CREATE INDEX active_scan_scopes_active_lookup_idx
+    ON public.active_scan_scopes USING btree (status, testing_level, expires_at);
+
+CREATE INDEX active_scan_scopes_domain_idx
+    ON public.active_scan_scopes USING btree (scope_domain);
+
+
+--
 -- PostgreSQL database dump complete
 --
 

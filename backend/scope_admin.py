@@ -49,7 +49,8 @@ def _validate_expiry(approved_at, expires_at):
 def create_scope(
     conn, *, scope_domain, include_subdomains, testing_level,
     approved_by, operator_authorizer, approved_at=None, expires_at=None,
-    excluded_domains=(),
+    excluded_domains=(), monitoring_purpose=None,
+    eligible_discovery_sources=(), max_requests_per_scan=None,
 ):
     """Create one active scope after an external trusted-operator check."""
     actor = _require_operator(operator_authorizer, approved_by)
@@ -59,6 +60,22 @@ def create_scope(
         raise ScopePolicyError("unsupported scope testing level")
     exclusions = normalize_scope_exclusions(excluded_domains)
     approved_at, expires_at = _validate_expiry(approved_at, expires_at)
+    purpose = str(monitoring_purpose or "").strip() or None
+    sources = tuple(sorted({str(source).strip().lower()
+                            for source in (eligible_discovery_sources or ())}))
+    if level == "BRAND_REDIRECT_OBSERVATION":
+        if not purpose:
+            raise ScopePolicyError("brand monitoring purpose is required")
+        if not sources or not set(sources) <= {"brand_tld", "brand_pattern"}:
+            raise ScopePolicyError(
+                "eligible discovery sources must include brand_tld and/or brand_pattern"
+            )
+        if not isinstance(max_requests_per_scan, int) or not 1 <= max_requests_per_scan <= 100000:
+            raise ScopePolicyError(
+                "brand redirect request budget must be between 1 and 100000"
+            )
+    elif purpose is not None or sources or max_requests_per_scan is not None:
+        raise ScopePolicyError("brand monitoring policy fields require the brand redirect scope")
 
     cur = conn.cursor()
     try:
@@ -66,13 +83,15 @@ def create_scope(
             """
             INSERT INTO active_scan_scopes(
                 scope_domain, include_subdomains, testing_level,
-                approved_by, approved_at, status, expires_at, excluded_domains
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                approved_by, approved_at, status, expires_at, excluded_domains,
+                monitoring_purpose, eligible_discovery_sources, max_requests_per_scan
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
                 domain, bool(include_subdomains), level, actor, approved_at,
-                SCOPE_STATUS_ACTIVE, expires_at, list(exclusions),
+                SCOPE_STATUS_ACTIVE, expires_at, list(exclusions), purpose,
+                list(sources), max_requests_per_scan,
             ),
         )
         scope_id = cur.fetchone()[0]

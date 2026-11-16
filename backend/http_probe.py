@@ -105,9 +105,11 @@ def _resolve_allowed_addresses(domain, port, expected_ip=None):
     return addresses
 
 
-def _connect_pinned(domain, scheme, address):
+def _connect_pinned(domain, scheme, address, *, timeout=None):
     port = 443 if scheme == "https" else 80
-    raw = socket.create_connection((address, port), timeout=TIMEOUT)
+    raw = socket.create_connection(
+        (address, port), timeout=TIMEOUT if timeout is None else timeout
+    )
     try:
         peer_ip = ipaddress.ip_address(raw.getpeername()[0])
         if peer_ip != ipaddress.ip_address(address):

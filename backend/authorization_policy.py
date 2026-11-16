@@ -17,7 +17,11 @@ SCOPE_TESTING_LEVELS = frozenset({
     "CAPD_HTTP_HEADER_VERIFY",
     "DNS_SECURITY",
     "ASN_METADATA",
+    "BRAND_REDIRECT_OBSERVATION",
 })
+DEFAULT_SCAN_OPERATION_LEVELS = SCOPE_TESTING_LEVELS - {
+    "BRAND_REDIRECT_OBSERVATION",
+}
 DEFAULT_SCAN_OPERATIONS_ENV = "ASIP_DEFAULT_SCAN_OPERATIONS"
 MAX_DNS_SECURITY_RUN_TARGETS = 3
 
@@ -68,6 +72,9 @@ class ScopeApproval:
     revoked_by: str | None = None
     revoked_at: datetime | None = None
     revocation_reason: str | None = None
+    monitoring_purpose: str | None = None
+    eligible_discovery_sources: tuple = ()
+    max_requests_per_scan: int | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "scope_domain", normalize_scope_domain(self.scope_domain))
@@ -77,6 +84,10 @@ class ScopeApproval:
         object.__setattr__(self, "expires_at", _as_utc(self.expires_at))
         object.__setattr__(self, "revoked_at", _as_utc(self.revoked_at))
         object.__setattr__(self, "excluded_domains", normalize_scope_exclusions(self.excluded_domains))
+        object.__setattr__(self, "monitoring_purpose", str(self.monitoring_purpose or "").strip() or None)
+        object.__setattr__(self, "eligible_discovery_sources", tuple(sorted({
+            str(source).strip().lower() for source in (self.eligible_discovery_sources or ())
+        })))
 
         if self.testing_level not in SCOPE_TESTING_LEVELS:
             raise ScopePolicyError("unsupported scope testing level")
@@ -90,6 +101,15 @@ class ScopeApproval:
             raise ScopePolicyError("active scope cannot contain revocation metadata")
         if self.status == SCOPE_STATUS_REVOKED and (not self.revoked_by or not self.revoked_at):
             raise ScopePolicyError("revoked scope requires revocation metadata")
+        if self.testing_level == "BRAND_REDIRECT_OBSERVATION" and self.status == SCOPE_STATUS_ACTIVE:
+            if not self.monitoring_purpose:
+                raise ScopePolicyError("brand monitoring purpose is required")
+            if not self.eligible_discovery_sources or not set(self.eligible_discovery_sources) <= {
+                "brand_tld", "brand_pattern"
+            }:
+                raise ScopePolicyError("brand monitoring discovery sources are required")
+            if not isinstance(self.max_requests_per_scan, int) or not 1 <= self.max_requests_per_scan <= 100000:
+                raise ScopePolicyError("brand redirect request budget must be between 1 and 100000")
 
 
 def scope_covers_domain(scope, domain):
@@ -171,7 +191,7 @@ def configured_scan_operations(value=None):
         return frozenset()
     entries = value.split(",")
     normalized = [entry.strip().upper() for entry in entries]
-    if not normalized or any(not item or item not in SCOPE_TESTING_LEVELS for item in normalized):
+    if not normalized or any(not item or item not in DEFAULT_SCAN_OPERATION_LEVELS for item in normalized):
         return frozenset()
     return frozenset(normalized)
 
@@ -317,7 +337,7 @@ def passive_dns_discovery_sql(domain_alias="d", membership_alias="sr"):
     provenance = f"{membership_alias}.seed"
     exclusions = " OR ".join(
         f"({active_scope_exclusion_sql(domain_alias, level)})"
-        for level in sorted(SCOPE_TESTING_LEVELS)
+        for level in sorted(DEFAULT_SCAN_OPERATION_LEVELS)
     )
     return f"""
         EXISTS (
@@ -330,6 +350,57 @@ def passive_dns_discovery_sql(domain_alias="d", membership_alias="sr"):
             'manually rejected' = ANY({domain_alias}.confidence_reasons), FALSE
         )
         AND NOT ({exclusions})
+    """
+
+
+def scope_authorization_sql(domain_expression, testing_level):
+    """Return a scope-only grant predicate with exclusions and revocations.
+
+    This deliberately does not test ownership, scannability, trusted seed
+    boundaries, or the default active-scan operation allowlist.
+    """
+    level = str(testing_level or "").strip().upper()
+    if level not in SCOPE_TESTING_LEVELS:
+        raise ScopePolicyError("unsupported scope testing level")
+    canonical = f"LOWER(TRIM(TRAILING '.' FROM {domain_expression}))"
+    covered = f"""(
+        {canonical} = scope_record.scope_domain
+        OR (scope_record.include_subdomains
+            AND RIGHT({canonical}, LENGTH(scope_record.scope_domain) + 1)
+                = '.' || scope_record.scope_domain)
+    )"""
+    campaign_requirements = ""
+    if level == "BRAND_REDIRECT_OBSERVATION":
+        campaign_requirements = """
+              AND NULLIF(BTRIM(scope_record.monitoring_purpose), '') IS NOT NULL
+              AND COALESCE(cardinality(scope_record.eligible_discovery_sources), 0) > 0
+              AND scope_record.eligible_discovery_sources <@ ARRAY['brand_tld', 'brand_pattern']::text[]
+              AND scope_record.max_requests_per_scan BETWEEN 1 AND 100000
+        """
+    return f"""
+        EXISTS (
+            SELECT 1
+            FROM active_scan_scopes scope_record
+            WHERE scope_record.status = 'ACTIVE'
+              AND scope_record.testing_level = '{level}'
+              AND (scope_record.expires_at IS NULL
+                   OR scope_record.expires_at > CURRENT_TIMESTAMP)
+              {campaign_requirements}
+              AND {covered}
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM active_scan_scopes scope_block
+                  WHERE scope_block.testing_level = '{level}'
+                    AND {covered.replace('scope_record', 'scope_block')}
+                    AND (
+                        scope_block.status = 'REVOKED'
+                        OR (scope_block.status = 'ACTIVE'
+                            AND (scope_block.expires_at IS NULL
+                                 OR scope_block.expires_at > CURRENT_TIMESTAMP)
+                            AND {canonical} = ANY(scope_block.excluded_domains))
+                    )
+              )
+        )
     """
 
 
@@ -347,7 +418,13 @@ def active_scope_coverage_sql(domain_alias="d", testing_level=None):
         raise ScopePolicyError("unsupported scope testing level")
 
     canonical_domain = f"LOWER(TRIM(TRAILING '.' FROM {domain_alias}.domain))"
-    level_filter = "" if level is None else f"AND scope_allow.testing_level = '{level}'"
+    if level is None:
+        operation_levels = ", ".join(
+            f"'{item}'" for item in sorted(DEFAULT_SCAN_OPERATION_LEVELS)
+        )
+        level_filter = f"AND scope_allow.testing_level IN ({operation_levels})"
+    else:
+        level_filter = f"AND scope_allow.testing_level = '{level}'"
     block_level_filter = (
         "AND scope_block.testing_level = scope_allow.testing_level"
     )

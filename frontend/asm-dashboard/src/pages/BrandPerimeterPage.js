@@ -41,17 +41,53 @@ function brandHash({ page = 1, search = "", ownership = "", asset_class: assetCl
 }
 
 function destinationEvidence(asset) {
-  const evidence = asset.redirect_evidence || {};
-  if (evidence.first_hop_destination) {
-    return { label: "Observed destination", value: evidence.first_hop_destination };
+  const observation = observationFor(asset);
+  if (!observation) return null;
+  if (observation.verified_final_url) return { label: "Verified final URL", value: observation.verified_final_url };
+  if (observation.reported_destination_url || observation.last_reported_destination_url) {
+    return { label: "Reported destination", value: observation.reported_destination_url || observation.last_reported_destination_url };
   }
-  if (asset.final_url_verification === "COMPLETE" && evidence.verified_terminal_url) {
-    return { label: "Verified final URL", value: evidence.verified_terminal_url };
-  }
-  if (asset.final_url_verification === "LEGACY_UNKNOWN" && asset.final_url) {
-    return { label: "Historical URL (unverified)", value: asset.final_url };
-  }
+  if (observation.historical_url_unverified) return { label: "Historical URL (unverified)", value: observation.historical_url_unverified };
   return null;
+}
+
+function observationFor(asset) {
+  const stored = asset.brand_redirect_observation;
+  if (stored?.evidence_scope === "CURRENT") return stored;
+  const currentStatus = String(asset.http_observation_status || "UNKNOWN").toUpperCase();
+  const currentHttpExists = currentStatus !== "UNKNOWN"
+    || Number(asset.http_status) > 0
+    || Boolean(asset.title)
+    || Boolean(asset.final_url);
+  if (currentHttpExists) {
+    const redirect = asset.redirect_evidence || {};
+    const legacy = asset.final_url_verification === "LEGACY_UNKNOWN";
+    return {
+      evidence_scope: "CURRENT",
+      evidence_source: "HTTP_TLS_OBSERVATION",
+      scan_id: asset.scan_id,
+      initial_http_status: asset.http_status,
+      reported_destination_url: legacy ? null : redirect.first_hop_destination,
+      last_reported_destination_url: legacy ? null : redirect.last_observed_destination,
+      redirect_location: legacy ? null : redirect.first_hop_location,
+      observed_hops: legacy ? [] : (redirect.observed_hops || []),
+      verified_final_url: redirect.completion_status === "COMPLETE" ? redirect.verified_terminal_url : null,
+      historical_url_unverified: legacy ? asset.final_url : null,
+      final_status: redirect.completion_status === "COMPLETE" ? asset.final_status : null,
+      page_title: asset.title,
+      completeness: redirect.completion_status || "LEGACY_UNKNOWN",
+    };
+  }
+  return stored || null;
+}
+
+function observationTimestamp(observation) {
+  if (!observation?.observed_at) return "Timestamp unavailable";
+  const date = new Date(observation.observed_at);
+  if (Number.isNaN(date.getTime())) return String(observation.observed_at);
+  return observation.timestamp_basis === "SCAN_COMPLETION"
+    ? `Scan completed ${date.toLocaleString()}`
+    : date.toLocaleString();
 }
 
 function queryForReturn(query) {
@@ -71,6 +107,7 @@ export default function BrandPerimeterPage({ query }) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading");
   const [requestVersion, setRequestVersion] = useState(0);
+  const [expandedDomain, setExpandedDomain] = useState(null);
 
   useEffect(() => setDraft({
     search: applied.search,
@@ -178,15 +215,32 @@ export default function BrandPerimeterPage({ query }) {
               <SortableHeader label="Observed destination / title" field="destination" sortBy={applied.sortBy} sortDir={applied.sortDir} onSort={changeSort} />
               <th /></tr></thead>
             <tbody>{data.inventory.assets.map((asset) => {
+              const observation = observationFor(asset);
               const destination = destinationEvidence(asset);
+              const httpStatus = observation?.initial_http_status ?? asset.http_status;
+              const assessed = Boolean(observation && (
+                Number(observation.requests_attempted) > 0
+                || Number(observation.initial_http_status) > 0
+                || observation.http_observation_status === "RESPONDED"
+                || observation.http_observation_status === "NO_RESPONSE"
+                || (observation.evidence_scope === "HISTORICAL" && (
+                  observation.historical_url_unverified || observation.page_title
+                ))
+              ));
+              const httpState = observation?.http_observation_status
+                || (Number(httpStatus) > 0 ? "RESPONDED" : (assessed ? "NO_RESPONSE" : "UNKNOWN"));
+              const expanded = expandedDomain === asset.domain;
               return (
-              <tr key={asset.domain}>
+              <React.Fragment key={asset.domain}>
+              <tr>
                 <td><AssetLink domain={asset.domain} returnTo="brand" returnQuery={queryForReturn(query)} /><StatusBadge value={displayAssetClass(asset.asset_class)} /></td>
                 <td><span className="technical-value">{displayEvidence(asset.ip)}</span><span className="asset-secondary">{asset.has_ip ? "Resolution observed" : "No current IP evidence"}</span></td>
-                <td><StatusBadge value={asset.http_observation_status} /><span className="asset-secondary">{displayHttpStatus(asset.http_observation_status, asset.http_status)}</span></td>
-                <td>{destination ? <><span className="evidence-label">{destination.label}</span><span className="brand-destination technical-value" title={destination.value}>{destination.value}</span></> : <span className="not-applicable">—</span>}{asset.title && <span className="asset-secondary">Title: {asset.title}</span>}</td>
+                <td>{assessed ? <><StatusBadge value={observation.evidence_scope === "HISTORICAL" ? "HISTORICAL" : "ASSESSED"} /><span className="asset-secondary">{displayHttpStatus(httpState, httpStatus)}</span></> : <><StatusBadge value="NOT ASSESSED" /><span className="asset-secondary">No HTTP evidence</span></>}</td>
+                <td>{destination ? <><span className="evidence-label">{destination.label}</span><span className="brand-destination technical-value" title={destination.value}>→ {destination.value}</span></> : <span className="not-applicable">{assessed ? "No redirect observed" : "Not assessed"}</span>}{observation?.page_title && <span className="asset-secondary">Title: {observation.page_title}</span>}{assessed && <button type="button" className="brand-evidence-toggle" aria-expanded={expanded} onClick={() => setExpandedDomain(expanded ? null : asset.domain)}>{expanded ? "Hide HTTP details" : "HTTP details"}</button>}</td>
                 <td><AssetLink domain={asset.domain} returnTo="brand" returnQuery={queryForReturn(query)} className="row-action">→</AssetLink></td>
               </tr>
+              {expanded && <tr className="brand-evidence-details"><td colSpan={5}><div><strong>{observation.evidence_scope} · {observation.evidence_source}</strong><span>Scan #{observation.scan_id ?? data.inventory.scan_id} · {observationTimestamp(observation)}</span><span>Initial status: {displayEvidence(observation.initial_http_status, "Not recorded")}</span>{observation.observed_hops?.map((hop, index) => <span key={`${hop.source_url}-${index}`}>Hop {index + 1}: {hop.status} · {hop.reported_location || "No Location header"}{hop.reported_destination_url ? ` · Reported destination ${hop.reported_destination_url}` : ""}{hop.followed ? " · followed" : " · not followed"}</span>)}{observation.final_status != null && <span>Verified final status: {observation.final_status}</span>}<span>Completeness: {observation.completeness || "UNKNOWN"}</span>{observation.operation_id && <span>Operation: {observation.operation_id}</span>}</div></td></tr>}
+              </React.Fragment>
               );
             })}</tbody>
           </table>

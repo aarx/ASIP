@@ -788,6 +788,12 @@
 .brand-table th:last-child { width: 6%; }
 .brand-table td:first-child { display: grid; justify-items: start; gap: 7px; }
 .brand-destination { display: block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brand-evidence-toggle { display: block; margin-top: 6px; padding: 0; border: 0; background: transparent; color: var(--asip-accent-bright); font: inherit; font-size: 9px; cursor: pointer; }
+.brand-evidence-details td { background: rgba(61, 196, 255, .035); }
+.brand-evidence-details td:first-child { display: table-cell; }
+.brand-evidence-details td > div { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+.brand-evidence-details strong { color: var(--asip-text-primary); font-size: 9px; }
+.brand-evidence-details span { color: var(--asip-text-muted); font-size: 9px; overflow-wrap: anywhere; }
 
 .investigation-workspace { display: grid; grid-template-columns: minmax(250px, 320px) minmax(0, 1fr); gap: 14px; align-items: start; }
 .investigation-queue { position: sticky; top: 14px; min-width: 0; }
