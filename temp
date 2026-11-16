@@ -1,55 +1,116 @@
 cd ~/Desktop/Projects/ASIP
 
-sudo docker compose -p asip exec -T db \
-  psql -U asm -d asm_db -c "
-SELECT
-    id,
-    domain,
-    is_known,
-    ownership_status,
-    scannable
-FROM domains
-WHERE is_known = TRUE
-ORDER BY domain;"
+# Check existing local changes
+git status --short -- . \
+  ':(exclude)backend/data/final_output.csv' \
+  ':(exclude)backend/data/final_output.csv.manifest.json'
+
+# Download latest Git references
+git fetch origin main
+
+# Update source without a merge commit
+git pull --ff-only origin main
 
 
-sudo docker compose -p asip exec -T db \
-  psql -U asm -d asm_db -c "
-SELECT
-    ownership_status,
-    is_known,
-    scannable,
-    COUNT(*) AS total
-FROM domains
-GROUP BY ownership_status, is_known, scannable
-ORDER BY total DESC;"
+git log -1 --oneline
 
+git merge-base --is-ancestor \
+  8619389b1af8f4525959ce3a727ccda66a9a27d1 HEAD \
+  && echo "Brand Redirect update present"
 
 sudo docker compose -p asip exec -T db \
-  psql -U asm -d asm_db -c "
-SELECT table_name
-FROM information_schema.tables
-WHERE table_schema = 'public'
-  AND (
-    table_name ILIKE '%seed%'
-    OR table_name ILIKE '%scope%'
-    OR table_name ILIKE '%domain%'
-  )
-ORDER BY table_name;"
+  psql -U asm -d asm_db -c \
+  "SELECT id, status FROM scans ORDER BY id DESC LIMIT 5;"
 
 
+cd ~/Desktop/Projects/ASIP
+
+BACKUP="$HOME/asip-before-update-$(date +%Y%m%d-%H%M%S).dump"
+
+sudo docker compose -p asip exec -T db \
+  pg_dump -U asm -d asm_db -Fc > "$BACKUP"
+
+test -s "$BACKUP" && echo "Database backup created: $BACKUP"
+
+
+ls -l backend/migrations/0{18,19,20}_*.sql
 
 
 
 sudo docker compose -p asip exec -T db \
-  psql -U asm -d asm_db -c "
-SELECT
-    id,
-    domain,
-    is_known,
-    ownership_status,
-    scannable
-FROM domains
-WHERE domain = 'alico.com'
-   OR domain LIKE '%.alico.com'
-ORDER BY domain;"
+  psql -U asm -d asm_db -c \
+  "SELECT table_name FROM information_schema.tables
+   WHERE table_schema='public'
+   AND table_name LIKE '%brand_redirect%';"
+
+
+
+
+
+for n in 018 019 020; do
+  file=$(find backend/migrations -maxdepth 1 \
+    -name "${n}_*.sql" -print -quit)
+
+  [ -n "$file" ] || { echo "Missing migration $n"; break; }
+
+  echo "Applying $file"
+
+  sudo docker compose -p asip exec -T db \
+    psql -X -v ON_ERROR_STOP=1 -U asm -d asm_db \
+    < "$file" || break
+done
+
+
+
+
+
+cd ~/Desktop/Projects/ASIP
+
+BACKEND_IMAGE=$(
+  sudo docker compose -p asip config --format json |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["backend"]["image"])'
+)
+
+echo "Building: $BACKEND_IMAGE"
+
+sudo docker build \
+  -f backend/Dockerfile \
+  -t "$BACKEND_IMAGE" \
+  backend/
+
+
+
+sudo docker image inspect "$BACKEND_IMAGE" \
+  --format '{{.Id}}'
+
+
+
+sudo docker compose -p asip build frontend
+
+
+
+sudo docker compose -p asip config --quiet
+
+
+
+sudo docker compose -p asip up -d --no-build
+
+
+
+sudo docker compose -p asip ps
+
+
+
+sudo docker compose -p asip exec -T backend \
+  python -c "from db import get_conn; c=get_conn(); print('DB CONNECTION OK'); c.close()"
+
+
+
+
+
+sudo docker compose -p asip exec -T backend \
+  python -c "import os; print(os.getenv('ASIP_DEFAULT_SCAN_OPERATIONS'))"
+
+
+
+sudo docker compose -p asip logs --tail=40 backend frontend
