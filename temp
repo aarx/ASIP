@@ -1,12 +1,15 @@
 sudo docker exec asm_db psql -U asm -d asm_db -c "
 SELECT
     table_name,
-    column_name
+    column_name,
+    data_type
 FROM information_schema.columns
 WHERE table_schema = 'public'
   AND (
-    table_name ILIKE '%stage%'
-    OR table_name ILIKE '%diagnostic%'
+    table_name ILIKE '%scan%'
+    OR column_name ILIKE '%stage%'
+    OR column_name ILIKE '%worker%'
+    OR column_name ILIKE '%summary%'
   )
 ORDER BY table_name, ordinal_position;
 "
