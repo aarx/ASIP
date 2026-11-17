@@ -1,15 +1,16 @@
 sudo docker exec asm_db psql -U asm -d asm_db -c "
-SELECT
-    table_name,
-    column_name,
-    data_type
+SELECT table_name
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND table_type = 'BASE TABLE'
+ORDER BY table_name;
+"
+
+
+sudo docker exec asm_db psql -U asm -d asm_db -c "
+SELECT column_name, data_type
 FROM information_schema.columns
 WHERE table_schema = 'public'
-  AND (
-    table_name ILIKE '%scan%'
-    OR column_name ILIKE '%stage%'
-    OR column_name ILIKE '%worker%'
-    OR column_name ILIKE '%summary%'
-  )
-ORDER BY table_name, ordinal_position;
+  AND table_name = 'scans'
+ORDER BY ordinal_position;
 "
