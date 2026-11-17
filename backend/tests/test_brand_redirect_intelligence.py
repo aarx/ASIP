@@ -99,6 +99,31 @@ class BrandRedirectConfigurationTests(unittest.TestCase):
         self.assertEqual(params, (24, ["brand_tld", "brand_pattern"], 2000))
         self.assertEqual(cursor.execute.call_count, 1)
 
+    def test_scan_26_confirmed_storage_reporting_candidate_is_selectable(self):
+        # Scan 26's Brand Exposure Candidates were persisted as CONFIRMED;
+        # reporting classification falls back to CANDIDATE outside trusted roots.
+        cursor = mock.Mock()
+        cursor.fetchall.return_value = [(
+            2601, "lookalike-example.net", ["brand_pattern"], ["example.com"],
+        )]
+        connection = mock.Mock()
+        connection.cursor.return_value = cursor
+        with mock.patch.object(worker, "get_conn", return_value=connection), \
+             mock.patch.object(worker, "require_running_scan"), \
+             mock.patch.object(worker, "default_operation_enabled", return_value=True):
+            selected = worker.select_targets(26)
+
+        self.assertEqual(selected, [(
+            2601, "lookalike-example.net", "https://lookalike-example.net/",
+            ["brand_pattern"], ["example.com"],
+        )])
+        sql, params = cursor.execute.call_args.args
+        self.assertIn("ELSE 'CANDIDATE'", sql)
+        self.assertIn("= 'CANDIDATE'", sql)
+        self.assertIn("WHEN d.ownership_status = 'CANDIDATE' THEN 'CANDIDATE'", sql)
+        self.assertIn("source.scan_id = sr.scan_id", sql)
+        self.assertEqual(params, (26, ["brand_tld", "brand_pattern"], 2000))
+
     def test_lookalike_outside_seed_suffix_is_selected_from_current_provenance(self):
         cursor = mock.Mock()
         cursor.fetchall.return_value = [(
@@ -114,7 +139,8 @@ class BrandRedirectConfigurationTests(unittest.TestCase):
             1, "abandoned-example.net", "https://abandoned-example.net/",
             ["brand_pattern"], ["example.com"],
         )])
-        self.assertNotIn("seed_domains", cursor.execute.call_args.args[0])
+        self.assertIn("FROM seed_domains seed_root", cursor.execute.call_args.args[0])
+        self.assertIn("source.scan_id = sr.scan_id", cursor.execute.call_args.args[0])
 
     def test_multiple_discovery_seeds_and_sources_are_retained_as_provenance(self):
         cursor = mock.Mock()
@@ -680,6 +706,12 @@ class RedirectPersistenceTests(unittest.TestCase):
         self.assertIn("rejected_destination", auth_sql)
         self.assertIn("manually rejected", auth_sql)
         self.assertIn("NULLIF(BTRIM(source.seed), '') IS NOT NULL", auth_sql)
+        self.assertIn("ELSE 'CANDIDATE'", auth_sql)
+        self.assertIn("= 'CANDIDATE'", auth_sql)
+        self.assertIn(
+            "WHEN candidate.ownership_status = 'CANDIDATE' THEN 'CANDIDATE'",
+            auth_sql,
+        )
         self.assertEqual(auth_params[:3], (17, 24, ["brand_tld", "brand_pattern"]))
         self.assertIn("brand.example", auth_params)
 

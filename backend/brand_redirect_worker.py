@@ -19,7 +19,7 @@ from brand_redirect_intelligence import (
     observe_redirect_chain,
 )
 from db import get_conn, require_running_scan
-from ownership import normalize_hostname
+from ownership import normalize_hostname, reporting_asset_class_sql
 
 
 logger = logging.getLogger("brand_redirect_intelligence")
@@ -65,6 +65,7 @@ def select_targets(scan_id):
     try:
         cur = conn.cursor()
         require_running_scan(cur, scan_id)
+        reporting_class = reporting_asset_class_sql("d.domain", "d.ownership_status")
         cur.execute(f"""
             SELECT d.id, d.domain,
                    array_agg(DISTINCT source.source ORDER BY source.source),
@@ -75,7 +76,7 @@ def select_targets(scan_id):
                 ON source.scan_id = sr.scan_id
                AND source.domain_id = sr.domain_id
              WHERE sr.scan_id = %s
-               AND d.ownership_status = 'CANDIDATE'
+               AND ({reporting_class}) = 'CANDIDATE'
                AND NOT COALESCE(
                    'manually rejected' = ANY(d.confidence_reasons), FALSE
                )
@@ -140,6 +141,9 @@ def _run_target(row, scan_id, operation_id, request_budget):
             if target_host is None:
                 return False
 
+            reporting_class = reporting_asset_class_sql(
+                "candidate.domain", "candidate.ownership_status"
+            )
             cur.execute(f"""
                 SELECT 1
                   FROM scans scan
@@ -147,7 +151,7 @@ def _run_target(row, scan_id, operation_id, request_budget):
                     ON sr.scan_id = scan.id AND sr.domain_id = %s
                   JOIN domains candidate ON candidate.id = sr.domain_id
                  WHERE scan.id = %s AND scan.status = 'RUNNING'
-                   AND candidate.ownership_status = 'CANDIDATE'
+                   AND ({reporting_class}) = 'CANDIDATE'
                    AND NOT COALESCE(
                        'manually rejected' = ANY(candidate.confidence_reasons), FALSE
                    )
