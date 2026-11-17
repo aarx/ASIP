@@ -1,7 +1,10 @@
 sudo docker exec asm_db psql -U asm -d asm_db -c "
-SELECT column_name
-FROM information_schema.columns
-WHERE table_schema='public'
-  AND table_name='domain_sources'
-ORDER BY ordinal_position;
+SELECT
+    source,
+    seed,
+    COUNT(DISTINCT domain_id) AS domains
+FROM domain_sources
+WHERE scan_id = 9
+GROUP BY source, seed
+ORDER BY domains DESC, source;
 "
