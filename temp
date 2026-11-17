@@ -1,116 +1,44 @@
-cd ~/Desktop/Projects/ASIP
+cd ~/Desktop/Projects/ASIP || exit 1
 
-# Check existing local changes
-git status --short -- . \
-  ':(exclude)backend/data/final_output.csv' \
-  ':(exclude)backend/data/final_output.csv.manifest.json'
-
-# Download latest Git references
-git fetch origin main
-
-# Update source without a merge commit
-git pull --ff-only origin main
-
-
+echo "========== 1. GIT VERSION =========="
 git log -1 --oneline
+git branch --show-current
 
-git merge-base --is-ancestor \
-  8619389b1af8f4525959ce3a727ccda66a9a27d1 HEAD \
-  && echo "Brand Redirect update present"
+echo "========== 2. RUNNING BACKEND IMAGE =========="
+sudo docker inspect asm_backend \
+  --format 'Image tag: {{.Config.Image}}
+Image ID: {{.Image}}'
 
-sudo docker compose -p asip exec -T db \
-  psql -U asm -d asm_db -c \
-  "SELECT id, status FROM scans ORDER BY id DESC LIMIT 5;"
-
-
-cd ~/Desktop/Projects/ASIP
-
-BACKUP="$HOME/asip-before-update-$(date +%Y%m%d-%H%M%S).dump"
-
-sudo docker compose -p asip exec -T db \
-  pg_dump -U asm -d asm_db -Fc > "$BACKUP"
-
-test -s "$BACKUP" && echo "Database backup created: $BACKUP"
-
-
-ls -l backend/migrations/0{18,19,20}_*.sql
-
-
-
-sudo docker compose -p asip exec -T db \
-  psql -U asm -d asm_db -c \
-  "SELECT table_name FROM information_schema.tables
-   WHERE table_schema='public'
-   AND table_name LIKE '%brand_redirect%';"
-
-
-
-
-
-for n in 018 019 020; do
-  file=$(find backend/migrations -maxdepth 1 \
-    -name "${n}_*.sql" -print -quit)
-
-  [ -n "$file" ] || { echo "Missing migration $n"; break; }
-
-  echo "Applying $file"
-
-  sudo docker compose -p asip exec -T db \
-    psql -X -v ON_ERROR_STOP=1 -U asm -d asm_db \
-    < "$file" || break
-done
-
-
-
-
-
-cd ~/Desktop/Projects/ASIP
-
-BACKEND_IMAGE=$(
-  sudo docker compose -p asip config --format json |
-  python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["backend"]["image"])'
-)
-
-echo "Building: $BACKEND_IMAGE"
-
-sudo docker build \
-  -f backend/Dockerfile \
-  -t "$BACKEND_IMAGE" \
-  backend/
-
-
-
-sudo docker image inspect "$BACKEND_IMAGE" \
-  --format '{{.Id}}'
-
-
-
-sudo docker compose -p asip build frontend
-
-
-
-sudo docker compose -p asip config --quiet
-
-
-
-sudo docker compose -p asip up -d --no-build
-
-
-
+echo "========== 3. BACKEND CONTAINER STATUS =========="
 sudo docker compose -p asip ps
 
+echo "========== 4. ENABLED SCAN OPERATIONS =========="
+sudo docker exec asm_backend python -c '
+import os
+ops = os.getenv("ASIP_DEFAULT_SCAN_OPERATIONS", "")
+print("Operations:", ops)
+print("Brand Redirect enabled:", "BRAND_REDIRECT_OBSERVATION" in ops.split(","))
+'
 
+echo "========== 5. CANDIDATE SELECTION FIX =========="
+sudo docker exec asm_backend python -c '
+import inspect
+import brand_redirect_worker
+src = inspect.getsource(brand_redirect_worker)
+print("Uses reporting classification:", "reporting_asset_class_sql" in src)
+print("Contains old CANDIDATE filter:", "ownership_status = '\''CANDIDATE'\''" in src)
+'
 
-sudo docker compose -p asip exec -T backend \
-  python -c "from db import get_conn; c=get_conn(); print('DB CONNECTION OK'); c.close()"
+echo "========== 6. REDIRECT MIGRATIONS =========="
+sudo docker exec asm_db psql -U asm -d asm_db -Atc "
+SELECT table_name
+FROM information_schema.tables
+WHERE table_schema = 'public'
+AND table_name ILIKE '%brand_redirect%'
+ORDER BY table_name;
+"
 
-
-
-
-
-sudo docker compose -p asip exec -T backend \
-  python -c "import os; print(os.getenv('ASIP_DEFAULT_SCAN_OPERATIONS'))"
-
-
-
-sudo docker compose -p asip logs --tail=40 backend frontend
+echo "========== 7. RECENT REDIRECT WORKER LOGS =========="
+sudo docker logs asm_backend 2>&1 |
+grep -E 'Brand Redirect Intelligence|brand_redirect_worker|disabled_reason' |
+tail -25
