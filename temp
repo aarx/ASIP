@@ -1,6 +1,8 @@
-sudo docker exec asm_backend sh -c \
-"grep -nE 'def (main|select|load|run)|ArgumentParser|sys.argv|__main__' /app/brand_redirect_worker.py"
+sudo docker exec asm_backend python -c '
+from brand_redirect_worker import select_targets
 
+targets = select_targets(9)
 
-sudo docker exec asm_backend \
-  python -u /app/brand_redirect_worker.py 9
+print("Selected targets:", len(targets))
+print("Sample targets:", targets[:5])
+'
