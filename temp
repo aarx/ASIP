@@ -1,8 +1,8 @@
-sudo docker exec asm_db psql -U asm -d asm_db -c "
+sudo docker exec asm_db psql -U asm -d asm_db -P pager=off -c "
 SELECT
     a->>'stage' AS stage,
     a->>'status' AS status,
-    a->>'started_at' AS started_at,
+    a->>'duration_seconds' AS duration_seconds,
     a->'worker_summary' AS worker_summary,
     a->>'error_category' AS error
 FROM scans s
@@ -10,5 +10,5 @@ CROSS JOIN LATERAL jsonb_array_elements(
     COALESCE(s.stage_diagnostics->'attempts', '[]'::jsonb)
 ) AS a
 WHERE s.id = 9
-  AND a->>'stage' ILIKE '%Brand Redirect%';
+  AND a->>'stage' = 'Brand Redirect Intelligence';
 "
