@@ -1,29 +1,14 @@
 sudo docker exec asm_db psql -U asm -d asm_db -c "
 SELECT
-    id,
-    status,
-    jsonb_pretty(stage_diagnostics) AS diagnostics
-FROM scans
-WHERE id = 9;
-"
-
-
-sudo docker exec asm_db psql -U asm -d asm_db -c "
-SELECT
-    id,
-    key,
-    jsonb_pretty(value) AS details
-FROM scans,
-LATERAL jsonb_each(
-    CASE
-        WHEN jsonb_typeof(stage_diagnostics) = 'object'
-        THEN stage_diagnostics
-        ELSE '{}'::jsonb
-    END
-)
-WHERE id = 9
-  AND (
-    key ILIKE '%redirect%'
-    OR value::text ILIKE '%Brand Redirect%'
-  );
+    a->>'stage' AS stage,
+    a->>'status' AS status,
+    a->>'started_at' AS started_at,
+    a->'worker_summary' AS worker_summary,
+    a->>'error_category' AS error
+FROM scans s
+CROSS JOIN LATERAL jsonb_array_elements(
+    COALESCE(s.stage_diagnostics->'attempts', '[]'::jsonb)
+) AS a
+WHERE s.id = 9
+  AND a->>'stage' ILIKE '%Brand Redirect%';
 "
