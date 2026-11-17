@@ -1,10 +1,6 @@
-sudo docker exec asm_db psql -U asm -d asm_db -c "
-SELECT
-    source,
-    seed,
-    COUNT(DISTINCT domain_id) AS domains
-FROM domain_sources
-WHERE scan_id = 9
-GROUP BY source, seed
-ORDER BY domains DESC, source;
-"
+sudo docker exec asm_backend sh -c \
+"grep -nE 'def (main|select|load|run)|ArgumentParser|sys.argv|__main__' /app/brand_redirect_worker.py"
+
+
+sudo docker exec asm_backend \
+  python -u /app/brand_redirect_worker.py 9
