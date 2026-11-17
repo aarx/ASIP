@@ -1,44 +1,12 @@
-cd ~/Desktop/Projects/ASIP || exit 1
-
-echo "========== 1. GIT VERSION =========="
-git log -1 --oneline
-git branch --show-current
-
-echo "========== 2. RUNNING BACKEND IMAGE =========="
-sudo docker inspect asm_backend \
-  --format 'Image tag: {{.Config.Image}}
-Image ID: {{.Image}}'
-
-echo "========== 3. BACKEND CONTAINER STATUS =========="
-sudo docker compose -p asip ps
-
-echo "========== 4. ENABLED SCAN OPERATIONS =========="
-sudo docker exec asm_backend python -c '
-import os
-ops = os.getenv("ASIP_DEFAULT_SCAN_OPERATIONS", "")
-print("Operations:", ops)
-print("Brand Redirect enabled:", "BRAND_REDIRECT_OBSERVATION" in ops.split(","))
-'
-
-echo "========== 5. CANDIDATE SELECTION FIX =========="
 sudo docker exec asm_backend python -c '
 import inspect
 import brand_redirect_worker
-src = inspect.getsource(brand_redirect_worker)
-print("Uses reporting classification:", "reporting_asset_class_sql" in src)
-print("Contains old CANDIDATE filter:", "ownership_status = '\''CANDIDATE'\''" in src)
+
+source = inspect.getsource(brand_redirect_worker)
+
+print("Reporting classification imported:",
+      "reporting_asset_class_sql" in source)
+
+print("Worker file:",
+      brand_redirect_worker.__file__)
 '
-
-echo "========== 6. REDIRECT MIGRATIONS =========="
-sudo docker exec asm_db psql -U asm -d asm_db -Atc "
-SELECT table_name
-FROM information_schema.tables
-WHERE table_schema = 'public'
-AND table_name ILIKE '%brand_redirect%'
-ORDER BY table_name;
-"
-
-echo "========== 7. RECENT REDIRECT WORKER LOGS =========="
-sudo docker logs asm_backend 2>&1 |
-grep -E 'Brand Redirect Intelligence|brand_redirect_worker|disabled_reason' |
-tail -25
