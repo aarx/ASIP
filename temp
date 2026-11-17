@@ -1,12 +1,15 @@
-sudo docker exec asm_backend python -c '
-import inspect
-import brand_redirect_worker
+cd ~/Desktop/Projects/ASIP
 
-source = inspect.getsource(brand_redirect_worker)
+sudo docker exec asm_db psql -U asm -d asm_db -c "
+SELECT
+    scan_id,
+    COUNT(*) AS observations
+FROM brand_redirect_observations
+GROUP BY scan_id
+ORDER BY scan_id DESC
+LIMIT 10;"
 
-print("Reporting classification imported:",
-      "reporting_asset_class_sql" in source)
 
-print("Worker file:",
-      brand_redirect_worker.__file__)
-'
+sudo docker logs asm_backend 2>&1 |
+grep -E 'Brand Redirect Intelligence|brand_redirect_worker|disabled_reason' |
+tail -30
