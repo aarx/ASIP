@@ -1,31 +1,12 @@
-cd ~/Desktop/Projects/ASIP
-
-echo "===== RECENT SCANS ====="
 sudo docker exec asm_db psql -U asm -d asm_db -c "
-SELECT id, status, started_at, completed_at
-FROM scans
-ORDER BY id DESC
-LIMIT 8;
-"
-
-echo "===== REDIRECT STAGE HISTORY ====="
-sudo docker exec asm_db psql -U asm -d asm_db -c "
-SELECT table_name
-FROM information_schema.tables
-WHERE table_schema='public'
+SELECT
+    table_name,
+    column_name
+FROM information_schema.columns
+WHERE table_schema = 'public'
   AND (
     table_name ILIKE '%stage%'
-    OR table_name ILIKE '%redirect%'
+    OR table_name ILIKE '%diagnostic%'
   )
-ORDER BY table_name;
+ORDER BY table_name, ordinal_position;
 "
-
-echo "===== WORKER SELECTION CODE ====="
-sudo docker exec asm_backend python -c '
-import inspect
-import brand_redirect_worker
-s = inspect.getsource(brand_redirect_worker)
-for i, line in enumerate(s.splitlines(), 1):
-    if "reporting_asset_class_sql" in line or "ownership_status" in line:
-        print(i, line.strip())
-'
