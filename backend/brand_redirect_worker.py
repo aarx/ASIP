@@ -199,7 +199,7 @@ def _run_target(row, scan_id, operation_id, request_budget):
                 completeness, evidence
             ) VALUES (%s, %s, %s, %s, %s, %s::jsonb)
         """, (
-            scan_id, domain_id, operation_id, EVIDENCE_SOURCE,
+            scan_id, domain_id, str(operation_id), EVIDENCE_SOURCE,
             evidence["completeness"], json.dumps(evidence, separators=(",", ":")),
         ))
         conn.commit()
