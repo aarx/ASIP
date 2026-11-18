@@ -1,4 +1,5 @@
 import pathlib
+import socket
 import sys
 from urllib.parse import urlsplit
 import unittest
@@ -151,6 +152,49 @@ class HttpProbeTests(unittest.TestCase):
                     "example.test", 443, expected_ip="8.8.8.8"
                 ), []
             )
+
+    def test_validated_tls_resolution_distinguishes_dns_and_unsafe_destinations(self):
+        with mock.patch.object(
+            http_probe.socket, "getaddrinfo", side_effect=socket.gaierror("NXDOMAIN")
+        ), mock.patch.object(http_probe.socket, "create_connection") as connect:
+            with self.assertRaises(http_probe.DNSResolutionError):
+                http_probe.open_validated_tls_socket(
+                    "absent.example", before_request=lambda: True
+                )
+        connect.assert_not_called()
+
+        with mock.patch.object(http_probe.socket, "getaddrinfo", return_value=[]), \
+             mock.patch.object(http_probe.socket, "create_connection") as connect:
+            with self.assertRaises(http_probe.NoPermittedDestinationError):
+                http_probe.open_validated_tls_socket(
+                    "no-address.example", before_request=lambda: True
+                )
+        connect.assert_not_called()
+
+        private_answer = [(2, 1, 6, "", ("10.0.0.5", 443))]
+        with mock.patch.object(
+            http_probe.socket, "getaddrinfo", return_value=private_answer
+        ), mock.patch.object(http_probe.socket, "create_connection") as connect:
+            with self.assertRaises(http_probe.NoPermittedDestinationError):
+                http_probe.open_validated_tls_socket(
+                    "private.example", before_request=lambda: True
+                )
+        connect.assert_not_called()
+
+    def test_validated_tls_uses_fresh_dns_without_a_stored_ip_pin(self):
+        public_answer = [(2, 1, 6, "", ("8.8.8.8", 443))]
+        tls_socket = mock.Mock()
+        with mock.patch.object(
+            http_probe.socket, "getaddrinfo", return_value=public_answer
+        ) as resolve, mock.patch.object(
+            http_probe, "_connect_pinned", return_value=tls_socket
+        ) as connect:
+            result = http_probe.open_validated_tls_socket(
+                "fresh.example", before_request=lambda: True
+            )
+        self.assertIs(result, tls_socket)
+        resolve.assert_called_once_with("fresh.example", 443, type=1)
+        connect.assert_called_once_with("fresh.example", "https", "8.8.8.8")
 
     def test_tls_uses_validated_peer_hostname_sni_and_default_verification(self):
         raw = mock.Mock()

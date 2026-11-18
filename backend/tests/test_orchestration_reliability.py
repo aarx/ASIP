@@ -44,6 +44,90 @@ class OrchestrationTimeoutTests(unittest.TestCase):
     def setUpClass(cls):
         cls.module = load_backend_module(BACKEND / "orchestration.py")
 
+    def test_san_and_other_stage_timeout_defaults_and_overrides(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(self.module.stage_timeout_seconds("SAN Expansion"), 21600)
+            self.assertEqual(self.module.stage_timeout_seconds("DNS Resolution"), 1800)
+
+        with mock.patch.dict(os.environ, {
+            "ASIP_SAN_STAGE_TIMEOUT_SECONDS": "28800",
+            "ASIP_STAGE_TIMEOUT_SECONDS": "900",
+        }, clear=True):
+            self.assertEqual(self.module.stage_timeout_seconds("SAN Expansion"), 28800)
+            self.assertEqual(self.module.stage_timeout_seconds("HTTP/TLS Observation"), 900)
+
+        with mock.patch.dict(os.environ, {
+            "ASIP_STAGE_TIMEOUT_SECONDS": "1200",
+        }, clear=True):
+            self.assertEqual(self.module.stage_timeout_seconds("SAN Expansion"), 21600)
+            self.assertEqual(self.module.stage_timeout_seconds("Port Scan"), 1200)
+
+    def test_invalid_stage_timeout_values_use_established_fallbacks(self):
+        with mock.patch.dict(os.environ, {
+            "ASIP_SAN_STAGE_TIMEOUT_SECONDS": "not-a-number",
+            "ASIP_STAGE_TIMEOUT_SECONDS": "0",
+        }, clear=True):
+            self.assertEqual(self.module.stage_timeout_seconds("SAN Expansion"), 21600)
+            self.assertEqual(self.module.stage_timeout_seconds("DNS Resolution"), 1800)
+
+    def test_san_timeout_uses_deadline_and_records_timed_out_diagnostics(self):
+        process = mock.Mock(returncode=-9, stdout=None)
+        timeout = subprocess.TimeoutExpired("san-worker", 21600, output=b"processed=2545")
+        with mock.patch.dict(os.environ, {}, clear=True), \
+             mock.patch.object(self.module.subprocess, "Popen", return_value=process), \
+             mock.patch.object(
+                 self.module, "_stream_stage_output", side_effect=[timeout, b"drained"]
+             ) as stream, \
+             mock.patch.object(self.module, "stop_active_child") as stop_child, \
+             mock.patch.object(self.module, "_diagnostics_finish") as finish, \
+             mock.patch.object(self.module.logging, "error") as log_error:
+            result = self.module.run_step("SAN Expansion", "mock-san", 1, 2)
+
+        self.assertEqual(result, self.module.STAGE_TIMEOUT_EXIT_CODE)
+        self.assertEqual(stream.call_args_list[0].args[2], 21600)
+        self.assertEqual(stream.call_args_list[1].args[2], self.module.CHILD_TERMINATE_GRACE_SECONDS)
+        stop_child.assert_called_once_with(process)
+        self.assertEqual(finish.call_args.args[5], "TIMED_OUT")
+        self.assertEqual(finish.call_args.args[7], "STAGE_TIMEOUT")
+        self.assertEqual(log_error.call_args.args[-1], 21600)
+
+        with mock.patch.dict(os.environ, {}, clear=True), \
+             mock.patch.object(
+                 self.module, "run_step", return_value=self.module.STAGE_TIMEOUT_EXIT_CODE
+             ) as run_stage:
+            with self.assertRaisesRegex(
+                self.module.StageExecutionError, "SAN Expansion timed out after 21600 seconds"
+            ):
+                self.module.run_required_stage("SAN Expansion", "mock-san")
+        run_stage.assert_called_once()
+
+    def test_san_stage_finishing_early_continues_without_waiting_for_deadline(self):
+        command = (
+            f"{shlex.quote(sys.executable)} -c "
+            + shlex.quote("print('san-complete', flush=True)")
+        )
+        started = time.monotonic()
+        with mock.patch.dict(os.environ, {}, clear=True):
+            result = self.module.run_step("SAN Expansion", command, 1, 1)
+        elapsed = time.monotonic() - started
+        self.assertEqual(result, 0)
+        self.assertLess(elapsed, 2)
+
+    def test_retryable_san_attempts_reuse_san_timeout_policy(self):
+        observed_timeouts = []
+
+        def retryable_then_success(name, *_args):
+            observed_timeouts.append(self.module.stage_timeout_seconds(name))
+            return (
+                self.module.RETRYABLE_INCOMPLETE_EXIT_CODE
+                if len(observed_timeouts) == 1 else 0
+            )
+
+        with mock.patch.dict(os.environ, {}, clear=True), \
+             mock.patch.object(self.module, "run_step", side_effect=retryable_then_success):
+            self.module.run_required_stage("SAN Expansion", "mock-san")
+        self.assertEqual(observed_timeouts, [21600, 21600])
+
     def test_hung_stage_is_bounded_and_process_group_is_cleaned(self):
         command = (
             f"{shlex.quote(sys.executable)} -c "

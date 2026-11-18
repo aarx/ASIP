@@ -30,6 +30,7 @@ CHILD_TERMINATE_GRACE_SECONDS = 5
 STAGE_TIMEOUT_EXIT_CODE = 124
 OVERLAP_SKIP_EXIT_CODE = 0
 DEFAULT_STAGE_TIMEOUT_SECONDS = 1800
+DEFAULT_SAN_STAGE_TIMEOUT_SECONDS = 21600
 DEFAULT_RUNNER_HEARTBEAT_INTERVAL_SECONDS = 15
 DEFAULT_RUNNER_ORPHAN_GRACE_SECONDS = 120
 PROCESS_GROUP_POLL_INTERVAL_SECONDS = 0.05
@@ -56,8 +57,12 @@ def _positive_env_int(name, default):
     return value if value > 0 else default
 
 
-def stage_timeout_seconds(_stage_name):
+def stage_timeout_seconds(stage_name):
     """Return the configurable per-attempt stage deadline."""
+    if stage_name == "SAN Expansion":
+        return _positive_env_int(
+            "ASIP_SAN_STAGE_TIMEOUT_SECONDS", DEFAULT_SAN_STAGE_TIMEOUT_SECONDS
+        )
     return _positive_env_int(
         "ASIP_STAGE_TIMEOUT_SECONDS", DEFAULT_STAGE_TIMEOUT_SECONDS
     )
