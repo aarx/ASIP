@@ -1,32 +1,107 @@
-cd ~/Desktop/Projects/ASIP
 
+cd ~/Desktop/Projects/ASIP || exit 1
+
+set -e
+
+echo "===== 1. CHECK RUNNING SCANS ====="
+RUNNING=$(sudo docker exec asm_db psql -U asm -d asm_db -Atc \
+  "SELECT COUNT(*) FROM scans WHERE status='RUNNING';")
+
+if [ "$RUNNING" != "0" ]; then
+  echo "STOP: $RUNNING scan(s) still running."
+  exit 1
+fi
+
+echo "===== 2. VERIFY CURRENT CODE ====="
+grep -n 'str(operation_id)' backend/brand_redirect_worker.py
+
+echo "===== 3. VERIFY DATABASE COLUMN TYPES ====="
+sudo docker exec asm_db psql -U asm -d asm_db -c "
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_name='brand_redirect_observations'
+  AND column_name IN ('scan_id','domain_id','operation_id');
+"
+
+echo "===== 4. BACKUP WORKER ====="
+cp -p backend/brand_redirect_worker.py \
+  backend/brand_redirect_worker.py.pre_uuid_fix.bak
+
+echo "===== 5. APPLY UUID ADAPTER FIX ====="
+python3 - <<'PY'
+from pathlib import Path
+
+p = Path("backend/brand_redirect_worker.py")
+s = p.read_text()
+
+if "from psycopg2.extras import register_uuid" not in s:
+    lines = s.splitlines(keepends=True)
+    pos = next(
+        (i for i, line in enumerate(lines)
+         if line.startswith("import psycopg2") or
+            line.startswith("from psycopg2")),
+        None,
+    )
+    if pos is None:
+        raise SystemExit(
+            "STOP: No psycopg2 import found; inspect source manually."
+        )
+    lines.insert(pos, "from psycopg2.extras import register_uuid\n")
+    s = "".join(lines)
+
+old = "def _run_target(row, scan_id, operation_id, request_budget):"
+
+if s.count(old) != 1:
+    raise SystemExit("STOP: Unexpected _run_target definition.")
+
+new = (
+    "def _run_target(row, scan_id, operation_id, request_budget):\n"
+    "    register_uuid()"
+)
+
+s = s.replace(old, new, 1)
+
+p.write_text(s)
+print("Applied native UUID adapter registration.")
+PY
+
+echo "===== 6. SYNTAX CHECK ====="
+python3 -m py_compile backend/brand_redirect_worker.py
+
+echo "===== 7. BUILD FIXED BACKEND IMAGE ====="
 sudo docker build \
   -f backend/Dockerfile \
-  -t asip-backend:brand-redirect-fixed \
+  -t asip-backend:brand-redirect-uuid-adapter \
   backend/
 
+echo "===== 8. OFFLINE UUID ADAPTATION TEST ====="
+sudo docker run --rm \
+  --entrypoint python \
+  asip-backend:brand-redirect-uuid-adapter \
+  -c 'import uuid; from psycopg2.extensions import adapt; from psycopg2.extras import register_uuid; register_uuid(); print("UUID adaptation:", adapt(uuid.uuid4()).getquoted())'
 
-sudo docker compose -p asip config --quiet
+echo "===== 9. DEPLOY BACKEND ONLY ====="
+sudo docker compose -p asip \
+  run --rm --no-deps --entrypoint python \
+  backend -c 'print("Compose backend service accessible")'
 
+sudo docker tag \
+  asip-backend:brand-redirect-uuid-adapter \
+  asip-backend:brand-redirect-fixed
 
 sudo docker compose -p asip up -d \
   --no-deps --no-build --force-recreate backend
 
-
-
-
+echo "===== 10. VERIFY RUNNING BACKEND ====="
 sudo docker inspect asm_backend \
   --format 'Running image: {{.Config.Image}}'
 
 sudo docker exec asm_backend python -c '
 import inspect
 import brand_redirect_worker
-
-source = inspect.getsource(brand_redirect_worker)
-
-print("Candidate-selection fix:",
-      "reporting_asset_class_sql" in source)
-
-print("UUID persistence fix:",
-      "str(operation_id)" in source)
+s = inspect.getsource(brand_redirect_worker)
+print("Candidate selection fix:", "reporting_asset_class_sql" in s)
+print("UUID adapter registration:", "register_uuid()" in s)
 '
+
+echo "===== COMPLETED ====="
