@@ -22,6 +22,14 @@ class AuthorizationDeniedError(RuntimeError):
     """A fresh policy check denied a direct target operation."""
 
 
+class DNSResolutionError(OSError):
+    """DNS lookup failed before a validated connection could be attempted."""
+
+
+class NoPermittedDestinationError(OSError):
+    """Resolution produced no usable public destination address."""
+
+
 class RequestNotStartedError(OSError):
     """All connection attempts failed before invoking request()."""
 
@@ -68,7 +76,9 @@ def _prohibited_address(value):
     ))
 
 
-def _resolve_allowed_addresses(domain, port, expected_ip=None):
+def _resolve_allowed_addresses(
+    domain, port, expected_ip=None, *, distinguish_dns_errors=False
+):
     try:
         literal = ipaddress.ip_address(domain.rstrip("."))
         addresses = [str(literal)]
@@ -80,7 +90,9 @@ def _resolve_allowed_addresses(domain, port, expected_ip=None):
             infos = socket.getaddrinfo(
                 normalized_domain, port, type=socket.SOCK_STREAM
             )
-        except (OSError, socket.gaierror):
+        except (OSError, socket.gaierror) as exc:
+            if distinguish_dns_errors:
+                raise DNSResolutionError("DNS resolution failed") from exc
             return []
         addresses = []
         for _family, _kind, _proto, _canonname, sockaddr in infos:
@@ -128,9 +140,11 @@ def open_validated_tls_socket(domain, *, expected_ip=None, before_request=None):
     """Open one validated TLS connection for SAN/certificate observation."""
     if before_request is None:
         raise AuthorizationDeniedError("authorization check is required")
-    addresses = _resolve_allowed_addresses(domain, 443, expected_ip)
+    addresses = _resolve_allowed_addresses(
+        domain, 443, expected_ip, distinguish_dns_errors=True
+    )
     if not addresses:
-        raise OSError("no permitted TLS destination address")
+        raise NoPermittedDestinationError("no permitted TLS destination address")
     last_error = None
     for address in addresses:
         if not before_request():

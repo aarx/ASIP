@@ -3,6 +3,7 @@ import os
 import json
 import signal
 import socket
+import ssl
 import sys
 import threading
 import time
@@ -12,7 +13,12 @@ from authorization_policy import (
     recheck_active_authorization,
 )
 from db import get_conn, require_running_scan
-from http_probe import AuthorizationDeniedError, open_validated_tls_socket
+from http_probe import (
+    AuthorizationDeniedError,
+    DNSResolutionError,
+    NoPermittedDestinationError,
+    open_validated_tls_socket,
+)
 from ownership import (
     load_trusted_domains,
     normalize_hostname,
@@ -47,21 +53,47 @@ def fetch_san_domains(domain, before_request=None):
         with open_validated_tls_socket(
             domain, before_request=before_request
         ) as ssock:
-            cert = ssock.getpeercert()
-
-        san = cert.get("subjectAltName", [])
-        return [entry[1] for entry in san if entry[0] == "DNS"]
+            try:
+                cert = ssock.getpeercert()
+                san = cert.get("subjectAltName", [])
+                return [entry[1] for entry in san if entry[0] == "DNS"]
+            except Exception:
+                _fetch_state.category = "tls_handshake_or_certificate_failure"
+                return None
 
     except AuthorizationDeniedError:
         _fetch_state.category = "authorization_skipped"
         return None
-    except (OSError, ValueError) as e:
-        if isinstance(e, (TimeoutError, socket.timeout)):
-            _fetch_state.category = "timeout"
-        elif isinstance(e, OSError) and str(e) == "no permitted TLS destination address":
+    except DNSResolutionError:
+        _fetch_state.category = "dns_failure"
+        return None
+    except NoPermittedDestinationError:
+        _fetch_state.category = "no_permitted_destination"
+        return None
+    except (TimeoutError, socket.timeout):
+        _fetch_state.category = "timeout"
+        return None
+    except ssl.SSLError:
+        _fetch_state.category = "tls_handshake_or_certificate_failure"
+        return None
+    except ConnectionError:
+        _fetch_state.category = "connection_failure"
+        return None
+    except OSError as exc:
+        # Preserve compatibility with TLS helpers that report a rejected
+        # address using the original OSError text.
+        if str(exc) == "no permitted TLS destination address":
             _fetch_state.category = "no_permitted_destination"
         else:
-            _fetch_state.category = "other_failure"
+            _fetch_state.category = "connection_failure"
+        return None
+    except ValueError:
+        _fetch_state.category = "tls_handshake_or_certificate_failure"
+        return None
+    except SanAuthorizationError:
+        raise
+    except Exception:
+        _fetch_state.category = "other_failure"
         return None
 
 
@@ -167,15 +199,20 @@ def _target_metric(target_scan_id, domain_id, started, tls_elapsed,
 
 def get_san_targets(cur, target_scan_id):
     cur.execute(f"""
-        SELECT DISTINCT ON (d.id) d.id, d.domain
+        SELECT DISTINCT ON (LOWER(TRIM(TRAILING '.' FROM d.domain))) d.id, d.domain
         FROM domains d
         JOIN scan_results sr ON d.id=sr.domain_id AND sr.scan_id=%s
-        JOIN domain_states ds ON d.id=ds.domain_id AND ds.scan_id=%s
-        LEFT JOIN domain_san dsan ON d.id=dsan.domain_id AND dsan.scan_id=%s
-        WHERE dsan.domain_id IS NULL
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM domain_san dsan
+            JOIN domains completed ON completed.id=dsan.domain_id
+            WHERE dsan.scan_id=%s
+              AND LOWER(TRIM(TRAILING '.' FROM completed.domain))
+                  = LOWER(TRIM(TRAILING '.' FROM d.domain))
+        )
           AND {active_scan_authorization_sql('d', 'HTTP_TLS_OBSERVATION')}
-        ORDER BY d.id, ds.scan_id DESC
-    """, (target_scan_id, target_scan_id, target_scan_id))
+        ORDER BY LOWER(TRIM(TRAILING '.' FROM d.domain)), d.id
+    """, (target_scan_id, target_scan_id))
     return cur.fetchall()
 
 
@@ -453,7 +490,13 @@ def run_san_expansion(rows, target_scan_id, trusted_domains, workers=None,
     gate = cancel_gate or SanCancellationGate()
     worker_count = configured_san_workers(workers)
     selected_by_id = {}
+    selected_by_hostname = set()
     for row in rows:
+        hostname = normalize_hostname(row[1], require_fqdn=True)
+        key = hostname or str(row[1]).strip().lower().rstrip(".")
+        if key in selected_by_hostname:
+            continue
+        selected_by_hostname.add(key)
         selected_by_id.setdefault(int(row[0]), (int(row[0]), row[1]))
     # get_san_targets has historically supplied d.id order.  Keep that rule
     # explicit so completion timing never chooses scan_results.seed.
@@ -462,6 +505,8 @@ def run_san_expansion(rows, target_scan_id, trusted_domains, workers=None,
     counts = {key: 0 for key in (
         "completed_parent_targets", "successful_tls_retrievals",
         "no_permitted_destinations", "tls_timeouts", "other_tls_failures",
+        "dns_resolution_failures", "connection_failures",
+        "tls_handshake_or_certificate_failures",
         "authorization_skips", "worker_errors", "cancelled_targets",
         "raw_san_names_observed", "newly_created_domain_identities",
         "existing_domain_identities_reused", "persisted_parent_san_records",
@@ -588,8 +633,16 @@ def run_san_expansion(rows, target_scan_id, trusted_domains, workers=None,
 def _count_tls_category(counts, category):
     if category == "no_permitted_destination":
         counts["no_permitted_destinations"] += 1
+    elif category == "dns_failure":
+        counts["dns_resolution_failures"] += 1
     elif category == "timeout":
         counts["tls_timeouts"] += 1
+    elif category == "connection_failure":
+        counts["connection_failures"] += 1
+        counts["other_tls_failures"] += 1
+    elif category == "tls_handshake_or_certificate_failure":
+        counts["tls_handshake_or_certificate_failures"] += 1
+        counts["other_tls_failures"] += 1
     elif category == "other_failure":
         counts["other_tls_failures"] += 1
     elif category in {"authorization_skipped", "authorization_skips"}:
