@@ -8,6 +8,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
+from psycopg2.extras import register_uuid
+
 from authorization_policy import default_operation_enabled
 from brand_redirect_intelligence import (
     BRAND_DISCOVERY_SOURCES,
@@ -24,6 +26,7 @@ from ownership import normalize_hostname, reporting_asset_class_sql
 
 logger = logging.getLogger("brand_redirect_intelligence")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
+register_uuid()
 
 
 def _exclusion_sql(domain_expression):
@@ -199,7 +202,7 @@ def _run_target(row, scan_id, operation_id, request_budget):
                 completeness, evidence
             ) VALUES (%s, %s, %s, %s, %s, %s::jsonb)
         """, (
-            scan_id, domain_id, str(operation_id), EVIDENCE_SOURCE,
+            scan_id, domain_id, operation_id, EVIDENCE_SOURCE,
             evidence["completeness"], json.dumps(evidence, separators=(",", ":")),
         ))
         conn.commit()

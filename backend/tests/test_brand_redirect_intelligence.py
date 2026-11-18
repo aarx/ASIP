@@ -3,6 +3,7 @@ import pathlib
 import sys
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 import unittest
 from unittest import mock
@@ -15,6 +16,7 @@ sys.path.insert(0, str(BACKEND))
 import brand_redirect_intelligence as bri  # noqa: E402
 import brand_redirect_worker as worker  # noqa: E402
 import db  # noqa: E402
+import psycopg2  # noqa: E402
 from authorization_policy import (  # noqa: E402
     ScopeApproval,
     DEFAULT_SCAN_OPERATION_LEVELS,
@@ -746,9 +748,11 @@ class RedirectPersistenceTests(unittest.TestCase):
              mock.patch.object(worker, "require_running_scan") as require_running, \
              mock.patch.object(worker, "default_operation_enabled", return_value=True):
             result = worker._run_target(
-                (17, "brand.example", "https://brand.example/",
+                (uuid.UUID("d4591a6c-0118-4f27-9c51-5fedfcb988bd"),
+                 "brand.example", "https://brand.example/",
                  ["brand_tld"], ["abc.com"]),
-                24, "operation-24", worker._RequestBudget(),
+                24, uuid.UUID("8aed8fd2-fd43-4ce9-ad42-3953f56ad63f"),
+                worker._RequestBudget(),
             )
         self.assertEqual(result, "STOPPED_AT_AUTHORIZATION_BOUNDARY")
         observe.assert_called_once()
@@ -756,10 +760,21 @@ class RedirectPersistenceTests(unittest.TestCase):
         sql = cursor.execute.call_args.args[0]
         self.assertIn("INSERT INTO brand_redirect_observations", sql)
         params = cursor.execute.call_args.args[1]
-        self.assertEqual(params[:5], (
-            24, 17, "operation-24", bri.EVIDENCE_SOURCE,
-            "STOPPED_AT_AUTHORIZATION_BOUNDARY",
+        self.assertEqual(params[:2], (
+            24, uuid.UUID("d4591a6c-0118-4f27-9c51-5fedfcb988bd"),
         ))
+        self.assertEqual(params[2:5], (
+            uuid.UUID("8aed8fd2-fd43-4ce9-ad42-3953f56ad63f"),
+            bri.EVIDENCE_SOURCE, "STOPPED_AT_AUTHORIZATION_BOUNDARY",
+        ))
+        self.assertEqual(
+            psycopg2.extensions.adapt(params[1]).getquoted(),
+            b"'d4591a6c-0118-4f27-9c51-5fedfcb988bd'::uuid",
+        )
+        self.assertEqual(
+            psycopg2.extensions.adapt(params[2]).getquoted(),
+            b"'8aed8fd2-fd43-4ce9-ad42-3953f56ad63f'::uuid",
+        )
         self.assertEqual(json.loads(params[5]), evidence)
         connection.commit.assert_called_once()
 
