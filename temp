@@ -1,52 +1,54 @@
 cd ~/Desktop/Projects/ASIP
 
-echo "========== NEW IMAGE CODE =========="
+cat > /tmp/asip-pr4-override.yml <<'EOF'
+services:
+  backend:
+    image: asip-backend:pr4-ca1d5a4
+EOF
 
-sudo docker run --rm \
-  --entrypoint python \
-  asip-backend:pr4-ca1d5a4 \
-  -c '
-from pathlib import Path
 
-files = {
-    "Brand Redirect": "/app/brand_redirect_worker.py",
-    "SAN Expansion": "/app/san_worker.py",
-    "Orchestration": "/app/orchestration.py",
-    "HTTP Probe": "/app/http_probe.py",
-}
 
-for name, path in files.items():
-    p = Path(path)
-    print(name, "PRESENT" if p.is_file() else "MISSING")
+sudo docker compose \
+  -f docker-compose.yml \
+  -f /tmp/asip-pr4-override.yml \
+  config --quiet
+
+sudo docker compose \
+  -f docker-compose.yml \
+  -f /tmp/asip-pr4-override.yml \
+  config --format json | python3 -c '
+import json, sys
+service = json.load(sys.stdin)["services"]["backend"]
+print("Backend image:", service["image"])
+print("Volume mounts:", len(service.get("volumes", [])))
 '
 
-echo "========== PYTHON SYNTAX =========="
 
-sudo docker run --rm \
-  --entrypoint python \
-  asip-backend:pr4-ca1d5a4 \
-  -c '
-import ast
-from pathlib import Path
+sudo docker compose \
+  -f docker-compose.yml \
+  -f /tmp/asip-pr4-override.yml \
+  up -d --no-deps --no-build backend
 
-for name in (
-    "brand_redirect_worker.py",
-    "san_worker.py",
-    "orchestration.py",
-    "http_probe.py",
-):
-    path = Path("/app") / name
-    ast.parse(path.read_text())
-    print("PASS:", name)
-'
 
-echo "========== CURRENT BACKEND IMAGE =========="
-
+echo "========== BACKEND IMAGE =========="
 sudo docker inspect asm_backend \
   --format '{{.Config.Image}} | {{.Image}}'
 
-echo "========== ROLLBACK IMAGE =========="
+echo "========== CONTAINER STATUS =========="
+sudo docker compose \
+  -f docker-compose.yml \
+  -f /tmp/asip-pr4-override.yml \
+  ps
 
-sudo docker image inspect \
-  asip-backend:machine2-pre-pr4-rollback \
-  --format '{{.Id}}'
+echo "========== BACKEND LOGS =========="
+sudo docker logs --tail 60 asm_backend
+
+
+sed -i \
+  's|asip-backend:pr4-ca1d5a4|asip-backend:machine2-pre-pr4-rollback|' \
+  /tmp/asip-pr4-override.yml
+
+sudo docker compose \
+  -f docker-compose.yml \
+  -f /tmp/asip-pr4-override.yml \
+  up -d --no-deps --no-build backend
