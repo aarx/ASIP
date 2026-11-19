@@ -1,5 +1,6 @@
 import dns.resolver
-import socket
+import dns.exception
+import dns.reversename
 import sys
 import time
 from db import get_conn, require_running_scan
@@ -102,15 +103,18 @@ def reverse_dns(ip, before_query=None):
     if before_query is not None and not before_query():
         raise PassiveDnsAuthorizationDenied(ip)
     try:
-        return socket.gethostbyaddr(ip)[0]
-    except socket.herror as e:
-        # h_errno 1 (HOST_NOT_FOUND) and 4 (NO_DATA) conclusively mean
-        # that no PTR name exists. Other resolver failures are operational.
-        if e.errno in (1, 4):
+        resolver = dns.resolver.Resolver()
+        resolver.timeout = 2
+        resolver.lifetime = 3
+        reverse_name = dns.reversename.from_address(ip)
+        answers = resolver.resolve(reverse_name, "PTR")
+        if not answers:
             return "N/A"
-        print(f"[PTR FAIL] {ip} → {e}")
-        return None
-    except (socket.timeout, socket.gaierror, OSError) as e:
+        return answers[0].to_text().rstrip(".")
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+        # Match gethostbyaddr's previous "no PTR record" result.
+        return "N/A"
+    except (dns.exception.DNSException, OSError, ValueError) as e:
         print(f"[PTR FAIL] {ip} → {e}")
         return None
 

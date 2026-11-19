@@ -49,15 +49,17 @@ class OrchestrationStageExecutionTests(unittest.TestCase):
             f"{shlex.quote(sys.executable)} -c "
             + shlex.quote("import time; time.sleep(0.2); print('stage-complete', flush=True)")
         )
-        started = time.monotonic()
-        with mock.patch.dict(os.environ, {
-            "ASIP_STAGE_TIMEOUT_SECONDS": "0.01",
-            "ASIP_SAN_STAGE_TIMEOUT_SECONDS": "0.01",
-        }, clear=True):
-            result = self.module.run_step("SAN Expansion", command, 1, 1)
-        elapsed = time.monotonic() - started
-        self.assertEqual(result, 0)
-        self.assertGreaterEqual(elapsed, 0.2)
+        for stage_name in ("SAN Expansion", "DNS Resolution"):
+            with self.subTest(stage=stage_name):
+                started = time.monotonic()
+                with mock.patch.dict(os.environ, {
+                    "ASIP_STAGE_TIMEOUT_SECONDS": "0.01",
+                    "ASIP_SAN_STAGE_TIMEOUT_SECONDS": "0.01",
+                }, clear=True):
+                    result = self.module.run_step(stage_name, command, 1, 1)
+                elapsed = time.monotonic() - started
+                self.assertEqual(result, 0)
+                self.assertGreaterEqual(elapsed, 0.2)
 
     def test_stage_diagnostics_report_success_after_longer_execution(self):
         command = (
