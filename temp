@@ -1,22 +1,20 @@
 cd ~/Desktop/Projects/ASIP
 
-# Confirm that nothing is staged
-git diff --cached --quiet || {
-  echo "STOP: staged changes exist"
-  exit 1
-}
+echo "========== GIT HEAD =========="
+git rev-parse HEAD
 
-# Save only the two overlapping tracked files
-git stash push -m "machine2-pre-pr4-redirect-backup" -- \
-  backend/brand_redirect_worker.py \
-  backend/tests/test_brand_redirect_intelligence.py
-
-# Confirm the stash was created
-git stash list -1
-
-# Preview the remaining local changes
+echo "========== LOCAL CHANGES =========="
 git status --short
 
-# Check for remaining tracked or untracked path conflicts
-git diff --name-only HEAD..origin/main
-git status --short --untracked-files=all
+echo "========== STASH =========="
+git stash list -1
+
+echo "========== COMPOSE VALIDATION =========="
+sudo docker compose config --quiet
+echo "Compose validation exit code: $?"
+
+echo "========== COMPOSE SERVICES =========="
+sudo docker compose config --services
+
+echo "========== RUNNING CONTAINERS =========="
+sudo docker compose ps
