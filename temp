@@ -1,54 +1,21 @@
 cd ~/Desktop/Projects/ASIP
 
-cat > /tmp/asip-pr4-override.yml <<'EOF'
-services:
-  backend:
-    image: asip-backend:pr4-ca1d5a4
-EOF
-
-
-
-sudo docker compose \
-  -f docker-compose.yml \
-  -f /tmp/asip-pr4-override.yml \
-  config --quiet
-
-sudo docker compose \
-  -f docker-compose.yml \
-  -f /tmp/asip-pr4-override.yml \
-  config --format json | python3 -c '
-import json, sys
-service = json.load(sys.stdin)["services"]["backend"]
-print("Backend image:", service["image"])
-print("Volume mounts:", len(service.get("volumes", [])))
-'
-
-
-sudo docker compose \
-  -f docker-compose.yml \
-  -f /tmp/asip-pr4-override.yml \
-  up -d --no-deps --no-build backend
-
-
-echo "========== BACKEND IMAGE =========="
+echo "========== DEPLOYED BACKEND =========="
 sudo docker inspect asm_backend \
-  --format '{{.Config.Image}} | {{.Image}}'
+  --format 'Image: {{.Config.Image}} | Status: {{.State.Status}} | Health: {{if .State.Health}}{{.State.Health.Status}}{{else}}not configured{{end}}'
 
-echo "========== CONTAINER STATUS =========="
-sudo docker compose \
-  -f docker-compose.yml \
-  -f /tmp/asip-pr4-override.yml \
-  ps
+echo "========== HEALTH ENDPOINT =========="
+curl -sS -o /dev/null -w 'HTTP %{http_code}\n' \
+  http://localhost:8555/health
 
-echo "========== BACKEND LOGS =========="
-sudo docker logs --tail 60 asm_backend
+echo "========== RECENT BACKEND ERRORS =========="
+sudo docker logs --since 10m asm_backend 2>&1 | \
+  grep -Ei 'traceback|error|exception|failed' | tail -30 || true
 
+echo "========== MCP STATUS =========="
+sudo docker inspect asm_mcp \
+  --format 'Image: {{.Config.Image}} | Status: {{.State.Status}}'
 
-sed -i \
-  's|asip-backend:pr4-ca1d5a4|asip-backend:machine2-pre-pr4-rollback|' \
-  /tmp/asip-pr4-override.yml
-
-sudo docker compose \
-  -f docker-compose.yml \
-  -f /tmp/asip-pr4-override.yml \
-  up -d --no-deps --no-build backend
+echo "========== DATABASE STATUS =========="
+sudo docker inspect asm_db \
+  --format 'Status: {{.State.Status}} | Health: {{.State.Health.Status}}'
