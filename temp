@@ -1,49 +1,33 @@
-cd ~/Desktop/Projects/ASIP || exit 1
+cd ~/Desktop/Projects/ASIP
 
-set -e
-
-echo "========== 1. VERIFY TARGET IMAGE =========="
-sudo docker image inspect asip-backend:pr4-ca1d5a4 \
-  --format '{{.Id}}'
-
-echo "========== 2. PRESERVE OVERRIDE =========="
-cp /tmp/asip-pr4-override.yml \
-   "$HOME/asip-pr4-override-before-switch.yml"
-
-echo "========== 3. SET NEW BACKEND IMAGE =========="
-cat > /tmp/asip-pr4-override.yml <<'EOF'
-services:
-  backend:
-    image: asip-backend:pr4-ca1d5a4
-EOF
-
-echo "========== 4. VALIDATE =========="
-sudo docker compose \
-  -f docker-compose.yml \
-  -f /tmp/asip-pr4-override.yml \
-  config --quiet
-
-echo "========== 5. DEPLOY BACKEND =========="
-sudo docker compose \
-  -f docker-compose.yml \
-  -f /tmp/asip-pr4-override.yml \
-  up -d --no-deps --no-build backend
-
-echo "========== 6. START FRONTEND AND MCP =========="
-sudo docker start asm_frontend asm_mcp
-
-echo "========== 7. SERVICE STATUS =========="
-sudo docker ps -a --format \
-  'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-
-echo "========== 8. BACKEND IMAGE =========="
+echo "===== BACKEND IMAGE ====="
 sudo docker inspect asm_backend \
   --format '{{.Config.Image}} | {{.State.Status}}'
 
-echo "========== 9. RECENT ERRORS =========="
-for c in asm_backend asm_mcp asm_frontend; do
-  echo "----- $c -----"
-  sudo docker logs --tail 35 "$c" 2>&1
-done
+echo "===== ALL SERVICES ====="
+sudo docker compose \
+  -f docker-compose.yml \
+  -f /tmp/asip-pr4-override.yml ps
 
-echo "========== DEPLOYMENT CHECK COMPLETE =========="
+echo "===== BACKEND API ====="
+curl -sS -o /dev/null -w 'OpenAPI: HTTP %{http_code}\n' \
+  http://127.0.0.1:8555/openapi.json
+
+echo "===== FRONTEND ====="
+curl -sS -o /dev/null -w 'Frontend: HTTP %{http_code}\n' \
+  http://127.0.0.1:3555/
+
+echo "===== MCP ====="
+curl -sS -o /dev/null -w 'MCP: HTTP %{http_code}\n' \
+  http://127.0.0.1:8666/openapi.json
+
+echo "===== DATABASE ====="
+sudo docker inspect asm_db \
+  --format '{{.State.Status}} | {{.State.Health.Status}}'
+
+echo "===== RECENT SERVICE ERRORS ====="
+for c in asm_backend asm_mcp asm_frontend; do
+  echo "--- $c ---"
+  sudo docker logs --since 5m "$c" 2>&1 |
+    grep -Ei 'traceback|exception|critical|error' | tail -10 || true
+done
