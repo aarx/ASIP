@@ -1,21 +1,147 @@
-cd ~/Desktop/Projects/ASIP
+cd ~/Desktop/Projects/ASIP || exit 1
 
-echo "========== DEPLOYED BACKEND =========="
-sudo docker inspect asm_backend \
-  --format 'Image: {{.Config.Image}} | Status: {{.State.Status}} | Health: {{if .State.Health}}{{.State.Health.Status}}{{else}}not configured{{end}}'
+REPORT="$HOME/Desktop/asip-machine2-diagnostics.txt"
 
-echo "========== HEALTH ENDPOINT =========="
-curl -sS -o /dev/null -w 'HTTP %{http_code}\n' \
-  http://localhost:8555/health
+{
+echo "=========================================="
+echo "SHADOWRECON MACHINE 2 - FULL DIAGNOSTICS"
+echo "=========================================="
+date -Is
+echo
 
-echo "========== RECENT BACKEND ERRORS =========="
-sudo docker logs --since 10m asm_backend 2>&1 | \
-  grep -Ei 'traceback|error|exception|failed' | tail -30 || true
+echo "========== 1. GIT STATE =========="
+git branch --show-current
+git rev-parse HEAD
+git rev-parse origin/main
+git status --short
+git stash list -3
+echo
 
-echo "========== MCP STATUS =========="
-sudo docker inspect asm_mcp \
-  --format 'Image: {{.Config.Image}} | Status: {{.State.Status}}'
+echo "========== 2. DEPLOYMENT OVERRIDE =========="
+if [ -f /tmp/asip-pr4-override.yml ]; then
+  cat /tmp/asip-pr4-override.yml
+else
+  echo "Override file missing"
+fi
+echo
 
-echo "========== DATABASE STATUS =========="
-sudo docker inspect asm_db \
-  --format 'Status: {{.State.Status}} | Health: {{.State.Health.Status}}'
+echo "========== 3. COMPOSE CONFIG VALIDATION =========="
+sudo docker compose config --quiet
+echo "Base config exit: $?"
+if [ -f /tmp/asip-pr4-override.yml ]; then
+  sudo docker compose \
+    -f docker-compose.yml \
+    -f /tmp/asip-pr4-override.yml \
+    config --quiet
+  echo "Override config exit: $?"
+fi
+echo
+
+echo "========== 4. SERVICE STATUS =========="
+sudo docker ps -a --no-trunc \
+  --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+echo
+
+echo "========== 5. CONTAINER DETAILS =========="
+for c in asm_backend asm_mcp asm_db asm_frontend; do
+  echo "----- $c -----"
+  sudo docker inspect "$c" --format \
+    'Image={{.Config.Image}}
+ImageID={{.Image}}
+Status={{.State.Status}}
+ExitCode={{.State.ExitCode}}
+OOMKilled={{.State.OOMKilled}}
+Error={{.State.Error}}
+RestartPolicy={{.HostConfig.RestartPolicy.Name}}
+Health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+    2>&1
+done
+echo
+
+echo "========== 6. AVAILABLE IMAGES =========="
+sudo docker image ls --no-trunc \
+  --format '{{.Repository}}:{{.Tag}} | {{.ID}} | {{.CreatedAt}}' \
+  | grep -E 'asip-|postgres' || true
+echo
+
+echo "========== 7. BACKEND LOGS =========="
+sudo docker logs --tail 150 --timestamps asm_backend 2>&1
+echo
+
+echo "========== 8. MCP LOGS =========="
+sudo docker logs --tail 200 --timestamps asm_mcp 2>&1
+echo
+
+echo "========== 9. DATABASE HEALTH =========="
+sudo docker inspect asm_db --format \
+  'Status={{.State.Status}} Health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}'
+echo
+
+echo "========== 10. HTTP ENDPOINTS =========="
+for path in /health /api/health /docs /openapi.json; do
+  echo -n "$path => "
+  curl --max-time 5 -sS -o /dev/null \
+    -w 'HTTP %{http_code}\n' \
+    "http://127.0.0.1:8555$path" 2>&1
+done
+echo
+
+echo "========== 11. APPLICATION ROUTES =========="
+grep -nE '@app\.(get|post|put|delete|patch)\(|health|ready' \
+  backend/main.py | head -100
+echo
+
+echo "========== 12. COMPOSE SERVICE SETTINGS =========="
+sudo docker compose config --format json | python3 -c '
+import json,sys
+c=json.load(sys.stdin)
+for name in ("backend","mcp","db","frontend"):
+    s=c.get("services",{}).get(name,{})
+    print("SERVICE:",name)
+    print("image:",s.get("image"))
+    print("build:",s.get("build"))
+    print("depends_on:",s.get("depends_on"))
+    print("restart:",s.get("restart"))
+    print("ports:",s.get("ports"))
+    print("mount destinations:",
+          [v.get("target") for v in s.get("volumes",[])])
+    print()
+'
+echo
+
+echo "========== 13. BACKEND FILE VERIFICATION =========="
+for file in brand_redirect_worker.py san_worker.py \
+            orchestration.py http_probe.py; do
+  echo "--- $file ---"
+  sudo docker run --rm --network none \
+    --entrypoint python \
+    asip-backend:pr4-ca1d5a4 \
+    -c "import os; print(os.path.isfile('/app/$file'))" \
+    2>&1
+done
+echo
+
+echo "========== 14. IMAGE ROLLBACK VERIFICATION =========="
+for img in \
+  asip-backend:pr4-ca1d5a4 \
+  asip-backend:machine2-pre-pr4-rollback \
+  asip-backend:brand-redirect-uuid-v2; do
+  sudo docker image inspect "$img" \
+    --format '{{.RepoTags}} | {{.Id}}' 2>&1
+done
+echo
+
+echo "========== 15. RESOURCE STATUS =========="
+free -h
+df -h /
+sudo docker system df
+echo
+
+echo "========== END OF REPORT =========="
+} > "$REPORT" 2>&1
+
+echo
+echo "Diagnostic report saved:"
+echo "$REPORT"
+echo
+wc -l "$REPORT"
