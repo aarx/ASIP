@@ -1,20 +1,21 @@
 cd ~/Desktop/Projects/ASIP
 
-echo "========== GIT HEAD =========="
-git rev-parse HEAD
+echo "========== BACKEND CONFIG =========="
+sudo docker compose config --format json | python3 -c '
+import json,sys
+c=json.load(sys.stdin)
+for name in ("backend","mcp"):
+    s=c["services"].get(name,{})
+    print("\nSERVICE:",name)
+    print("Image:",s.get("image"))
+    print("Build:",s.get("build"))
+    print("Depends on:",s.get("depends_on"))
+    print("Volumes:",s.get("volumes"))
+'
 
-echo "========== LOCAL CHANGES =========="
-git status --short
+echo "========== CURRENT CONTAINER IMAGES =========="
+sudo docker inspect asm_backend asm_mcp \
+  --format '{{.Name}} | {{.Config.Image}} | {{.Image}}'
 
-echo "========== STASH =========="
-git stash list -1
-
-echo "========== COMPOSE VALIDATION =========="
-sudo docker compose config --quiet
-echo "Compose validation exit code: $?"
-
-echo "========== COMPOSE SERVICES =========="
-sudo docker compose config --services
-
-echo "========== RUNNING CONTAINERS =========="
+echo "========== CURRENT SERVICE STATUS =========="
 sudo docker compose ps
