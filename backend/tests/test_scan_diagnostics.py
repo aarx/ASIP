@@ -49,19 +49,6 @@ class _FakeProcess:
         return self.output, None
 
 
-class _TimeoutProcess(_FakeProcess):
-    def __init__(self):
-        super().__init__(returncode=-9)
-        self.calls = 0
-
-    def communicate(self, timeout=None):
-        self.calls += 1
-        if self.calls == 1:
-            import subprocess
-            raise subprocess.TimeoutExpired("mock-stage", timeout)
-        return "", None
-
-
 class _InterruptProcess(_FakeProcess):
     def communicate(self, timeout=None):
         raise KeyboardInterrupt()
@@ -405,7 +392,7 @@ class ScanDiagnosticsPostgreSQLTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_orchestrator_success_failure_timeout_retry_and_cancel(self):
+    def test_orchestrator_success_failure_and_cancel(self):
         module = self.orchestration
         original_get_conn = module.get_conn
         module.get_conn = self.connect
@@ -431,21 +418,13 @@ class ScanDiagnosticsPostgreSQLTests(unittest.TestCase):
         self.assertEqual(self._read_scan()[2]["attempts"][-1]["error_category"],
                          "NONZERO_EXIT")
 
-        with mock.patch.object(module.subprocess, "Popen", return_value=_TimeoutProcess()), \
-                mock.patch.object(module, "stop_active_child"):
-            self.assertEqual(module.run_step("Timeout", "mock", 1, 2, 0.01,
-                                             scan_id=self.scan_id,
-                                             runner_token=self.token,
-                                             stage_order=3), module.STAGE_TIMEOUT_EXIT_CODE)
-        self.assertEqual(self._read_scan()[2]["attempts"][-1]["status"], "TIMED_OUT")
-
         with mock.patch.object(module.subprocess, "Popen", return_value=_InterruptProcess()), \
                 mock.patch.object(module, "stop_active_child"):
             with self.assertRaises(KeyboardInterrupt):
                 module.run_step("Cancelled", "mock", 1, 2,
                                 scan_id=self.scan_id,
                                 runner_token=self.token,
-                                stage_order=4)
+                                stage_order=3)
         self.assertEqual(self._read_scan()[2]["attempts"][-1]["status"], "CANCELLED")
 
     def test_stale_runner_does_not_launch_stage(self):

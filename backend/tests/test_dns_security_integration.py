@@ -125,7 +125,7 @@ class DnsSecurityWorkerTests(unittest.TestCase):
         with mock.patch.object(orchestration, "_diagnostics_start"), \
              mock.patch.object(orchestration, "_diagnostics_finish") as finish:
             result = orchestration.run_step(
-                "DNS Security", command, 1, 1, timeout_seconds=5,
+                "DNS Security", command, 1, 1,
                 scan_id=91, runner_token="runner", stage_order=12,
             )
 

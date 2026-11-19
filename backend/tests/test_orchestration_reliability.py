@@ -39,104 +39,55 @@ def load_backend_module(filename):
     return module
 
 
-class OrchestrationTimeoutTests(unittest.TestCase):
+class OrchestrationStageExecutionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.module = load_backend_module(BACKEND / "orchestration.py")
 
-    def test_san_and_other_stage_timeout_defaults_and_overrides(self):
-        with mock.patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(self.module.stage_timeout_seconds("SAN Expansion"), 21600)
-            self.assertEqual(self.module.stage_timeout_seconds("DNS Resolution"), 1800)
-
-        with mock.patch.dict(os.environ, {
-            "ASIP_SAN_STAGE_TIMEOUT_SECONDS": "28800",
-            "ASIP_STAGE_TIMEOUT_SECONDS": "900",
-        }, clear=True):
-            self.assertEqual(self.module.stage_timeout_seconds("SAN Expansion"), 28800)
-            self.assertEqual(self.module.stage_timeout_seconds("HTTP/TLS Observation"), 900)
-
-        with mock.patch.dict(os.environ, {
-            "ASIP_STAGE_TIMEOUT_SECONDS": "1200",
-        }, clear=True):
-            self.assertEqual(self.module.stage_timeout_seconds("SAN Expansion"), 21600)
-            self.assertEqual(self.module.stage_timeout_seconds("Port Scan"), 1200)
-
-    def test_invalid_stage_timeout_values_use_established_fallbacks(self):
-        with mock.patch.dict(os.environ, {
-            "ASIP_SAN_STAGE_TIMEOUT_SECONDS": "not-a-number",
-            "ASIP_STAGE_TIMEOUT_SECONDS": "0",
-        }, clear=True):
-            self.assertEqual(self.module.stage_timeout_seconds("SAN Expansion"), 21600)
-            self.assertEqual(self.module.stage_timeout_seconds("DNS Resolution"), 1800)
-
-    def test_san_timeout_uses_deadline_and_records_timed_out_diagnostics(self):
-        process = mock.Mock(returncode=-9, stdout=None)
-        timeout = subprocess.TimeoutExpired("san-worker", 21600, output=b"processed=2545")
-        with mock.patch.dict(os.environ, {}, clear=True), \
-             mock.patch.object(self.module.subprocess, "Popen", return_value=process), \
-             mock.patch.object(
-                 self.module, "_stream_stage_output", side_effect=[timeout, b"drained"]
-             ) as stream, \
-             mock.patch.object(self.module, "stop_active_child") as stop_child, \
-             mock.patch.object(self.module, "_diagnostics_finish") as finish, \
-             mock.patch.object(self.module.logging, "error") as log_error:
-            result = self.module.run_step("SAN Expansion", "mock-san", 1, 2)
-
-        self.assertEqual(result, self.module.STAGE_TIMEOUT_EXIT_CODE)
-        self.assertEqual(stream.call_args_list[0].args[2], 21600)
-        self.assertEqual(stream.call_args_list[1].args[2], self.module.CHILD_TERMINATE_GRACE_SECONDS)
-        stop_child.assert_called_once_with(process)
-        self.assertEqual(finish.call_args.args[5], "TIMED_OUT")
-        self.assertEqual(finish.call_args.args[7], "STAGE_TIMEOUT")
-        self.assertEqual(log_error.call_args.args[-1], 21600)
-
-        with mock.patch.dict(os.environ, {}, clear=True), \
-             mock.patch.object(
-                 self.module, "run_step", return_value=self.module.STAGE_TIMEOUT_EXIT_CODE
-             ) as run_stage:
-            with self.assertRaisesRegex(
-                self.module.StageExecutionError, "SAN Expansion timed out after 21600 seconds"
-            ):
-                self.module.run_required_stage("SAN Expansion", "mock-san")
-        run_stage.assert_called_once()
-
-    def test_san_stage_finishing_early_continues_without_waiting_for_deadline(self):
+    def test_stage_can_exceed_legacy_timeout_configuration_and_finish(self):
         command = (
             f"{shlex.quote(sys.executable)} -c "
-            + shlex.quote("print('san-complete', flush=True)")
+            + shlex.quote("import time; time.sleep(0.2); print('stage-complete', flush=True)")
         )
         started = time.monotonic()
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with mock.patch.dict(os.environ, {
+            "ASIP_STAGE_TIMEOUT_SECONDS": "0.01",
+            "ASIP_SAN_STAGE_TIMEOUT_SECONDS": "0.01",
+        }, clear=True):
             result = self.module.run_step("SAN Expansion", command, 1, 1)
         elapsed = time.monotonic() - started
         self.assertEqual(result, 0)
-        self.assertLess(elapsed, 2)
+        self.assertGreaterEqual(elapsed, 0.2)
 
-    def test_retryable_san_attempts_reuse_san_timeout_policy(self):
-        observed_timeouts = []
-
-        def retryable_then_success(name, *_args):
-            observed_timeouts.append(self.module.stage_timeout_seconds(name))
-            return (
-                self.module.RETRYABLE_INCOMPLETE_EXIT_CODE
-                if len(observed_timeouts) == 1 else 0
-            )
-
-        with mock.patch.dict(os.environ, {}, clear=True), \
-             mock.patch.object(self.module, "run_step", side_effect=retryable_then_success):
-            self.module.run_required_stage("SAN Expansion", "mock-san")
-        self.assertEqual(observed_timeouts, [21600, 21600])
-
-    def test_hung_stage_is_bounded_and_process_group_is_cleaned(self):
+    def test_stage_diagnostics_report_success_after_longer_execution(self):
         command = (
             f"{shlex.quote(sys.executable)} -c "
-            "'import time; time.sleep(30)'"
+            + shlex.quote("import time; time.sleep(0.15)")
         )
-        result = self.module.run_step(
-            "Hung Stage", command, 1, 2, timeout_seconds=0.1
-        )
-        self.assertEqual(result, self.module.STAGE_TIMEOUT_EXIT_CODE)
+        with mock.patch.object(self.module, "_diagnostics_finish") as finish:
+            result = self.module.run_step(
+                "DNS Resolution", command, 1, 1,
+                scan_id=32, runner_token="token", stage_order=4,
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(finish.call_args.args[5], "SUCCEEDED")
+        self.assertGreaterEqual(finish.call_args.args[6], 0.15)
+
+    def test_retryable_attempts_reinvoke_stage_and_failures_still_propagate(self):
+        with mock.patch.object(
+            self.module, "run_step",
+            side_effect=[self.module.RETRYABLE_INCOMPLETE_EXIT_CODE, 0],
+        ) as run_step:
+            self.module.run_required_stage("DNS Resolution", "same-command")
+        self.assertEqual(run_step.call_count, 2)
+        self.assertEqual(run_step.call_args_list[0].args[:2], ("DNS Resolution", "same-command"))
+        self.assertEqual(run_step.call_args_list[1].args[:2], ("DNS Resolution", "same-command"))
+
+        with mock.patch.object(self.module, "run_step", return_value=7):
+            with self.assertRaisesRegex(
+                self.module.StageExecutionError, "failed with exit code 7"
+            ):
+                self.module.run_required_stage("DNS Resolution", "failing-command")
 
     def test_streams_merged_stdout_and_stderr_before_stage_exits(self):
         command = (
@@ -161,7 +112,7 @@ class OrchestrationTimeoutTests(unittest.TestCase):
 
         def run_stage():
             results.append(self.module.run_step(
-                "Live Stage", command, 1, 1, timeout_seconds=3
+                "Live Stage", command, 1, 1
             ))
             done.set()
 
@@ -186,12 +137,12 @@ class OrchestrationTimeoutTests(unittest.TestCase):
         quiet = self.module.run_step(
             "Quiet Stage",
             f"{shlex.quote(sys.executable)} -c 'import time; time.sleep(0.05)'",
-            1, 1, timeout_seconds=2,
+            1, 1,
         )
         nonzero = self.module.run_step(
             "Nonzero Stage",
             f"{shlex.quote(sys.executable)} -c 'raise SystemExit(7)'",
-            1, 1, timeout_seconds=2,
+            1, 1,
         )
         self.assertEqual(quiet, 0)
         self.assertEqual(nonzero, 7)
@@ -207,38 +158,11 @@ class OrchestrationTimeoutTests(unittest.TestCase):
         )
         try:
             with mock.patch.object(self.module.logging, "info"):
-                output = self.module._stream_stage_output(process, "Large Stage", 3)
+                output = self.module._stream_stage_output(process, "Large Stage")
         finally:
             process.stdout.close()
         self.assertEqual(process.returncode, 0)
         self.assertLessEqual(len(output), self.module.MAX_STAGE_OUTPUT_CAPTURE_BYTES)
-
-    def test_timeout_kills_grandchild_that_ignores_sigterm(self):
-        import tempfile
-        from pathlib import Path
-
-        with tempfile.TemporaryDirectory() as directory:
-            marker = Path(directory) / "survived"
-            grandchild_code = (
-                "import signal,time,pathlib; "
-                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-                "time.sleep(1.2); pathlib.Path(" + repr(str(marker)) + ").touch()"
-            )
-            parent_code = (
-                "import subprocess,sys,time; "
-                "subprocess.Popen([sys.executable,'-c'," + repr(grandchild_code) + "]); "
-                "time.sleep(30)"
-            )
-            command = f"{shlex.quote(sys.executable)} -c {shlex.quote(parent_code)}"
-            with mock.patch.object(
-                self.module, "CHILD_TERMINATE_GRACE_SECONDS", 0.15
-            ):
-                result = self.module.run_step(
-                    "Grandchild Stage", command, 1, 1, timeout_seconds=0.4
-                )
-            self.assertEqual(result, self.module.STAGE_TIMEOUT_EXIT_CODE)
-            time.sleep(1.3)
-            self.assertFalse(marker.exists())
 
     def test_handled_sigterm_cleans_stage_grandchild(self):
         from pathlib import Path
@@ -276,7 +200,7 @@ class OrchestrationTimeoutTests(unittest.TestCase):
                 "orchestration.CHILD_TERMINATE_GRACE_SECONDS=0.2\n"
                 "signal.signal(signal.SIGTERM,orchestration._handle_shutdown_signal)\n"
                 "try:\n"
-                f"    orchestration.run_step('signal-test',{stage_command!r},1,1,20)\n"
+                f"    orchestration.run_step('signal-test',{stage_command!r},1,1)\n"
                 "except KeyboardInterrupt:\n"
                 "    raise SystemExit(37)\n"
             )
@@ -387,18 +311,6 @@ class OrchestrationTimeoutTests(unittest.TestCase):
             installed,
         )
 
-    def test_timeout_is_a_terminal_stage_failure_not_an_infinite_retry(self):
-        with mock.patch.object(
-            self.module,
-            "run_step",
-            return_value=self.module.STAGE_TIMEOUT_EXIT_CODE,
-        ) as run_step:
-            with self.assertRaisesRegex(
-                self.module.StageExecutionError, "timed out"
-            ):
-                self.module.run_required_stage("Hung Stage", "ignored")
-        run_step.assert_called_once()
-
     def test_designated_retryable_exit_code_remains_bounded(self):
         with mock.patch.object(
             self.module,
@@ -426,25 +338,33 @@ class OrchestrationTimeoutTests(unittest.TestCase):
             heartbeat.ensure_healthy()
 
 
-class ReconToolTimeoutTests(unittest.TestCase):
+class ReconToolExecutionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.module = load_backend_module(BACKEND / "recon.py")
 
-    def test_hung_recon_tool_is_terminated_without_network(self):
-        command = [sys.executable, "-c", "import time; time.sleep(30)"]
-        previous = os.environ.get("ASIP_RECON_TOOL_TIMEOUT_SECONDS")
-        os.environ["ASIP_RECON_TOOL_TIMEOUT_SECONDS"] = "1"
-        try:
+    def test_recon_tool_can_exceed_legacy_timeout_setting(self):
+        command = [
+            sys.executable,
+            "-c",
+            "import time; time.sleep(0.2); print('tool-complete')",
+        ]
+        started = time.monotonic()
+        with mock.patch.dict(os.environ, {"ASIP_RECON_TOOL_TIMEOUT_SECONDS": "0.01"}):
             completed, results, error = self.module.run_tool(command)
-        finally:
-            if previous is None:
-                os.environ.pop("ASIP_RECON_TOOL_TIMEOUT_SECONDS", None)
-            else:
-                os.environ["ASIP_RECON_TOOL_TIMEOUT_SECONDS"] = previous
-        self.assertFalse(completed)
-        self.assertEqual(results, [])
-        self.assertIn("timeout after 1s", error)
+        self.assertTrue(completed)
+        self.assertEqual(results, ["tool-complete"])
+        self.assertIsNone(error)
+        self.assertGreaterEqual(time.monotonic() - started, 0.2)
+
+    def test_recon_tool_inherits_stage_process_group_for_cancellation(self):
+        with mock.patch.object(self.module.subprocess, "Popen") as popen:
+            process = popen.return_value
+            process.returncode = 0
+            process.communicate.return_value = ("done\n", "")
+            self.module.run_tool(["recon-tool"])
+        self.assertNotIn("start_new_session", popen.call_args.kwargs)
+        process.communicate.assert_called_once_with()
 
 
 class AuthorizationBoundaryRegressionTests(unittest.TestCase):

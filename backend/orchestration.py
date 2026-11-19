@@ -27,10 +27,7 @@ from scan_diagnostics import (
 ASIP_ORCHESTRATION_LOCK_ID = 0x41534950
 MAX_STAGE_ATTEMPTS = 2
 CHILD_TERMINATE_GRACE_SECONDS = 5
-STAGE_TIMEOUT_EXIT_CODE = 124
 OVERLAP_SKIP_EXIT_CODE = 0
-DEFAULT_STAGE_TIMEOUT_SECONDS = 1800
-DEFAULT_SAN_STAGE_TIMEOUT_SECONDS = 21600
 DEFAULT_RUNNER_HEARTBEAT_INTERVAL_SECONDS = 15
 DEFAULT_RUNNER_ORPHAN_GRACE_SECONDS = 120
 PROCESS_GROUP_POLL_INTERVAL_SECONDS = 0.05
@@ -42,7 +39,7 @@ _ACTIVE_STAGE_DIAGNOSTICS = None
 
 
 class StageExecutionError(RuntimeError):
-    """A required stage failed or exceeded its bounded execution time."""
+    """A required stage failed."""
 
 
 class RunnerLeaseError(RuntimeError):
@@ -55,17 +52,6 @@ def _positive_env_int(name, default):
     except (TypeError, ValueError):
         value = default
     return value if value > 0 else default
-
-
-def stage_timeout_seconds(stage_name):
-    """Return the configurable per-attempt stage deadline."""
-    if stage_name == "SAN Expansion":
-        return _positive_env_int(
-            "ASIP_SAN_STAGE_TIMEOUT_SECONDS", DEFAULT_SAN_STAGE_TIMEOUT_SECONDS
-        )
-    return _positive_env_int(
-        "ASIP_STAGE_TIMEOUT_SECONDS", DEFAULT_STAGE_TIMEOUT_SECONDS
-    )
 
 
 def runner_heartbeat_interval_seconds():
@@ -486,14 +472,14 @@ def _log_stage_chunk(name, line):
     logging.info(f"[{name}] {line.decode('utf-8', errors='replace')}")
 
 
-def _stream_stage_output(process, name, timeout_seconds):
-    """Forward merged child output as it arrives, retaining only a bounded tail."""
+def _stream_stage_output(process, name):
+    """Forward merged child output until exit, retaining only a bounded tail."""
     stdout = process.stdout
     try:
         file_descriptor = stdout.fileno()
     except (AttributeError, OSError, ValueError):
         # Compatibility for test doubles and non-file-backed process adapters.
-        output, _ = process.communicate(timeout=timeout_seconds)
+        output, _ = process.communicate()
         output = output or ""
         for line in output.splitlines():
             logging.info("[%s] %s", name, line.strip())
@@ -501,22 +487,12 @@ def _stream_stage_output(process, name, timeout_seconds):
 
     captured = bytearray()
     pending = bytearray()
-    deadline = time.monotonic() + timeout_seconds
     selector = selectors.DefaultSelector()
     selector.register(stdout, selectors.EVENT_READ)
     try:
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                _flush_stage_output(name, pending, final=True)
-                raise subprocess.TimeoutExpired(
-                    process.args, timeout_seconds, output=bytes(captured)
-                )
-            if not selector.select(remaining):
-                _flush_stage_output(name, pending, final=True)
-                raise subprocess.TimeoutExpired(
-                    process.args, timeout_seconds, output=bytes(captured)
-                )
+            if not selector.select():
+                continue
             chunk = os.read(file_descriptor, 4096)
             if not chunk:
                 _flush_stage_output(name, pending, final=True)
@@ -525,13 +501,7 @@ def _stream_stage_output(process, name, timeout_seconds):
             pending.extend(chunk)
             _flush_stage_output(name, pending)
 
-        remaining = max(0, deadline - time.monotonic())
-        try:
-            process.wait(timeout=remaining)
-        except subprocess.TimeoutExpired as exc:
-            raise subprocess.TimeoutExpired(
-                process.args, timeout_seconds, output=bytes(captured)
-            ) from exc
+        process.wait()
         return bytes(captured)
     finally:
         selector.close()
@@ -556,8 +526,8 @@ def _flush_stage_output(name, pending, final=False):
             return
 
 
-def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None,
-             scan_id=None, runner_token=None, stage_order=None):
+def run_step(name, cmd, attempt, max_attempts, scan_id=None,
+             runner_token=None, stage_order=None):
 
     if scan_id is None and runner_token is None and stage_order is None:
         context = _ACTIVE_STAGE_DIAGNOSTICS
@@ -586,41 +556,7 @@ def run_step(name, cmd, attempt, max_attempts, timeout_seconds=None,
         )
         _ACTIVE_STAGE_PROCESS = process
 
-        timeout_seconds = timeout_seconds or stage_timeout_seconds(name)
-        try:
-            captured_output = _stream_stage_output(
-                process, name, timeout_seconds
-            )
-        except subprocess.TimeoutExpired as timeout_error:
-            logging.error(
-                "TIMEOUT: %s attempt %s/%s after %ss",
-                name, attempt, max_attempts, timeout_seconds,
-            )
-            captured_output = timeout_error.output or b""
-            if isinstance(captured_output, str):
-                captured_output = captured_output.encode("utf-8", errors="replace")
-            stop_active_child(process)
-            try:
-                drained_output = _stream_stage_output(
-                    process, name, CHILD_TERMINATE_GRACE_SECONDS
-                )
-                combined = bytearray(captured_output)
-                _append_bounded_output(combined, drained_output)
-                captured_output = bytes(combined)
-            except subprocess.TimeoutExpired as drain_timeout:
-                combined = bytearray(captured_output)
-                extra = drain_timeout.output or b""
-                if isinstance(extra, str):
-                    extra = extra.encode("utf-8", errors="replace")
-                _append_bounded_output(combined, extra)
-                captured_output = bytes(combined)
-            output = captured_output.decode("utf-8", errors="replace")
-            _diagnostics_finish(
-                scan_id, runner_token, name, stage_order, attempt,
-                "TIMED_OUT", time.monotonic() - monotonic_start,
-                "STAGE_TIMEOUT", extract_worker_summary(output),
-            )
-            return STAGE_TIMEOUT_EXIT_CODE
+        captured_output = _stream_stage_output(process, name)
 
         output = captured_output.decode("utf-8", errors="replace")
 
@@ -703,10 +639,6 @@ def run_required_stage(name, cmd):
             )
             continue
 
-        if returncode == STAGE_TIMEOUT_EXIT_CODE:
-            raise StageExecutionError(
-                f"{name} timed out after {stage_timeout_seconds(name)} seconds"
-            )
         raise StageExecutionError(f"{name} failed with exit code {returncode}")
 
 
