@@ -1,21 +1,52 @@
 cd ~/Desktop/Projects/ASIP
 
-echo "========== BACKEND DOCKERFILE =========="
-cat backend/Dockerfile
+echo "========== NEW IMAGE CODE =========="
 
-echo "========== BACKEND IMAGE DETAILS =========="
-sudo docker image inspect \
-  asip-backend:brand-redirect-uuid-v2 \
-  --format '{{.Id}} | {{.Created}}'
+sudo docker run --rm \
+  --entrypoint python \
+  asip-backend:pr4-ca1d5a4 \
+  -c '
+from pathlib import Path
 
-echo "========== MCP IMAGE DETAILS =========="
-sudo docker image inspect \
-  asm_mcp --format '{{.Image}}' 2>/dev/null || true
+files = {
+    "Brand Redirect": "/app/brand_redirect_worker.py",
+    "SAN Expansion": "/app/san_worker.py",
+    "Orchestration": "/app/orchestration.py",
+    "HTTP Probe": "/app/http_probe.py",
+}
 
-echo "========== BACKEND MOUNTS =========="
+for name, path in files.items():
+    p = Path(path)
+    print(name, "PRESENT" if p.is_file() else "MISSING")
+'
+
+echo "========== PYTHON SYNTAX =========="
+
+sudo docker run --rm \
+  --entrypoint python \
+  asip-backend:pr4-ca1d5a4 \
+  -c '
+import ast
+from pathlib import Path
+
+for name in (
+    "brand_redirect_worker.py",
+    "san_worker.py",
+    "orchestration.py",
+    "http_probe.py",
+):
+    path = Path("/app") / name
+    ast.parse(path.read_text())
+    print("PASS:", name)
+'
+
+echo "========== CURRENT BACKEND IMAGE =========="
+
 sudo docker inspect asm_backend \
-  --format '{{json .Mounts}}'
+  --format '{{.Config.Image}} | {{.Image}}'
 
-echo "========== MCP MOUNTS =========="
-sudo docker inspect asm_mcp \
-  --format '{{json .Mounts}}'
+echo "========== ROLLBACK IMAGE =========="
+
+sudo docker image inspect \
+  asip-backend:machine2-pre-pr4-rollback \
+  --format '{{.Id}}'
