@@ -1,21 +1,21 @@
 cd ~/Desktop/Projects/ASIP
 
-echo "========== BACKEND CONFIG =========="
-sudo docker compose config --format json | python3 -c '
-import json,sys
-c=json.load(sys.stdin)
-for name in ("backend","mcp"):
-    s=c["services"].get(name,{})
-    print("\nSERVICE:",name)
-    print("Image:",s.get("image"))
-    print("Build:",s.get("build"))
-    print("Depends on:",s.get("depends_on"))
-    print("Volumes:",s.get("volumes"))
-'
+echo "========== BACKEND DOCKERFILE =========="
+cat backend/Dockerfile
 
-echo "========== CURRENT CONTAINER IMAGES =========="
-sudo docker inspect asm_backend asm_mcp \
-  --format '{{.Name}} | {{.Config.Image}} | {{.Image}}'
+echo "========== BACKEND IMAGE DETAILS =========="
+sudo docker image inspect \
+  asip-backend:brand-redirect-uuid-v2 \
+  --format '{{.Id}} | {{.Created}}'
 
-echo "========== CURRENT SERVICE STATUS =========="
-sudo docker compose ps
+echo "========== MCP IMAGE DETAILS =========="
+sudo docker image inspect \
+  asm_mcp --format '{{.Image}}' 2>/dev/null || true
+
+echo "========== BACKEND MOUNTS =========="
+sudo docker inspect asm_backend \
+  --format '{{json .Mounts}}'
+
+echo "========== MCP MOUNTS =========="
+sudo docker inspect asm_mcp \
+  --format '{{json .Mounts}}'
