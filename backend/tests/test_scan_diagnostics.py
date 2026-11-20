@@ -101,6 +101,13 @@ class ScanDiagnosticsApiTests(unittest.TestCase):
                 "api_key": "do-not-return",
             },
         }]
+        doc["pipeline_identity"] = {"version": 1, "secret": "not returned"}
+        doc["recovery_history"] = [{
+            "mode": "SINGLE_FAILED_STAGE", "runner_id": "runner-123",
+            "started_at": "start", "completed_at": "end",
+            "status": "SUCCEEDED", "stage": "DNS Resolution",
+            "failure_reason": "private error text",
+        }]
         cursor = _ApiCursor(one=(17, "SUCCEEDED", "scan-time", "start", "end",
                                 "seed.example", 12, 2.0, doc))
         conn = _ApiConnection(cursor)
@@ -111,6 +118,10 @@ class ScanDiagnosticsApiTests(unittest.TestCase):
         self.assertTrue(result["diagnostics_available"])
         self.assertEqual(result["stage_attempts"][0]["worker_summary"],
                          {"selected_parent_targets": 5})
+        self.assertTrue(result["pipeline_identity_available"])
+        self.assertEqual(result["recovery_history"][0]["status"], "SUCCEEDED")
+        self.assertNotIn("private error text", json.dumps(result))
+        self.assertNotIn("not returned", json.dumps(result))
         self.assertNotIn("raw_logs", json.dumps(result))
         self.assertNotIn("do-not-return", json.dumps(result))
         self.assertIn("stage_diagnostics", cursor.query)
@@ -285,6 +296,52 @@ class ScanDiagnosticsPostgreSQLTests(unittest.TestCase):
         })
         self.assertEqual(diagnostics["attempts"], [])
 
+    def test_new_orchestrated_scan_persists_compact_pipeline_identity(self):
+        identity = {"pipeline_identity": {"version": 7, "stages": ["DNS"]}}
+        scan_id = self.orchestration.create_scan(identity)
+        diagnostics = self._read_scan(scan_id)[2]
+        self.assertEqual(diagnostics["pipeline_identity"], identity["pipeline_identity"])
+        self.assertEqual(len(diagnostics["pipeline_identity"]["seed_domains_sha256"]), 64)
+
+    def test_successful_single_stage_is_recorded_without_completing_scan(self):
+        document = scan_diagnostics.empty_diagnostics()
+        document["recovery_history"] = [{
+            "mode": "SINGLE_FAILED_STAGE", "runner_id": "recovery-1",
+            "started_at": "start", "completed_at": None,
+            "status": "RUNNING", "stage": "DNS Resolution",
+            "failure_reason": "original DNS failure",
+        }]
+        conn = self.connect()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE scans SET stage_diagnostics=%s::jsonb WHERE id=%s",
+                    (json.dumps(document), self.scan_id),
+                )
+        conn.close()
+
+        self.orchestration.finish_recovery(
+            self.scan_id, self.token, "recovery-1", "FAILED",
+            "original DNS failure", recovery_status="SUCCEEDED",
+        )
+        conn = self.connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT status, failure_reason, stage_diagnostics "
+                    "FROM scans WHERE id=%s", (self.scan_id,),
+                )
+                status, reason, diagnostics = cur.fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(status, "FAILED")
+        self.assertEqual(reason, "original DNS failure")
+        self.assertEqual(diagnostics["recovery_history"][0]["status"], "SUCCEEDED")
+        self.assertEqual(
+            diagnostics["recovery_history"][0]["failure_reason"],
+            "original DNS failure",
+        )
+
     def test_start_success_and_sanitized_worker_summary_persist(self):
         self.assertTrue(self._start())
         summary = scan_diagnostics.extract_worker_summary(
@@ -441,6 +498,7 @@ class ScanDiagnosticsPostgreSQLTests(unittest.TestCase):
                                              stage_order=2), 9)
         self.assertEqual(self._read_scan()[2]["attempts"][-1]["error_category"],
                          "NONZERO_EXIT")
+        self.assertEqual(self._read_scan()[2]["attempts"][-1]["exit_code"], 9)
 
         with mock.patch.object(module.subprocess, "Popen", return_value=_InterruptProcess()), \
                 mock.patch.object(module, "stop_active_child"):

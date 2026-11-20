@@ -5276,6 +5276,10 @@ def frontend_v2_scan_detail(scan_id: int):
         "diagnostics_available": diagnostics is not None,
         "current_stage": diagnostics["current_stage"] if diagnostics else None,
         "stage_attempts": attempts,
+        "pipeline_identity_available": (
+            diagnostics["pipeline_identity_available"] if diagnostics else False
+        ),
+        "recovery_history": diagnostics["recovery_history"] if diagnostics else [],
         "failure_category": failure_category,
         "scan_outcome": diagnostics["scan_outcome"] if diagnostics else None,
         "diagnostics_last_updated_at": (

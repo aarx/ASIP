@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 
 
 CONTRACT_VERSION = 1
-MAX_STAGE_ATTEMPTS = 34  # 16 base stages + optional DNS Security, at most two attempts each.
+# Diagnostics remain bounded. Recovery refuses to start when this budget is
+# exhausted so it never executes a stage whose outcome cannot be recorded.
+MAX_STAGE_ATTEMPTS = 128
+MAX_RECOVERY_ATTEMPTS = 32
 MAX_SUMMARY_FIELDS = 32
 MAX_SUMMARY_JSON_BYTES = 2048
 MAX_STAGE_NAME_LENGTH = 80
@@ -65,8 +68,10 @@ SUMMARY_MARKERS = (
 def empty_diagnostics():
     return {
         "version": CONTRACT_VERSION,
+        "pipeline_identity": None,
         "current_stage": None,
         "attempts": [],
+        "recovery_history": [],
         "scan_outcome": None,
         "last_updated_at": None,
     }
@@ -157,6 +162,11 @@ def _as_document(value):
     attempts = value.get("attempts")
     if not isinstance(attempts, list) or len(attempts) > MAX_STAGE_ATTEMPTS:
         raise ValueError("invalid or oversized scan diagnostics attempts")
+    history = value.get("recovery_history", [])
+    if not isinstance(history, list) or len(history) > MAX_RECOVERY_ATTEMPTS:
+        raise ValueError("invalid or oversized scan recovery history")
+    value.setdefault("pipeline_identity", None)
+    value.setdefault("recovery_history", [])
     return value
 
 
@@ -190,7 +200,8 @@ def _commit_document(conn, cur, scan_id, runner_token, document):
     return True
 
 
-def start_stage_attempt(conn, scan_id, runner_token, stage, stage_order, attempt):
+def start_stage_attempt(conn, scan_id, runner_token, stage, stage_order, attempt,
+                        execution_mode="FULL", runner_id=None):
     cur, document, now = _load_locked(conn, scan_id, runner_token)
     if cur is None:
         return False
@@ -213,6 +224,8 @@ def start_stage_attempt(conn, scan_id, runner_token, stage, stage_order, attempt
         "duration_seconds": None,
         "error_category": None,
         "worker_summary": None,
+        "execution_mode": execution_mode,
+        "runner_id": runner_id,
     }
     initial_progress = sanitize_stage_progress(
         {"status": "RUNNING", "elapsed_seconds": 0},
@@ -282,7 +295,7 @@ def update_stage_progress(conn, scan_id, runner_token, stage, stage_order,
 
 def finish_stage_attempt(
     conn, scan_id, runner_token, stage, stage_order, attempt, status,
-    duration_seconds, error_category=None, worker_summary=None,
+    duration_seconds, error_category=None, worker_summary=None, exit_code=None,
 ):
     if status not in STAGE_OUTCOMES - {"RUNNING"}:
         raise ValueError("invalid stage outcome")
@@ -311,6 +324,10 @@ def finish_stage_attempt(
     )
     record["error_category"] = error_category
     record["worker_summary"] = sanitize_worker_summary(worker_summary)
+    record["exit_code"] = (
+        int(exit_code) if isinstance(exit_code, int) and -255 <= exit_code <= 255
+        else None
+    )
     prior_progress = record.get("progress")
     final_progress = dict(prior_progress) if isinstance(prior_progress, dict) else sanitize_stage_progress(
         {"status": status, "elapsed_seconds": duration_seconds},
@@ -381,6 +398,14 @@ def api_diagnostics(value, scan_status):
             "stage": str(item.get("stage", ""))[:MAX_STAGE_NAME_LENGTH],
             "order": item.get("order") if isinstance(item.get("order"), int) else None,
             "attempt": item.get("attempt") if isinstance(item.get("attempt"), int) else None,
+            "exit_code": item.get("exit_code")
+            if isinstance(item.get("exit_code"), int) and -255 <= item["exit_code"] <= 255
+            else None,
+            "execution_mode": item.get("execution_mode")
+            if item.get("execution_mode") in {"FULL", "RESUME", "SINGLE_FAILED_STAGE"}
+            else "FULL",
+            "runner_id": str(item.get("runner_id"))[:36]
+            if item.get("runner_id") is not None else None,
             "status": status,
             "started_at": item.get("started_at"),
             "completed_at": item.get("completed_at"),
@@ -423,6 +448,23 @@ def api_diagnostics(value, scan_status):
         "version": CONTRACT_VERSION,
         "current_stage": current,
         "attempts": safe_attempts,
+        "pipeline_identity_available": isinstance(
+            document.get("pipeline_identity"), dict
+        ),
+        "recovery_history": [
+            {
+                "mode": item.get("mode")
+                if item.get("mode") in {"RESUME", "SINGLE_FAILED_STAGE"} else None,
+                "runner_id": str(item.get("runner_id", ""))[:36],
+                "started_at": item.get("started_at"),
+                "completed_at": item.get("completed_at"),
+                "status": item.get("status")
+                if item.get("status") in {"RUNNING", "SUCCEEDED", "FAILED"} else None,
+                "stage": str(item.get("stage", ""))[:MAX_STAGE_NAME_LENGTH],
+            }
+            for item in document.get("recovery_history", [])[-MAX_RECOVERY_ATTEMPTS:]
+            if isinstance(item, dict)
+        ],
         "scan_outcome": safe_scan_outcome,
         "last_updated_at": document.get("last_updated_at"),
     }

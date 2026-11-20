@@ -139,7 +139,7 @@ class DnsSecurityWorkerTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         finish.assert_called_once()
-        summary = finish.call_args.args[-1]
+        summary = finish.call_args.args[8]
         self.assertEqual(summary, {
             "selected": 3,
             "completed": 2,
@@ -171,15 +171,17 @@ class DnsSecurityWorkerTests(unittest.TestCase):
         self.assertEqual(emit.call_args.args[0]["checks_persisted"], 0)
 
     def test_orchestration_registers_dns_stage_only_under_operation_gate(self):
-        source = (BACKEND / "orchestration.py").read_text(encoding="utf-8")
-        self.assertIn('if default_operation_enabled("DNS_SECURITY"):', source)
-        self.assertIn('--dns-security-target-ids', source)
-        self.assertIn('--enable-dns-security', source)
-        self.assertIn('dns_security_target_ids', source)
-        self.assertIn('dns_stage = (\n                "DNS Security",', source)
-        self.assertIn('" --run-scoped" if dns_security_target_ids else ""', source)
-        self.assertIn('insertion = next(i for i, item in enumerate(pipeline)', source)
-        self.assertIn('if item[0] == "HTTP/TLS Observation"', source)
+        with mock.patch.object(orchestration, "default_operation_enabled", return_value=False):
+            disabled = orchestration.build_pipeline(91, (4, 5))
+        self.assertNotIn("DNS Security", [stage for stage, _ in disabled])
+
+        with mock.patch.object(orchestration, "default_operation_enabled", return_value=True):
+            enabled = orchestration.build_pipeline(91, (4, 5))
+        names = [stage for stage, _ in enabled]
+        self.assertLess(names.index("DNS Security"), names.index("HTTP/TLS Observation"))
+        command = dict(enabled)["DNS Security"]
+        self.assertIn("--run-scoped", command)
+        self.assertEqual(names.count("Automatic Eligibility"), 2)
 
     def test_enabled_stage_selects_only_authorized_current_scan_members(self):
         cursor = WorkerCursor([(4, "known.example")])

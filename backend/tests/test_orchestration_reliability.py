@@ -279,7 +279,7 @@ class OrchestrationStageExecutionTests(unittest.TestCase):
                     RuntimeError, "cannot prove its worker process tree"
                 ):
                     self.module.recover_orphaned_scans(connection)
-                self.assertEqual(connection.commits, 0)
+                self.assertEqual(connection.commits, 1)
                 self.assertEqual(len(connection.cursor_instance.statements), 1)
                 time.sleep(2.1)
                 self.assertTrue(
