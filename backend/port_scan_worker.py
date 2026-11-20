@@ -16,6 +16,7 @@ from authorization_policy import (
     recheck_active_authorization,
 )
 from ownership import reporting_asset_class_sql
+from stage_progress import emit_stage_progress
 
 
 scan_id = int(sys.argv[1])
@@ -407,6 +408,7 @@ def run_port_scan_pool(
     worker_count=None,
     cancel_event=None,
     target_worker=None,
+    progress_callback=None,
 ):
     cancel_event = cancel_event or threading.Event()
     target_worker = target_worker or scan_target
@@ -435,6 +437,11 @@ def run_port_scan_pool(
             except Exception as exc:
                 outcome = {"status": "failed", "domain": domain, "reason": str(exc)}
             outcomes.append(outcome)
+            if progress_callback is not None:
+                try:
+                    progress_callback(outcomes)
+                except Exception:
+                    logging.exception("Noncritical port scan progress callback failed")
     except KeyboardInterrupt as exc:
         cancel_event.set()
         for future in futures:
@@ -490,11 +497,38 @@ def main():
     previous_handlers = _install_cancellation_handlers(cancel_event)
     try:
         started = time.monotonic()
+        last_progress = 0.0
+
+        def report_progress(outcomes, force=False):
+            nonlocal last_progress
+            now = time.monotonic()
+            if not force and now - last_progress < 30:
+                return
+            completed_count = sum(
+                item.get("status") in ("complete", "no_sensitive_ports", "unavailable")
+                for item in outcomes
+            )
+            emit_stage_progress(
+                scan_id, "Port Scan", selected=len(domains), total=len(domains),
+                processed=len(outcomes), completed=completed_count,
+                succeeded=completed_count,
+                failed=sum(item.get("status") == "failed" for item in outcomes),
+                skipped=sum(item.get("status") in ("skipped", "cancelled") for item in outcomes),
+                elapsed_seconds=now - started,
+            )
+            last_progress = now
+
+        report_progress([], force=True)
         try:
-            outcomes = run_port_scan_pool(scan_id, domains, cancel_event=cancel_event)
+            outcomes = run_port_scan_pool(
+                scan_id, domains, cancel_event=cancel_event,
+                progress_callback=report_progress,
+            )
         except PortScanStageError as exc:
+            report_progress(exc.outcomes, force=True)
             _emit_worker_summary(domains, exc.outcomes, time.monotonic() - started)
             raise
+        report_progress(outcomes, force=True)
         _emit_worker_summary(domains, outcomes, time.monotonic() - started)
     finally:
         for sig, handler in previous_handlers.items():

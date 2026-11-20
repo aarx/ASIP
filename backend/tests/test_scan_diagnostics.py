@@ -139,6 +139,30 @@ class ScanDiagnosticsApiTests(unittest.TestCase):
         self.assertIsNone(result["completed_at"])
         self.assertEqual(result["duration_seconds"], 4.0)
 
+    def test_running_detail_returns_bounded_current_progress(self):
+        doc = scan_diagnostics.empty_diagnostics()
+        doc["current_stage"] = {
+            "stage": "DNS Security", "order": 7, "attempt": 1,
+            "started_at": "start", "progress": {
+                "scan_id": 18, "stage": "DNS Security", "status": "RUNNING",
+                "selected": 100, "total": 100, "processed": 25,
+                "completed": 25, "succeeded": 25, "failed": 0, "skipped": 2,
+                "elapsed_seconds": 30.0, "throughput": 0.833,
+                "estimated_remaining_seconds": 90.0,
+                "last_progress_at": "2026-11-20T10:00:00+00:00",
+                "secret": "must not be returned",
+            },
+        }
+        cursor = _ApiCursor(one=(18, "RUNNING", "scan-time", "start", None,
+                                "seed.example", 3, 40.0, doc))
+        with mock.patch.object(self.main, "get_conn", return_value=_ApiConnection(cursor)):
+            result = self.main.frontend_v2_scan_detail(18)
+        progress = result["current_stage"]["progress"]
+        self.assertEqual(progress["processed"], 25)
+        self.assertEqual(progress["total"], 100)
+        self.assertEqual(progress["estimated_remaining_seconds"], 90.0)
+        self.assertNotIn("secret", progress)
+
     def test_scan_list_contract_is_unchanged(self):
         row = (17, "SUCCEEDED", "time", "start", "end", "seed.example", 12, 2.0)
         cursor = _ApiCursor(many=[row])

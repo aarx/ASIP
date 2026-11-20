@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import pathlib
 import shlex
@@ -439,6 +440,42 @@ class OrchestrationStageExecutionTests(unittest.TestCase):
             )
         finally:
             heartbeat.stop()
+
+    def test_stage_stream_parses_worker_progress_and_emits_elapsed_ticks(self):
+        marker = {
+            "scan_id": 42, "stage": "DNS Security", "status": "RUNNING",
+            "selected": 3, "total": 3, "processed": 1,
+            "elapsed_seconds": 30,
+        }
+        code = (
+            "import json,time; print('ASIP_STAGE_PROGRESS '+json.dumps("
+            + repr(marker) + ")); time.sleep(0.06)"
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-c", code], stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        progress = []
+        with mock.patch.object(self.module.logging, "info"):
+            self.module._stream_stage_output(
+                process, "DNS Security", progress.append, progress_interval=0.02
+            )
+        self.assertEqual(process.returncode, 0)
+        self.assertTrue(any(item.get("processed") == 1 for item in progress))
+        self.assertTrue(any(
+            item.get("status") == "RUNNING" and "processed" not in item
+            for item in progress
+        ))
+
+    def test_progress_database_failure_does_not_fail_stage_execution(self):
+        with mock.patch.object(
+            self.module, "get_conn", side_effect=RuntimeError("offline")
+        ), mock.patch.object(self.module.logging, "warning") as warning:
+            self.module._diagnostics_progress(
+                42, "runner-42", "DNS Security", 7, 1,
+                {"status": "RUNNING", "processed": 1},
+            )
+        warning.assert_called_once()
 
 
 class ReconToolExecutionTests(unittest.TestCase):

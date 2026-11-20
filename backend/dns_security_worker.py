@@ -22,6 +22,7 @@ from dns_security import (
     dns_security_query_authorizer,
     persist_dns_security_check,
 )
+from stage_progress import emit_stage_progress
 
 
 def _emit(summary):
@@ -29,6 +30,25 @@ def _emit(summary):
         "dns_security_stage "
         + json.dumps(summary, sort_keys=True, separators=(",", ":")),
         flush=True,
+    )
+
+
+def _emit_progress(scan_id, summary, started, *, force=False, status="RUNNING"):
+    now = time.monotonic()
+    last = summary.get("_last_progress", 0.0)
+    if not force and now - last < 30:
+        return
+    summary["_last_progress"] = now
+    selected = summary.get("selected", 0)
+    processed = summary.get("_processed", 0)
+    emit_stage_progress(
+        scan_id, "DNS Security", status=status,
+        selected=selected, total=selected, processed=processed,
+        completed=summary.get("completed", 0),
+        succeeded=summary.get("completed", 0),
+        failed=summary.get("worker_errors", 0),
+        skipped=summary.get("authorization_skips", 0),
+        elapsed_seconds=now - started,
     )
 
 
@@ -41,12 +61,15 @@ def run_dns_security_stage(scan_id, *, run_scoped=False, resolver_factory=None):
         "run_scoped": False, "run_scope_target_count": 0,
         "query_attempts": 0, "query_budget_exhausted": False,
         "elapsed_seconds": 0.0,
+        "_processed": 0,
+        "_last_progress": 0.0,
     }
     exit_code = 0
     globally_enabled = default_operation_enabled(DNS_SECURITY_OPERATION)
     if not globally_enabled:
         summary["disabled"] = True
         summary["elapsed_seconds"] = round(time.monotonic() - started, 4)
+        _emit_progress(scan_id, summary, started, force=True, status="RUNNING")
         _emit(summary)
         return 0
 
@@ -91,14 +114,19 @@ def run_dns_security_stage(scan_id, *, run_scoped=False, resolver_factory=None):
             targets = cur.fetchall()
             summary["selected"] = len(targets)
             conn.rollback()
+
         finally:
             conn.close()
+
+        _emit_progress(scan_id, summary, started, force=True)
 
         query_budget = (
             DnsQueryBudget(MAX_RUN_SCOPED_DNS_QUERIES)
             if target_ids is not None else None
         )
         for domain_id, domain in targets:
+            summary["_processed"] += 1
+            _emit_progress(scan_id, summary, started)
             if not default_operation_enabled(DNS_SECURITY_OPERATION):
                 summary["disabled"] = True
                 summary["policy_stops"] += 1
@@ -163,6 +191,12 @@ def run_dns_security_stage(scan_id, *, run_scoped=False, resolver_factory=None):
         exit_code = 1
     finally:
         summary["elapsed_seconds"] = round(time.monotonic() - started, 4)
+        _emit_progress(
+            scan_id, summary, started, force=True,
+            status="RUNNING" if exit_code == 0 else "FAILED",
+        )
+        summary.pop("_processed", None)
+        summary.pop("_last_progress", None)
         _emit(summary)
     return exit_code
 

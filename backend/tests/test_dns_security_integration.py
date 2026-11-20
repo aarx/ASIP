@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import shlex
@@ -104,9 +105,16 @@ class DnsSecurityWorkerTests(unittest.TestCase):
 
         lines = stdout.getvalue().splitlines()
         self.assertEqual(result, 0)
-        self.assertEqual(len(lines), 1)
-        self.assertTrue(lines[0].startswith("dns_security_stage {"))
-        summary = extract_worker_summary(lines[0])
+        progress_lines = [line for line in lines if line.startswith("ASIP_STAGE_PROGRESS {")]
+        summary_lines = [line for line in lines if line.startswith("dns_security_stage {")]
+        self.assertEqual(len(progress_lines), 2)
+        self.assertEqual(len(summary_lines), 1)
+        first_progress = json.loads(progress_lines[0].split(" ", 1)[1])
+        self.assertEqual(first_progress["selected"], 1)
+        self.assertEqual(first_progress["processed"], 0)
+        final_progress = json.loads(progress_lines[-1].split(" ", 1)[1])
+        self.assertEqual(final_progress["processed"], 1)
+        summary = extract_worker_summary(summary_lines[0])
         self.assertEqual(summary["selected"], 1)
         self.assertEqual(summary["completed"], 1)
         self.assertEqual(summary["checks_persisted"], 6)

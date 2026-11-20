@@ -1,5 +1,6 @@
 import subprocess
 import argparse
+import json
 from datetime import datetime
 import time
 import logging
@@ -23,7 +24,9 @@ from scan_diagnostics import (
     extract_worker_summary,
     finish_stage_attempt,
     start_stage_attempt,
+    update_stage_progress,
 )
+from stage_progress import progress_payload
 
 ASIP_ORCHESTRATION_LOCK_ID = 0x41534950
 MAX_STAGE_ATTEMPTS = 2
@@ -37,6 +40,8 @@ DEFAULT_RUNNER_ORPHAN_GRACE_SECONDS = 120
 PROCESS_GROUP_POLL_INTERVAL_SECONDS = 0.05
 MAX_STAGE_OUTPUT_CAPTURE_BYTES = 64 * 1024
 MAX_STAGE_OUTPUT_LINE_BYTES = 8 * 1024
+STAGE_PROGRESS_INTERVAL_SECONDS = 30
+STAGE_PROGRESS_MARKER = "ASIP_STAGE_PROGRESS "
 
 _ACTIVE_STAGE_PROCESS = None
 _ACTIVE_STAGE_DIAGNOSTICS = None
@@ -502,6 +507,24 @@ def _diagnostics_start(scan_id, runner_token, name, stage_order, attempt):
 
 def _diagnostics_finish(scan_id, runner_token, name, stage_order, attempt,
                         status, duration, error_category=None, summary=None):
+    summary = summary or {}
+    selected = summary.get("selected", summary.get("selected_parent_targets"))
+    processed = next((summary[key] for key in (
+        "completed", "completed_parent_targets", "completed_observations",
+        "persisted_results",
+    ) if isinstance(summary.get(key), int)), None)
+    completion_progress = progress_payload(
+        scan_id or 0, name, status=status, selected=selected, total=selected,
+        processed=processed, completed=summary.get("completed", processed),
+        succeeded=summary.get("completed", processed),
+        failed=summary.get("worker_errors", summary.get("failed_targets", 0)),
+        skipped=summary.get("authorization_skips", 0),
+        elapsed_seconds=duration,
+    )
+    logging.info(
+        "%s%s", STAGE_PROGRESS_MARKER,
+        json.dumps(completion_progress, separators=(",", ":")),
+    )
     if scan_id is None or runner_token is None or stage_order is None:
         return
     conn = None
@@ -531,6 +554,29 @@ def _diagnostics_finish(scan_id, runner_token, name, stage_order, attempt,
                 logging.exception("Failed to close diagnostics connection")
 
 
+def _diagnostics_progress(scan_id, runner_token, name, stage_order, attempt,
+                          progress):
+    if scan_id is None or runner_token is None or stage_order is None:
+        return
+    conn = None
+    try:
+        conn = get_conn()
+        update_stage_progress(
+            conn, scan_id, runner_token, name, stage_order, attempt, progress
+        )
+    except Exception as exc:
+        logging.warning(
+            "Scan progress update failed for scan=%s stage=%s (%s)",
+            scan_id, name, type(exc).__name__,
+        )
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                logging.warning("Failed to close scan progress connection")
+
+
 def _append_bounded_output(output, chunk):
     output.extend(chunk)
     overflow = len(output) - MAX_STAGE_OUTPUT_CAPTURE_BYTES
@@ -542,7 +588,8 @@ def _log_stage_chunk(name, line):
     logging.info(f"[{name}] {line.decode('utf-8', errors='replace')}")
 
 
-def _stream_stage_output(process, name):
+def _stream_stage_output(process, name, progress_callback=None,
+                         progress_interval=STAGE_PROGRESS_INTERVAL_SECONDS):
     """Forward merged child output until exit, retaining only a bounded tail."""
     stdout = process.stdout
     try:
@@ -557,19 +604,46 @@ def _stream_stage_output(process, name):
 
     captured = bytearray()
     pending = bytearray()
+    started = time.monotonic()
+    next_progress = started + progress_interval
+
+    def record_progress(progress):
+        nonlocal next_progress
+        if progress_callback is not None:
+            try:
+                progress_callback(progress)
+            except Exception:
+                # Progress is a display aid and must never interrupt a worker.
+                logging.exception("Noncritical stage progress callback failed")
+        next_progress = time.monotonic() + progress_interval
+
     selector = selectors.DefaultSelector()
     selector.register(stdout, selectors.EVENT_READ)
     try:
         while True:
-            if not selector.select():
+            events = selector.select(max(0, next_progress - time.monotonic()))
+            if not events:
+                record_progress({
+                    "status": "RUNNING",
+                    "elapsed_seconds": max(0, time.monotonic() - started),
+                })
                 continue
             chunk = os.read(file_descriptor, 4096)
             if not chunk:
-                _flush_stage_output(name, pending, final=True)
+                _flush_stage_output(
+                    name, pending, final=True, progress_callback=record_progress
+                )
                 break
             _append_bounded_output(captured, chunk)
             pending.extend(chunk)
-            _flush_stage_output(name, pending)
+            _flush_stage_output(
+                name, pending, progress_callback=record_progress
+            )
+            if time.monotonic() >= next_progress:
+                record_progress({
+                    "status": "RUNNING",
+                    "elapsed_seconds": max(0, time.monotonic() - started),
+                })
 
         process.wait()
         return bytes(captured)
@@ -577,23 +651,43 @@ def _stream_stage_output(process, name):
         selector.close()
 
 
-def _flush_stage_output(name, pending, final=False):
+def _flush_stage_output(name, pending, final=False, progress_callback=None):
     """Log complete lines and bounded fragments without retaining huge lines."""
     while pending:
         newline = pending.find(b"\n")
         if newline >= 0 and newline < MAX_STAGE_OUTPUT_LINE_BYTES:
             line = bytes(pending[:newline]).rstrip(b"\r")
             del pending[:newline + 1]
+            if progress_callback is not None:
+                _parse_stage_progress(line, progress_callback)
             _log_stage_chunk(name, line)
         elif len(pending) >= MAX_STAGE_OUTPUT_LINE_BYTES:
             line = bytes(pending[:MAX_STAGE_OUTPUT_LINE_BYTES])
             del pending[:MAX_STAGE_OUTPUT_LINE_BYTES]
+            if progress_callback is not None:
+                _parse_stage_progress(line, progress_callback)
             _log_stage_chunk(name, line)
         elif final:
-            _log_stage_chunk(name, bytes(pending).rstrip(b"\r"))
+            line = bytes(pending).rstrip(b"\r")
+            if progress_callback is not None:
+                _parse_stage_progress(line, progress_callback)
+            _log_stage_chunk(name, line)
             pending.clear()
         else:
             return
+
+
+def _parse_stage_progress(line, progress_callback):
+    text = line.decode("utf-8", errors="replace").strip()
+    position = text.find(STAGE_PROGRESS_MARKER)
+    if position < 0:
+        return
+    try:
+        progress = json.loads(text[position + len(STAGE_PROGRESS_MARKER):])
+    except (TypeError, ValueError):
+        return
+    if isinstance(progress, dict):
+        progress_callback(progress)
 
 
 def run_step(name, cmd, attempt, max_attempts, scan_id=None,
@@ -626,7 +720,24 @@ def run_step(name, cmd, attempt, max_attempts, scan_id=None,
         )
         _ACTIVE_STAGE_PROCESS = process
 
-        captured_output = _stream_stage_output(process, name)
+        def progress_update(snapshot):
+            if "scan_id" in snapshot and snapshot.get("scan_id") != scan_id:
+                return
+            if "stage" in snapshot and snapshot.get("stage") != name:
+                return
+            progress = dict(snapshot)
+            progress.pop("scan_id", None)
+            progress.pop("stage", None)
+            progress.setdefault(
+                "elapsed_seconds", time.monotonic() - monotonic_start
+            )
+            _diagnostics_progress(
+                scan_id, runner_token, name, stage_order, attempt, progress
+            )
+
+        captured_output = _stream_stage_output(
+            process, name, progress_callback=progress_update
+        )
 
         output = captured_output.decode("utf-8", errors="replace")
 

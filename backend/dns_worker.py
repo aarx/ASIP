@@ -6,6 +6,7 @@ import time
 from db import get_conn, require_running_scan
 from authorization_policy import passive_dns_discovery_sql
 from ownership import normalize_hostname
+from stage_progress import emit_stage_progress
 
 scan_id = int(sys.argv[1])
 DNS_PROGRESS_INTERVAL_SECONDS = 30
@@ -169,8 +170,15 @@ def main():
                 visited, len(rows), processed, no_record_domains,
                 authorization_skips, now - progress_started,
             ))
+            emit_stage_progress(
+                scan_id, "DNS Resolution", selected=len(rows), total=len(rows),
+                processed=visited, completed=visited, succeeded=processed,
+                failed=0, skipped=authorization_skips + invalid_hostname_skips,
+                elapsed_seconds=now - progress_started,
+            )
             last_progress = now
 
+    report_progress(force=True)
     for domain_id, domain, has_ip in rows:
         visited += 1
 

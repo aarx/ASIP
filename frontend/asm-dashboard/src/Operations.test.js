@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
 import {
   getExposureSummary,
@@ -861,15 +861,54 @@ test("Scan Centre shows the current stage for a running scan", async () => {
     scan_id: 43, status: "RUNNING", scan_time: "2026-11-01T12:00:00Z",
     started_at: "2026-11-01T12:00:00Z", completed_at: null, seed: "example.com",
     asset_count: 3, duration_seconds: 12, diagnostics_available: true,
-    current_stage: { stage: "DNS Resolution", order: 6, attempt: 1, started_at: "2026-11-01T12:00:10Z" },
+    current_stage: { stage: "DNS Resolution", order: 6, attempt: 1,
+      started_at: "2026-11-01T12:00:10Z", progress: {
+        status: "RUNNING", processed: 2, total: 5, elapsed_seconds: 30,
+        throughput: 0.067, estimated_remaining_seconds: 45,
+        last_progress_at: "2026-11-01T12:00:40Z",
+      } },
     stage_attempts: [], failure_category: null, scan_outcome: null,
     diagnostics_last_updated_at: "2026-11-01T12:00:12Z",
   });
 
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Expand scan 43" }));
-  expect(await screen.findByText("DNS Resolution")).toBeInTheDocument();
+  expect(await screen.findAllByText("DNS Resolution")).toHaveLength(2);
   expect(screen.getByText("Current stage").nextSibling).toHaveTextContent("DNS Resolution");
+  expect(screen.getByText("Processed 2 / 5 · 40%")).toBeInTheDocument();
+  expect(screen.getByText("ETA 45s")).toBeInTheDocument();
+});
+
+test("Scan Centre refreshes expanded running diagnostics every 30 seconds", async () => {
+  window.location.hash = "#/scans";
+  getV2Overview.mockResolvedValue(overview);
+  getV2Scans.mockResolvedValue({
+    current_authoritative_scan_id: null, previous_authoritative_scan_id: null,
+    scans: [{ scan_id: 47, status: "RUNNING", started_at: "start",
+      completed_at: null, duration_seconds: null, asset_count: 1,
+      seed: "example.com", is_current_authoritative: false,
+      is_previous_authoritative: false }],
+  });
+  getV2ScanDetail.mockResolvedValue({
+    scan_id: 47, status: "RUNNING", diagnostics_available: true,
+    stage_attempts: [], current_stage: { stage: "Recon", order: 0, attempt: 1 },
+    failure_category: null, scan_outcome: null,
+  });
+  render(<App />);
+  const expand = await screen.findByRole("button", { name: "Expand scan 47" });
+  jest.useFakeTimers();
+  try {
+    fireEvent.click(expand);
+    await act(async () => { await Promise.resolve(); });
+    expect(getV2ScanDetail).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      jest.advanceTimersByTime(30000);
+      await Promise.resolve();
+    });
+    expect(getV2ScanDetail).toHaveBeenCalledTimes(2);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test("Scan Centre does not fabricate diagnostics for historical scans", async () => {
@@ -921,8 +960,8 @@ test("Scan Centre renders failure categories and final stage outcomes", async ()
     stage_attempts: [
       { stage: "Recon", order: 0, attempt: 1, status: "FAILED", started_at: "start", completed_at: "failed", duration_seconds: 2, error_category: "RETRYABLE_INCOMPLETE", worker_summary: null },
       { stage: "Recon", order: 0, attempt: 2, status: "SUCCEEDED", started_at: "retry", completed_at: "done", duration_seconds: 4, error_category: null, worker_summary: null },
-      { stage: "HTTP", order: 7, attempt: 1, status: "TIMED_OUT", started_at: "start", completed_at: "timeout", duration_seconds: 8, error_category: "STAGE_TIMEOUT", worker_summary: null },
-      { stage: "Port Scan", order: 9, attempt: 1, status: "CANCELLED", started_at: "start", completed_at: "cancelled", duration_seconds: 1, error_category: "INTERRUPTED", worker_summary: null },
+      { stage: "HTTP", order: 7, attempt: 1, status: "TIMED_OUT", started_at: "start", completed_at: "timeout", duration_seconds: 8, error_category: "STAGE_TIMEOUT", worker_summary: null, progress: { status: "TIMED_OUT", processed: 12, total: 20, elapsed_seconds: 8 } },
+      { stage: "Port Scan", order: 9, attempt: 1, status: "CANCELLED", started_at: "start", completed_at: "cancelled", duration_seconds: 1, error_category: "INTERRUPTED", worker_summary: null, progress: { status: "CANCELLED", processed: 3, total: 10, elapsed_seconds: 1 } },
     ],
     failure_category: "SCAN_FAILED",
     scan_outcome: { status: "FAILED", completed_at: "2026-11-02T12:02:00Z", error_category: "SCAN_FAILED" },
@@ -937,6 +976,9 @@ test("Scan Centre renders failure categories and final stage outcomes", async ()
   expect(screen.getByText("Failed stages").nextSibling).toHaveTextContent("2");
   expect(screen.getByText("Retry attempts").nextSibling).toHaveTextContent("1");
   expect(screen.getByText("Advanced Diagnostics").closest("details")).not.toHaveAttribute("open");
+  fireEvent.click(screen.getByText("Advanced Diagnostics"));
+  expect(screen.getByText("HTTP · TIMED_OUT")).toBeInTheDocument();
+  expect(screen.getByText("Port Scan · CANCELLED")).toBeInTheDocument();
 });
 
 test("Scan Centre does not convert missing or malformed stage attempts into zero counts", async () => {
@@ -1002,7 +1044,7 @@ test("Scan Centre lazily loads, caches, and isolates rapidly switched rows", asy
   expect(getV2ScanDetail).toHaveBeenCalledTimes(2);
   pending[42]({ ...overview, scan_id: 42, status: "SUCCEEDED", diagnostics_available: true, stage_attempts: [{ stage: "Recon", order: 0, attempt: 1, status: "SUCCEEDED", started_at: "start", completed_at: "done", duration_seconds: 1, error_category: null, worker_summary: null }], current_stage: null, failure_category: null, scan_outcome: null });
   pending[43]({ ...overview, scan_id: 43, status: "RUNNING", diagnostics_available: true, stage_attempts: [], current_stage: { stage: "DNS Resolution", order: 6, attempt: 1, started_at: "start" }, failure_category: null, scan_outcome: null });
-  expect(await screen.findByText("DNS Resolution")).toBeInTheDocument();
+  expect(await screen.findAllByText("DNS Resolution")).toHaveLength(2);
   expect(screen.queryByText("Recon")).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Collapse scan 43" }));

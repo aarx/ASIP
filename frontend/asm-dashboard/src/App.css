@@ -738,6 +738,12 @@
 .scan-diagnostics-unavailable { justify-content: space-between; }
 .scan-diagnostics-unavailable strong { color: var(--asip-text-primary); font-size: 11px; }
 .scan-diagnostics { display: grid; gap: 16px; padding: 18px 20px 20px; }
+.scan-stage-progress { display: grid; gap: 7px; min-width: 220px; padding: 10px 12px; border: 1px solid var(--asip-border); border-radius: 5px; background: rgba(16, 29, 47, .46); color: var(--asip-text-secondary); font-size: 10px; }
+.scan-stage-progress-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.scan-stage-progress-heading strong { color: var(--asip-text-primary); }
+.scan-stage-progress-track { height: 5px; overflow: hidden; border-radius: 4px; background: rgba(100, 116, 139, .25); }
+.scan-stage-progress-track span { display: block; height: 100%; background: #57a9d8; transition: width .25s ease; }
+.scan-stage-progress-updated { color: var(--asip-text-muted); font-size: 9px; }
 .scan-detail-grid { display: grid; grid-template-columns: repeat(5, minmax(100px, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--asip-border); border-radius: 5px; background: var(--asip-border); }
 .scan-diagnostic-stat { display: grid; gap: 6px; min-width: 0; padding: 11px 12px; background: var(--asip-surface); }
 .scan-diagnostic-stat span { color: var(--asip-text-muted); font-size: 8px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }

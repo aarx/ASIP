@@ -4,12 +4,14 @@ from datetime import datetime
 import logging
 import os
 import sys
+import time
 from authorization_policy import (
     active_scan_authorization_sql,
     recheck_active_authorization,
 )
 from db import get_conn, require_running_scan
 from http_probe import open_validated_tls_socket
+from stage_progress import emit_stage_progress
 
 
 scan_id = int(sys.argv[1])
@@ -96,6 +98,24 @@ def main():
 
     total = len(domains)
     print(f"Cert scan for {total} domains")
+    progress_started = time.monotonic()
+    last_progress = 0.0
+    completed = 0
+    successful = 0
+
+    def report_progress(done, force=False):
+        nonlocal last_progress
+        now = time.monotonic()
+        if not force and now - last_progress < 30:
+            return
+        emit_stage_progress(
+            scan_id, "Cert Worker", selected=total, total=total,
+            processed=done, completed=done, succeeded=successful,
+            failed=0, skipped=0, elapsed_seconds=now - progress_started,
+        )
+        last_progress = now
+
+    report_progress(0, force=True)
     for done, row in enumerate(domains, start=1):
         domain_id, domain = row[:2]
         ip = row[2] if len(row) > 2 else None
@@ -118,6 +138,10 @@ def main():
         )
         if done % 20 == 0:
             print(f"[CERT PROGRESS] {done}/{total}")
+        completed = done
+        if cert_result is not None:
+            successful += 1
+        report_progress(done)
         if cert_result is None:
             continue
         expiry, days, status = cert_result
@@ -138,7 +162,9 @@ def main():
             """, (domain_id, scan_id, expiry, days, status, scan_id, domain_id))
     
     
-    conn.commit()
+        conn.commit()
+
+    report_progress(completed, force=True)
     conn.close()
 
     print("Certificate enrichment complete")

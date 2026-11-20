@@ -185,6 +185,15 @@ function ScanDiagnostics({ detail }) {
     (Number.isInteger(attempt.attempt) && attempt.attempt > 1) || attempt.status === "CANCELLED"
   ));
   const currentStage = detail.status === "RUNNING" ? detail.current_stage : null;
+  const currentProgress = currentStage?.progress;
+  const progressCountIsValid = Number.isInteger(currentProgress?.processed)
+    && Number.isInteger(currentProgress?.total)
+    && currentProgress.total > 0
+    && currentProgress.processed >= 0
+    && currentProgress.processed <= currentProgress.total;
+  const progressPercent = progressCountIsValid
+    ? Math.floor((currentProgress.processed / currentProgress.total) * 100)
+    : null;
   const scopeKeys = ["authorization_skips", "failed_incomplete", "no_permitted_destinations", "no_permitted_destination"];
   const scopeRows = workerRows.filter((row) => scopeKeys.includes(row.key));
 
@@ -200,6 +209,38 @@ function ScanDiagnostics({ detail }) {
           label="Current stage"
           value={currentStage ? detailValue(currentStage.stage) : detail.status === "RUNNING" ? "Unavailable" : "—"}
         />
+        {currentStage && (
+          <div className="scan-stage-progress" role="status" aria-live="polite">
+            <div className="scan-stage-progress-heading">
+              <strong>{detailValue(currentStage.stage)}</strong>
+              <StatusBadge value={currentProgress?.status || "RUNNING"} />
+            </div>
+            {progressCountIsValid ? (
+              <>
+                <div className="scan-stage-progress-track" role="progressbar"
+                  aria-label={`${currentStage.stage} progress`}
+                  aria-valuemin="0" aria-valuemax={currentProgress.total}
+                  aria-valuenow={currentProgress.processed}>
+                  <span style={{ width: `${progressPercent}%` }} />
+                </div>
+                <span>Processed {currentProgress.processed} / {currentProgress.total} · {progressPercent}%</span>
+              </>
+            ) : <span>Processed count unavailable</span>}
+            <span>Elapsed {duration(currentProgress?.elapsed_seconds)}</span>
+            {Number.isFinite(currentProgress?.throughput) && currentProgress.throughput > 0 && (
+              <span>{currentProgress.throughput.toFixed(2)} targets/s</span>
+            )}
+            {currentProgress?.status === "RUNNING"
+              && Number.isFinite(currentProgress?.estimated_remaining_seconds)
+              && progressCountIsValid
+              && currentProgress.processed < currentProgress.total && (
+              <span>ETA {duration(currentProgress.estimated_remaining_seconds)}</span>
+            )}
+            {currentProgress?.last_progress_at && (
+              <span className="scan-stage-progress-updated">Updated {timestamp(currentProgress.last_progress_at)}</span>
+            )}
+          </div>
+        )}
         {stageOutcomes ? (
           <>
             <DiagnosticStat label="Completed stages" value={breakdown.SUCCEEDED} />
@@ -253,6 +294,22 @@ function ScanDiagnostics({ detail }) {
       <details className="scan-advanced-diagnostics">
         <summary>Advanced Diagnostics</summary>
         <div className="scan-advanced-body">
+          <section className="scan-diagnostics-section">
+            <h3>Stage progress snapshots</h3>
+            {attempts.some((attempt) => attempt.progress) ? (
+              <div className="scan-worker-summary">
+                {attempts.filter((attempt) => attempt.progress).map((attempt, index) => (
+                  <div className="scan-worker-row" key={`${attempt.stage}-progress-${index}`}>
+                    <span>{attempt.stage} · {attempt.progress.status}</span>
+                    <strong>{Number.isInteger(attempt.progress.processed)
+                      ? `${attempt.progress.processed} / ${detailValue(attempt.progress.total)}`
+                      : "Count unavailable"}</strong>
+                    <b>{duration(attempt.progress.elapsed_seconds)}</b>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="scan-diagnostics-empty">No stage progress snapshots returned.</p>}
+          </section>
           <section className="scan-diagnostics-section">
             <h3>Worker summary counts</h3>
             {workerRows.length ? (
@@ -356,6 +413,7 @@ export default function ScanCentrePage({ query = "" }) {
   const [details, setDetails] = useState({});
   const [detailStatuses, setDetailStatuses] = useState({});
   const [reportDownloads, setReportDownloads] = useState({});
+  const expandedDetail = expandedScanId === null ? null : details[expandedScanId];
 
   useEffect(() => {
     let active = true;
@@ -368,6 +426,19 @@ export default function ScanCentrePage({ query = "" }) {
       .catch(() => { if (active) setStatus("error"); });
     return () => { active = false; };
   }, [requestVersion, sortBy, sortDir]);
+
+  useEffect(() => {
+    if (!expandedDetail || expandedDetail.status !== "RUNNING") return undefined;
+    let active = true;
+    const timer = window.setInterval(() => {
+      getV2ScanDetail(expandedDetail.scan_id)
+        .then((detail) => {
+          if (active) setDetails((current) => ({ ...current, [detail.scan_id]: detail }));
+        })
+        .catch(() => {});
+    }, 30000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [expandedDetail]);
 
   const changeSort = (field) => {
     const direction = sortBy === field ? (sortDir === "asc" ? "desc" : "asc") : (["scan_id", "asset_count", "started_at", "completed_at"].includes(field) ? "desc" : "asc");

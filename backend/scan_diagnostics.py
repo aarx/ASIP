@@ -214,11 +214,69 @@ def start_stage_attempt(conn, scan_id, runner_token, stage, stage_order, attempt
         "error_category": None,
         "worker_summary": None,
     }
+    initial_progress = sanitize_stage_progress(
+        {"status": "RUNNING", "elapsed_seconds": 0},
+        scan_id=scan_id, stage=record["stage"],
+    )
+    record["progress"] = initial_progress
     attempts.append(record)
     document["current_stage"] = {
         "stage": record["stage"], "order": record["order"],
         "attempt": record["attempt"], "started_at": record["started_at"],
+        "progress": initial_progress,
     }
+    return _commit_document(conn, cur, scan_id, runner_token, document)
+
+
+PROGRESS_COUNTERS = (
+    "selected", "total", "processed", "completed", "succeeded", "failed", "skipped",
+)
+
+
+def sanitize_stage_progress(value, *, scan_id, stage, started_at=None):
+    """Return a bounded, numeric-only progress snapshot for API persistence."""
+    if not isinstance(value, dict):
+        value = {}
+    progress = {
+        "scan_id": value.get("scan_id") if isinstance(value.get("scan_id"), int) else int(scan_id),
+        "stage": str(stage)[:MAX_STAGE_NAME_LENGTH],
+        "status": value.get("status") if value.get("status") in STAGE_OUTCOMES else "RUNNING",
+    }
+    for key in PROGRESS_COUNTERS:
+        item = value.get(key)
+        progress[key] = item if isinstance(item, int) and not isinstance(item, bool) and 0 <= item <= MAX_COUNTER_VALUE else None
+    for key in ("elapsed_seconds", "throughput", "estimated_remaining_seconds"):
+        item = value.get(key)
+        progress[key] = round(item, 3) if isinstance(item, (int, float)) and math.isfinite(item) and item >= 0 else None
+    last_progress_at = value.get("last_progress_at")
+    progress["last_progress_at"] = (
+        str(last_progress_at)[:64] if isinstance(last_progress_at, str)
+        else datetime.now(timezone.utc).isoformat()
+    )
+    return progress
+
+
+def update_stage_progress(conn, scan_id, runner_token, stage, stage_order,
+                          attempt, progress):
+    cur, document, _now_value = _load_locked(conn, scan_id, runner_token)
+    if cur is None:
+        return False
+    current = document.get("current_stage")
+    if (not isinstance(current, dict)
+            or current.get("order") != int(stage_order)
+            or current.get("attempt") != int(attempt)
+            or current.get("stage") != str(stage)[:MAX_STAGE_NAME_LENGTH]):
+        conn.rollback()
+        return False
+    current["progress"] = sanitize_stage_progress(
+        progress, scan_id=scan_id, stage=stage, started_at=current.get("started_at")
+    )
+    record = next((item for item in reversed(document["attempts"])
+                   if item.get("order") == int(stage_order)
+                   and item.get("attempt") == int(attempt)
+                   and item.get("status") == "RUNNING"), None)
+    if record is not None:
+        record["progress"] = current["progress"]
     return _commit_document(conn, cur, scan_id, runner_token, document)
 
 
@@ -253,6 +311,49 @@ def finish_stage_attempt(
     )
     record["error_category"] = error_category
     record["worker_summary"] = sanitize_worker_summary(worker_summary)
+    prior_progress = record.get("progress")
+    final_progress = dict(prior_progress) if isinstance(prior_progress, dict) else sanitize_stage_progress(
+        {"status": status, "elapsed_seconds": duration_seconds},
+        scan_id=scan_id, stage=stage,
+    )
+    final_progress["status"] = status
+    final_progress["elapsed_seconds"] = (
+        round(float(duration_seconds), 3)
+        if isinstance(duration_seconds, (int, float)) and math.isfinite(duration_seconds)
+        else final_progress.get("elapsed_seconds")
+    )
+    if isinstance(worker_summary, dict):
+        for key in PROGRESS_COUNTERS:
+            item = worker_summary.get(key)
+            if isinstance(item, int) and not isinstance(item, bool) and item >= 0:
+                final_progress[key] = item
+        if final_progress.get("selected") is None:
+            final_progress["selected"] = worker_summary.get(
+                "selected", worker_summary.get("selected_parent_targets")
+            )
+        if final_progress.get("total") is None:
+            final_progress["total"] = final_progress.get("selected")
+        if final_progress.get("processed") is None:
+            for key in ("completed", "completed_parent_targets",
+                        "completed_observations", "persisted_results"):
+                if isinstance(worker_summary.get(key), int):
+                    final_progress["processed"] = worker_summary[key]
+                    break
+        if final_progress.get("failed") is None:
+            final_progress["failed"] = worker_summary.get(
+                "failed_targets", worker_summary.get("worker_errors", 0)
+            )
+        if final_progress.get("skipped") is None:
+            final_progress["skipped"] = worker_summary.get("authorization_skips", 0)
+        elapsed = final_progress.get("elapsed_seconds")
+        processed = final_progress.get("processed")
+        if isinstance(processed, int) and isinstance(elapsed, (int, float)) and elapsed > 0:
+            final_progress["throughput"] = round(processed / elapsed, 3)
+        if (status == "SUCCEEDED" and isinstance(final_progress.get("total"), int)
+                and processed == final_progress["total"]):
+            final_progress["estimated_remaining_seconds"] = 0.0
+    final_progress["last_progress_at"] = datetime.now(timezone.utc).isoformat()
+    record["progress"] = final_progress
     current = document.get("current_stage")
     if isinstance(current, dict) and current.get("order") == int(stage_order) \
             and current.get("attempt") == int(attempt):
@@ -287,6 +388,9 @@ def api_diagnostics(value, scan_status):
             if isinstance(item.get("duration_seconds"), (int, float)) else None,
             "error_category": category if category in ERROR_CATEGORIES else None,
             "worker_summary": sanitize_worker_summary(item.get("worker_summary")),
+            "progress": sanitize_stage_progress(
+                item.get("progress"), scan_id=0, stage=item.get("stage", "")
+            ) if isinstance(item.get("progress"), dict) else None,
         })
     raw_current = document.get("current_stage") if scan_status == "RUNNING" else None
     current = None
@@ -299,6 +403,10 @@ def api_diagnostics(value, scan_status):
             if isinstance(raw_current.get("attempt"), int) else None,
             "started_at": str(raw_current.get("started_at"))[:64]
             if raw_current.get("started_at") is not None else None,
+            "progress": sanitize_stage_progress(
+                raw_current.get("progress"), scan_id=0,
+                stage=raw_current.get("stage", ""),
+            ) if isinstance(raw_current.get("progress"), dict) else None,
         }
     scan_outcome = document.get("scan_outcome")
     safe_scan_outcome = None
