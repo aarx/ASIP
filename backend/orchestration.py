@@ -6,6 +6,7 @@ import logging
 import os
 import selectors
 import signal
+import socket
 import sys
 import threading
 import uuid
@@ -29,6 +30,9 @@ MAX_STAGE_ATTEMPTS = 2
 CHILD_TERMINATE_GRACE_SECONDS = 5
 OVERLAP_SKIP_EXIT_CODE = 0
 DEFAULT_RUNNER_HEARTBEAT_INTERVAL_SECONDS = 15
+RUNNER_HEARTBEAT_RECOVERY_SECONDS = 60
+RUNNER_HEARTBEAT_RETRY_INITIAL_SECONDS = 1
+RUNNER_HEARTBEAT_RETRY_MAX_SECONDS = 10
 DEFAULT_RUNNER_ORPHAN_GRACE_SECONDS = 120
 PROCESS_GROUP_POLL_INTERVAL_SECONDS = 0.05
 MAX_STAGE_OUTPUT_CAPTURE_BYTES = 64 * 1024
@@ -44,6 +48,31 @@ class StageExecutionError(RuntimeError):
 
 class RunnerLeaseError(RuntimeError):
     """The orchestration runner no longer owns its scan lease."""
+
+
+def _is_transient_heartbeat_error(exc):
+    """Recognize connection establishment/loss errors, never SQL failures."""
+    if isinstance(exc, (socket.gaierror, TimeoutError, ConnectionError)):
+        return True
+    message = str(exc).lower()
+    connection_markers = (
+        "could not translate host name",
+        "temporary failure in name resolution",
+        "name or service not known",
+        "connection refused",
+        "connection timed out",
+        "connection reset by peer",
+        "network is unreachable",
+        "no route to host",
+        "could not receive data from server",
+        "could not connect to server",
+        "server closed the connection unexpectedly",
+        "ssl syscall error: eof detected",
+        "connection already closed",
+        "connection is closed",
+    )
+    return (type(exc).__name__ == "OperationalError"
+            and any(marker in message for marker in connection_markers))
 
 
 def _positive_env_int(name, default):
@@ -186,36 +215,77 @@ class RunnerHeartbeat:
 
     def _run(self):
         while not self._stop.wait(self.interval_seconds):
-            conn = None
-            try:
-                conn = get_conn()
-                cur = conn.cursor()
-                cur.execute(
-                    """
-                    UPDATE scans
-                    SET heartbeat_at = NOW()
-                    WHERE id = %s
-                      AND status = 'RUNNING'
-                      AND runner_token = %s
-                    """,
-                    (self.scan_id, self.runner_token),
-                )
-                if cur.rowcount != 1:
-                    raise RunnerLeaseError(
-                        f"scan {self.scan_id} runner lease is no longer owned"
+            failure_started = time.monotonic()
+            retry_delay = RUNNER_HEARTBEAT_RETRY_INITIAL_SECONDS
+            had_transient_failure = False
+            while not self._stop.is_set():
+                conn = None
+                try:
+                    # Each retry deliberately acquires a fresh connection.
+                    conn = get_conn()
+                    cur = conn.cursor()
+                    cur.execute(
+                        """
+                        UPDATE scans
+                        SET heartbeat_at = NOW()
+                        WHERE id = %s
+                          AND status = 'RUNNING'
+                          AND runner_token = %s
+                        """,
+                        (self.scan_id, self.runner_token),
                     )
-                conn.commit()
-            except Exception as exc:
-                self._failure = RunnerLeaseError(
-                    f"scan {self.scan_id} heartbeat failed: {exc}"
-                )
-                self._stop.set()
-            finally:
-                if conn is not None:
-                    try:
-                        conn.close()
-                    except Exception:
-                        logging.exception("Failed to close heartbeat connection")
+                    if cur.rowcount != 1:
+                        raise RunnerLeaseError(
+                            f"scan {self.scan_id} runner lease is no longer owned"
+                        )
+                    conn.commit()
+                    if had_transient_failure:
+                        logging.info(
+                            "scan %s heartbeat recovered after transient database failure",
+                            self.scan_id,
+                        )
+                    break
+                except RunnerLeaseError as exc:
+                    self._failure = exc
+                    self._stop.set()
+                except Exception as exc:
+                    elapsed = time.monotonic() - failure_started
+                    if not _is_transient_heartbeat_error(exc):
+                        self._failure = RunnerLeaseError(
+                            f"scan {self.scan_id} heartbeat failed: {exc}"
+                        )
+                        self._stop.set()
+                    elif elapsed >= RUNNER_HEARTBEAT_RECOVERY_SECONDS:
+                        self._failure = RunnerLeaseError(
+                            f"scan {self.scan_id} heartbeat failed after "
+                            f"{int(elapsed)}s transient database outage: {exc}"
+                        )
+                        logging.error("%s", self._failure)
+                        self._stop.set()
+                    else:
+                        had_transient_failure = True
+                        logging.warning(
+                            "scan %s heartbeat connection failed; retrying in %ss "
+                            "(recovery window %ss): %s",
+                            self.scan_id, retry_delay,
+                            RUNNER_HEARTBEAT_RECOVERY_SECONDS, exc,
+                        )
+                        if self._stop.wait(min(
+                            retry_delay,
+                            max(0, RUNNER_HEARTBEAT_RECOVERY_SECONDS - elapsed),
+                        )):
+                            break
+                        retry_delay = min(
+                            retry_delay * 2, RUNNER_HEARTBEAT_RETRY_MAX_SECONDS
+                        )
+                finally:
+                    if conn is not None:
+                        try:
+                            conn.close()
+                        except Exception:
+                            logging.exception("Failed to close heartbeat connection")
+                if self._failure is not None:
+                    break
 
 # -------------------------
 # CREATE SCAN
@@ -784,6 +854,7 @@ def run_pipeline(dns_security_target_ids=None):
         raise
 
     except Exception as exc:
+        logging.exception("PIPELINE EXCEPTION for scan_id=%s", scan_id)
         logging.error(f"PIPELINE FAILED for scan_id={scan_id}")
         logging.error("=" * 70)
         logging.error("ASM Scan Failed")

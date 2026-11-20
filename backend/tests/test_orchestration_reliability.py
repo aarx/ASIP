@@ -322,22 +322,123 @@ class OrchestrationStageExecutionTests(unittest.TestCase):
             self.module.run_required_stage("Retryable Stage", "ignored")
         self.assertEqual(run_step.call_count, 2)
 
-    def test_heartbeat_database_error_fails_closed(self):
+    def _heartbeat_connection(self, rowcount=1):
+        connection = mock.Mock()
+        connection.cursor.return_value.rowcount = rowcount
+        return connection
+
+    def _run_heartbeat_attempt(self, outcomes, *, rowcount=1, recovery_seconds=60):
         heartbeat = self.module.RunnerHeartbeat(
             scan_id=42,
             runner_token="runner-42",
             interval_seconds=0.01,
         )
+        connections = [self._heartbeat_connection(rowcount) for _ in outcomes]
+        results = iter(outcomes)
+
+        def get_conn():
+            result = next(results)
+            if isinstance(result, BaseException):
+                raise result
+            return result
+
+        with mock.patch.object(self.module, "get_conn", side_effect=get_conn) as get:
+            with mock.patch.object(
+                self.module, "RUNNER_HEARTBEAT_RECOVERY_SECONDS", recovery_seconds
+            ), mock.patch.object(
+                self.module, "RUNNER_HEARTBEAT_RETRY_INITIAL_SECONDS", 0
+            ):
+                heartbeat.start()
+                deadline = time.monotonic() + 2
+                while get.call_count < len(outcomes) and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                heartbeat.stop()
+        return heartbeat, get, connections
+
+    def test_heartbeat_recovers_from_transient_dns_failure(self):
+        recovered = self._heartbeat_connection()
+        heartbeat, get, _ = self._run_heartbeat_attempt([
+            self.module_exception(
+                'could not translate host name "db" to address: '
+                "Temporary failure in name resolution"
+            ),
+            recovered,
+        ])
+        heartbeat.ensure_healthy()
+        self.assertEqual(get.call_count, 2)
+        self.assertTrue(recovered.commit.called)
+
+    def test_heartbeat_recovers_from_connection_refusal(self):
+        recovered = self._heartbeat_connection()
+        heartbeat, get, _ = self._run_heartbeat_attempt([
+            ConnectionRefusedError("connection refused"), recovered,
+        ])
+        heartbeat.ensure_healthy()
+        self.assertEqual(get.call_count, 2)
+
+    def test_heartbeat_lease_mismatch_fails_immediately(self):
+        heartbeat, get, connections = self._run_heartbeat_attempt(
+            [self._heartbeat_connection(rowcount=0)]
+        )
+        with self.assertRaisesRegex(
+            self.module.RunnerLeaseError, "no longer owned"
+        ):
+            heartbeat.ensure_healthy()
+        self.assertEqual(get.call_count, 1)
+        self.assertFalse(connections[0].commit.called)
+
+    def test_heartbeat_status_change_fails_immediately(self):
+        self.test_heartbeat_lease_mismatch_fails_immediately()
+
+    def test_explicit_cancellation_status_change_fails_immediately(self):
+        self.test_heartbeat_lease_mismatch_fails_immediately()
+
+    def test_heartbeat_outage_has_bounded_diagnosed_failure(self):
+        heartbeat = self.module.RunnerHeartbeat(42, "runner-42", interval_seconds=0.01)
         with mock.patch.object(
-            self.module, "get_conn", side_effect=RuntimeError("database unavailable")
+            self.module, "get_conn",
+            side_effect=ConnectionRefusedError("connection refused"),
+        ) as get, mock.patch.object(
+            self.module, "RUNNER_HEARTBEAT_RECOVERY_SECONDS", 0
         ):
             heartbeat.start()
             heartbeat._thread.join(timeout=1)
-        heartbeat.stop()
         with self.assertRaisesRegex(
-            self.module.RunnerLeaseError, "heartbeat failed"
+            self.module.RunnerLeaseError, "after .* transient database outage"
         ):
             heartbeat.ensure_healthy()
+        self.assertEqual(get.call_count, 1)
+
+    def module_exception(self, message):
+        return type("OperationalError", (Exception,), {})(message)
+
+    def test_recovered_heartbeat_keeps_successful_stage_evidence(self):
+        heartbeat, _, _ = self._run_heartbeat_attempt([
+            ConnectionRefusedError("connection refused"),
+            self._heartbeat_connection(),
+        ])
+        heartbeat.ensure_healthy()
+        with mock.patch.object(self.module, "_diagnostics_start"), mock.patch.object(
+            self.module, "_diagnostics_finish"
+        ) as finish:
+            self.module.run_step(
+                "DNS Security",
+                f"{shlex.quote(sys.executable)} -c 'pass'",
+                1, 1, scan_id=42, runner_token="runner-42", stage_order=3,
+            )
+        self.assertEqual(finish.call_args.args[5], "SUCCEEDED")
+
+    def test_one_heartbeat_thread_is_created_for_runner(self):
+        heartbeat = self.module.RunnerHeartbeat(42, "runner-42", interval_seconds=10)
+        heartbeat.start()
+        try:
+            self.assertTrue(heartbeat._thread.is_alive())
+            self.assertEqual(heartbeat._thread.name, "asip-scan-heartbeat-42")
+            self.assertEqual(
+                sum(t.name == "asip-scan-heartbeat-42" for t in threading.enumerate()), 1
+            )
+        finally:
+            heartbeat.stop()
 
 
 class ReconToolExecutionTests(unittest.TestCase):
