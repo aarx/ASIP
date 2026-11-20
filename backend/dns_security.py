@@ -15,7 +15,11 @@ import dns.exception
 import dns.rcode
 import dns.resolver
 
-from authorization_policy import default_operation_enabled, recheck_active_authorization
+from authorization_policy import (
+    active_scan_authorization_sql,
+    default_operation_enabled,
+    recheck_active_authorization,
+)
 from ownership import normalize_hostname
 
 
@@ -162,6 +166,7 @@ class BoundedDnsResolver:
         self.query_budget = query_budget
         self.query_attempts = 0
         self._scan_local_cache = {}
+        self._resolver = None
 
     def query(self, requested_name, record_type, *, authorize: Callable[[], object]):
         rrtype = str(record_type or "").strip().upper()
@@ -213,7 +218,9 @@ class BoundedDnsResolver:
         queried_at = _now()
         self.query_attempts += 1
         try:
-            resolver = self.resolver_factory()
+            if self._resolver is None:
+                self._resolver = self.resolver_factory()
+            resolver = self._resolver
             resolver.timeout = self.timeout
             resolver.lifetime = self.lifetime
             if hasattr(resolver, "retry_servfail"):
@@ -645,13 +652,12 @@ def persist_dns_security_check(cur, *, scan_id, domain_id, check):
     if remediation is not None and len(str(remediation)) > 1000:
         raise ValueError("DNS remediation exceeds the bounded size")
 
-    authorized, reason = recheck_dns_security_authorization(
-        cur, scan_id=scan_id, domain_id=domain_id,
+    # Evaluate current scan membership, status, ownership, scope, and the
+    # process operation policy in the same statement as the upsert. This
+    # preserves the persistence boundary while avoiding a separate round trip.
+    authorization = active_scan_authorization_sql(
+        "d", DNS_SECURITY_OPERATION, scan_alias="scan"
     )
-    if not authorized:
-        if reason == "authorization check failed":
-            raise RuntimeError("DNS Security persistence authorization failed")
-        return False
     cur.execute("""
         INSERT INTO dns_security_checks(
             scan_id, domain_id, check_key, target_identity, record_type,
@@ -660,7 +666,11 @@ def persist_dns_security_check(cur, *, scan_id, domain_id, check):
         SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, CURRENT_TIMESTAMP
         WHERE EXISTS (
             SELECT 1 FROM scan_results sr
+            JOIN scans scan ON scan.id = sr.scan_id
+            JOIN domains d ON d.id = sr.domain_id
             WHERE sr.scan_id = %s AND sr.domain_id = %s
+              AND scan.status = 'RUNNING'
+              AND """ + authorization + """
         )
         ON CONFLICT (scan_id, domain_id, check_key, target_identity, record_type)
         DO UPDATE SET outcome = EXCLUDED.outcome,

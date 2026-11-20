@@ -173,6 +173,18 @@ class DnsSecurityTests(unittest.TestCase):
         self.assertTrue(budget.exhausted)
         self.assertEqual(len(calls), 1)
 
+    def test_resolver_instance_is_reused_per_host_without_skipping_authorization(self):
+        resolver, created = self.resolver()
+        authorization_checks = []
+        for record_type in ("A", "AAAA", "CNAME"):
+            resolver.query(
+                "host.example", record_type,
+                authorize=lambda: authorization_checks.append(True) or True,
+            )
+        self.assertEqual(len(created), 1)
+        self.assertEqual(len(created[0].queries), 3)
+        self.assertEqual(len(authorization_checks), 3)
+
     def test_authorization_recheck_uses_scan_membership_and_fails_closed(self):
         os.environ["ASIP_DEFAULT_SCAN_OPERATIONS"] = "DNS_SECURITY"
         cursor = FakeCursor([(1,)])
@@ -524,28 +536,33 @@ class DnsSecurityTests(unittest.TestCase):
 
     def test_persistence_is_authorized_scan_scoped_idempotent_and_bounded(self):
         os.environ["ASIP_DEFAULT_SCAN_OPERATIONS"] = "DNS_SECURITY"
-        cursor = FakeCursor([(1,), (99,)])
+        cursor = FakeCursor([(99,)])
         check = {"check_key": "spf_configuration", "target_identity": "example.com",
                  "outcome": "WARNING", "severity": "LOW", "confidence": "HIGH",
                  "evidence": {"spf_record_count": 0}, "remediation": "Review email configuration."}
         self.assertTrue(persist_dns_security_check(cursor, scan_id=2, domain_id=7, check=check))
-        sql, params = cursor.executions[1]
+        sql, params = cursor.executions[0]
         self.assertIn("WHERE EXISTS", sql)
         self.assertIn("FROM scan_results sr", sql)
+        self.assertIn("JOIN scans scan", sql)
+        self.assertIn("scan.status = 'RUNNING'", sql)
+        self.assertIn("d.scannable IS TRUE", sql)
+        self.assertIn("scan.dns_security_target_ids", sql)
         self.assertIn("ON CONFLICT (scan_id, domain_id, check_key, target_identity, record_type)", sql)
+        self.assertEqual(len(cursor.executions), 1)
         self.assertEqual(params[0:5], (2, 7, "spf_configuration", "example.com", ""))
         check_a = {**check, "check_key": "mx_target", "target_identity": "mx1.example", "record_type": "A"}
-        self.assertTrue(persist_dns_security_check(FakeCursor([(1,), (99,)]), scan_id=2, domain_id=7, check=check_a))
+        self.assertTrue(persist_dns_security_check(FakeCursor([(99,)]), scan_id=2, domain_id=7, check=check_a))
         check_aaaa = {**check_a, "record_type": "AAAA"}
-        aaaa_cursor = FakeCursor([(1,), (100,)])
+        aaaa_cursor = FakeCursor([(100,)])
         self.assertTrue(persist_dns_security_check(aaaa_cursor, scan_id=2, domain_id=7, check=check_aaaa))
-        self.assertEqual(aaaa_cursor.executions[1][1][4], "AAAA")
-        repeated_cursor = FakeCursor([(1,), (101,)])
+        self.assertEqual(aaaa_cursor.executions[0][1][4], "AAAA")
+        repeated_cursor = FakeCursor([(101,)])
         self.assertTrue(persist_dns_security_check(repeated_cursor, scan_id=2, domain_id=7, check=check_a))
-        self.assertEqual(repeated_cursor.executions[1][1][4], "A")
-        other_scan_cursor = FakeCursor([(1,), (102,)])
+        self.assertEqual(repeated_cursor.executions[0][1][4], "A")
+        other_scan_cursor = FakeCursor([(102,)])
         self.assertTrue(persist_dns_security_check(other_scan_cursor, scan_id=3, domain_id=7, check=check_a))
-        self.assertEqual(other_scan_cursor.executions[1][1][0], 3)
+        self.assertEqual(other_scan_cursor.executions[0][1][0], 3)
         denied = FakeCursor([None])
         self.assertFalse(persist_dns_security_check(denied, scan_id=2, domain_id=7, check=check))
         self.assertEqual(len(denied.executions), 1)
