@@ -29,7 +29,7 @@ class PassiveDnsPolicyError(RuntimeError):
     pass
 
 
-def passive_dns_target_allowed(cur, target_scan_id, domain_id):
+def passive_dns_target_allowed(cur, target_scan_id, domain_id, conn):
     try:
         cur.execute(f"""
         SELECT EXISTS (
@@ -42,11 +42,18 @@ def passive_dns_target_allowed(cur, target_scan_id, domain_id):
               AND {passive_dns_discovery_sql('d', 'sr')}
         )
         """, (target_scan_id, domain_id))
+        row = cur.fetchone()
+        # psycopg2 starts a transaction for SELECT too. End this read-only
+        # authorization transaction before the caller performs network I/O.
+        conn.rollback()
     except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         # A policy/database failure is not a DNS lookup failure. Let it abort
         # the worker rather than being swallowed by the resolver's error path.
         raise PassiveDnsPolicyError("passive DNS authorization check failed") from exc
-    row = cur.fetchone()
     return bool(row and row[0])
 
 
@@ -121,34 +128,41 @@ def reverse_dns(ip, before_query=None):
 
 
 def main():
-
     conn = get_conn()
+    try:
+        _run_dns_worker(conn)
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def _run_dns_worker(conn):
     cur = conn.cursor()
     require_running_scan(cur, scan_id)
 
     print("\n🌐 DNS worker running for scan:", scan_id)
-
-    # 🔥 safer query (do NOT skip everything)
     cur.execute(f"""
     SELECT d.id, d.domain, ds.has_ip
     FROM domains d
-
     JOIN scan_results sr
       ON d.id = sr.domain_id
       AND sr.scan_id = %s
-
     JOIN domain_states ds
       ON d.id = ds.domain_id
       AND ds.scan_id = %s
-
     WHERE {passive_dns_discovery_sql('d', 'sr')}
-
     """, (scan_id, scan_id))
-
     rows = cur.fetchall()
+    # Release the FOR UPDATE lock from require_running_scan and close the
+    # target-selection read transaction before resolver calls begin.
+    conn.commit()
 
     print("📊 Domains fetched:", len(rows))
-
     if not rows:
         print("⚠️ No domains found. Check domain_states for this scan_id.")
         return
@@ -181,7 +195,6 @@ def main():
     report_progress(force=True)
     for domain_id, domain, has_ip in rows:
         visited += 1
-
         normalized_domain = normalize_hostname(domain, require_fqdn=True)
         if normalized_domain is None:
             invalid_hostname_skips += 1
@@ -189,17 +202,16 @@ def main():
             continue
         domain = normalized_domain
 
-        if not passive_dns_target_allowed(cur, scan_id, domain_id):
+        if not passive_dns_target_allowed(cur, scan_id, domain_id, conn):
             print(f"Skipping DNS target outside permitted discovery scope: {domain}")
             authorization_skips += 1
             report_progress()
             continue
 
         def recheck_discovery_scope():
-            return passive_dns_target_allowed(cur, scan_id, domain_id)
+            return passive_dns_target_allowed(cur, scan_id, domain_id, conn)
 
         print(f"\n🔍 Processing: {domain}")
-
         try:
             records = resolve_dns(domain, before_query=recheck_discovery_scope)
         except PassiveDnsAuthorizationDenied:
@@ -209,7 +221,6 @@ def main():
             continue
 
         print(f"Resolved records: {records}")
-
         if not records:
             print(f"⛔ No DNS records for {domain}")
             no_record_domains += 1
@@ -230,9 +241,7 @@ def main():
                 continue
 
         for rtype, value in records:
-
             print(f"➡️ INSERT: {domain} | {rtype} | {value}")
-
             cur.execute(f"""
             INSERT INTO domain_dns(domain_id, scan_id, record_type, value)
             SELECT %s, %s, %s, %s
@@ -249,7 +258,6 @@ def main():
                 domain_id, scan_id, rtype, value,
                 scan_id, domain_id,
             ))
-
             inserted += 1
 
         if not has_ip and a_records:
@@ -274,16 +282,14 @@ def main():
                 ))
 
         processed += 1
-
-        # 🔥 periodic commit (safe)
+        # Keep all DNS rows and the corresponding state update for this
+        # hostname atomic, and release FK/row locks before the next lookup.
+        conn.commit()
         if processed % 50 == 0:
-            conn.commit()
             require_running_scan(cur, scan_id)
+            conn.commit()
             print(f"💾 Checkpoint commit at {processed}")
         report_progress()
-
-    conn.commit()
-    conn.close()
 
     print("\n✅ DNS enrichment complete")
     print(f"Processed domains: {processed}")
@@ -294,7 +300,6 @@ def main():
             f"{invalid_hostname_skips}"
         )
     report_progress(force=True)
-
 
 if __name__ == "__main__":
     main()

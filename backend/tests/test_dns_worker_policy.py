@@ -58,6 +58,40 @@ class PassiveDnsWorkerPolicyTests(unittest.TestCase):
         self.assertIn("scope_block.excluded_domains", sql)
         self.assertIn("scope_block.status = 'REVOKED'", sql)
 
+    def test_authorization_select_ends_transaction_before_network_work(self):
+        events = []
+
+        class Cursor:
+            def execute(self, *_args):
+                events.append("authorization_select")
+
+            def fetchone(self):
+                return (True,)
+
+        class Connection:
+            def rollback(self):
+                events.append("rollback")
+
+        self.assertTrue(
+            self.worker.passive_dns_target_allowed(
+                Cursor(), 42, 101, Connection()
+            )
+        )
+        events.append("network")
+        self.assertEqual(events, ["authorization_select", "rollback", "network"])
+
+    def test_authorization_database_failure_rolls_back_and_fails_closed(self):
+        class Cursor:
+            def execute(self, *_args):
+                raise OSError("database connection lost")
+
+        connection = mock.Mock()
+        with self.assertRaises(self.worker.PassiveDnsPolicyError):
+            self.worker.passive_dns_target_allowed(
+                Cursor(), 42, 101, connection
+            )
+        connection.rollback.assert_called_once_with()
+
     def test_authorization_is_rechecked_before_each_dns_query(self):
         resolver = mock.Mock()
         resolver.resolve.return_value = [types.SimpleNamespace(to_text=lambda: "203.0.113.8")]
@@ -176,6 +210,138 @@ class PassiveDnsWorkerPolicyTests(unittest.TestCase):
 
         self.assertEqual(resolvers[0].resolve.call_count, 1)
         resolvers[1].resolve.assert_called_once_with("second-reverse.test.", "PTR")
+
+    def test_worker_releases_read_and_write_transactions_around_dns(self):
+        rows = [
+            (101, "first.example.test", True),
+            (102, "second.example.test", True),
+        ]
+
+        class Cursor:
+            rowcount = 1
+
+            def __init__(self, connection):
+                self.connection = connection
+                self.query = ""
+
+            def execute(self, query, *_args):
+                self.connection.in_transaction = True
+                self.connection.queries.append(query)
+                self.query = query
+
+            def fetchall(self):
+                return rows
+
+            def fetchone(self):
+                return (True,)
+
+        class Connection:
+            def __init__(self):
+                self.in_transaction = False
+                self.queries = []
+                self.commits = 0
+                self.rollbacks = 0
+                self.closed = False
+                self._cursor = Cursor(self)
+
+            def cursor(self):
+                return self._cursor
+
+            def commit(self):
+                self.in_transaction = False
+                self.commits += 1
+
+            def rollback(self):
+                self.in_transaction = False
+                self.rollbacks += 1
+
+            def close(self):
+                self.closed = True
+
+        connection = Connection()
+        resolved = []
+
+        def resolve(domain, before_query):
+            self.assertFalse(connection.in_transaction)
+            # A separate progress/heartbeat transaction can acquire its locks
+            # while DNS network work is in flight.
+            before_query()
+            self.assertFalse(connection.in_transaction)
+            resolved.append(domain)
+            return [("A", "203.0.113.8"), ("CNAME", "alias.example.test")]
+
+        with (
+            mock.patch.object(self.worker, "get_conn", return_value=connection),
+            mock.patch.object(self.worker, "require_running_scan"),
+            mock.patch.object(self.worker, "resolve_dns", side_effect=resolve),
+            mock.patch.object(self.worker, "emit_stage_progress"),
+        ):
+            self.worker.main()
+
+        self.assertEqual(resolved, ["first.example.test", "second.example.test"])
+        self.assertEqual(
+            sum("INSERT INTO domain_dns" in query for query in connection.queries), 4
+        )
+        self.assertTrue(all("ON CONFLICT DO NOTHING" in query
+                            for query in connection.queries
+                            if "INSERT INTO domain_dns" in query))
+        self.assertGreaterEqual(connection.commits, 3)  # select + one per host
+        self.assertTrue(connection.closed)
+
+    def test_unexpected_persistence_error_rolls_back_and_closes(self):
+        rows = [(101, "first.example.test", True)]
+
+        class Cursor:
+            rowcount = 1
+
+            def __init__(self, connection):
+                self.connection = connection
+
+            def execute(self, query, *_args):
+                self.connection.in_transaction = True
+                if "INSERT INTO domain_dns" in query:
+                    raise RuntimeError("unexpected persistence failure")
+
+            def fetchall(self):
+                return rows
+
+            def fetchone(self):
+                return (True,)
+
+        class Connection:
+            def __init__(self):
+                self.in_transaction = False
+                self.rollbacks = 0
+                self.closed = False
+                self._cursor = Cursor(self)
+
+            def cursor(self):
+                return self._cursor
+
+            def commit(self):
+                self.in_transaction = False
+
+            def rollback(self):
+                self.in_transaction = False
+                self.rollbacks += 1
+
+            def close(self):
+                self.closed = True
+
+        connection = Connection()
+        with (
+            mock.patch.object(self.worker, "get_conn", return_value=connection),
+            mock.patch.object(self.worker, "require_running_scan"),
+            mock.patch.object(
+                self.worker, "resolve_dns", return_value=[("A", "203.0.113.8")]
+            ),
+            mock.patch.object(self.worker, "emit_stage_progress"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "unexpected persistence"):
+                self.worker.main()
+
+        self.assertGreaterEqual(connection.rollbacks, 1)
+        self.assertTrue(connection.closed)
 
     def test_a_and_cname_queries_keep_existing_bounded_resolver_settings(self):
         resolver = mock.Mock()
