@@ -477,6 +477,47 @@ class OrchestrationStageExecutionTests(unittest.TestCase):
             )
         warning.assert_called_once()
 
+    def test_blocked_progress_update_is_bounded_and_stdout_keeps_draining(self):
+        marker = {
+            "scan_id": 42, "stage": "DNS Security", "status": "RUNNING",
+            "selected": 1, "processed": 1,
+        }
+        code = (
+            "import json,sys; "
+            "print('ASIP_STAGE_PROGRESS '+json.dumps(" + repr(marker) + "),flush=True); "
+            "sys.stdout.write('x'*200000); sys.stdout.flush(); "
+            "print('child-finished',flush=True)"
+        )
+        command = f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
+        cursor = mock.Mock()
+        connection = mock.Mock()
+        connection.cursor.return_value = cursor
+        logged = []
+
+        def timed_out(*_args, **_kwargs):
+            time.sleep(0.03)
+            raise TimeoutError("mocked progress lock timeout")
+
+        with mock.patch.object(self.module, "get_conn", return_value=connection), \
+             mock.patch.object(self.module, "update_stage_progress", side_effect=timed_out), \
+             mock.patch.object(self.module, "_diagnostics_start"), \
+             mock.patch.object(self.module, "_diagnostics_finish"), \
+             mock.patch.object(
+                 self.module, "_log_stage_chunk",
+                 side_effect=lambda _name, line: logged.append(line.decode("utf-8", "replace")),
+             ):
+            result = self.module.run_step(
+                "DNS Security", command, 1, 1,
+                scan_id=42, runner_token="runner-42", stage_order=7,
+            )
+
+        self.assertEqual(result, 0)
+        self.assertTrue(any("child-finished" in line for line in logged))
+        timeout_sql = [call.args[0] for call in cursor.execute.call_args_list]
+        self.assertIn("SET LOCAL lock_timeout = '1s'", timeout_sql)
+        self.assertIn("SET LOCAL statement_timeout = '2s'", timeout_sql)
+        connection.close.assert_called_once()
+
 
 class ReconToolExecutionTests(unittest.TestCase):
     @classmethod

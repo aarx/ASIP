@@ -47,6 +47,8 @@ PROCESS_GROUP_POLL_INTERVAL_SECONDS = 0.05
 MAX_STAGE_OUTPUT_CAPTURE_BYTES = 64 * 1024
 MAX_STAGE_OUTPUT_LINE_BYTES = 8 * 1024
 STAGE_PROGRESS_INTERVAL_SECONDS = 30
+STAGE_PROGRESS_LOCK_TIMEOUT = "1s"
+STAGE_PROGRESS_STATEMENT_TIMEOUT = "2s"
 STAGE_PROGRESS_MARKER = "ASIP_STAGE_PROGRESS "
 
 _ACTIVE_STAGE_PROCESS = None
@@ -623,6 +625,15 @@ def _diagnostics_progress(scan_id, runner_token, name, stage_order, attempt,
     conn = None
     try:
         conn = get_conn()
+        # Progress is best-effort. Bound both row-lock waits and total query
+        # time so a diagnostics lock cannot stop the stdout pipe reader.
+        cur = conn.cursor()
+        cur.execute(
+            f"SET LOCAL lock_timeout = '{STAGE_PROGRESS_LOCK_TIMEOUT}'"
+        )
+        cur.execute(
+            f"SET LOCAL statement_timeout = '{STAGE_PROGRESS_STATEMENT_TIMEOUT}'"
+        )
         update_stage_progress(
             conn, scan_id, runner_token, name, stage_order, attempt, progress
         )
@@ -1143,6 +1154,135 @@ def validate_recovery_replay_safety(cur, scan_id, document, pipeline,
         refuse()
 
 
+def _identity_without_source(identity):
+    if not isinstance(identity, dict):
+        return None
+    return {key: value for key, value in identity.items() if key != "source_sha256"}
+
+
+def authorize_reviewed_source_transition(scan_id, expected_old_source,
+                                         expected_new_source):
+    """Record the explicit, scan-36-only reliability source transition."""
+    if scan_id != 36:
+        raise RuntimeError("reviewed source transition is restricted to scan 36")
+    for value in (expected_old_source, expected_new_source):
+        if (not isinstance(value, str) or len(value) != 64
+                or any(char not in "0123456789abcdef" for char in value)):
+            raise RuntimeError("expected source fingerprints must be lowercase SHA-256")
+    if expected_old_source == expected_new_source:
+        raise RuntimeError("source transition fingerprints must be different")
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT status, runner_token, stage_diagnostics,
+                      dns_security_target_ids
+                 FROM scans WHERE id = %s FOR UPDATE""",
+            (scan_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise RuntimeError(f"scan {scan_id} does not exist")
+        status, runner_token, raw_document, target_ids = row
+        if status != "FAILED" or not runner_token:
+            raise RuntimeError("scan 36 must be FAILED with prior runner ownership")
+        document = _as_document(raw_document)
+        if document.get("recovery_history"):
+            raise RuntimeError("scan already has recovery attempts; refusing transition")
+        if document.get("compatibility_transitions"):
+            raise RuntimeError("scan already has a source transition; refusing replacement")
+
+        target_ids = normalize_dns_security_target_ids(target_ids)
+        pipeline = build_pipeline(scan_id, target_ids)
+        current_identity = pipeline_identity(pipeline, scan_id, target_ids)
+        current_identity["seed_domains_sha256"] = _seed_domains_fingerprint(cur)
+        old_identity = document.get("pipeline_identity")
+        if not isinstance(old_identity, dict):
+            raise RuntimeError("stored pipeline identity is missing; refusing transition")
+        if old_identity.get("source_sha256") != expected_old_source:
+            raise RuntimeError("stored source fingerprint does not match reviewed old source")
+        if current_identity.get("source_sha256") != expected_new_source:
+            raise RuntimeError("running source fingerprint does not match reviewed new source")
+        if _identity_without_source(old_identity) != _identity_without_source(current_identity):
+            raise RuntimeError(
+                "pipeline, scope, seed, policy, or runtime configuration changed; "
+                "refusing source transition"
+            )
+
+        next_order, _attempt_counts = validate_resume_checkpoint(document, pipeline)
+        if (next_order != 15 or len(pipeline) <= 15
+                or pipeline[15][0] != "Takeover Detection"):
+            raise RuntimeError(
+                "scan 36 checkpoints do not prove stages 0-14 succeeded "
+                "and Takeover Detection is next"
+            )
+        if not any(
+            item.get("order") == 15
+            and item.get("stage") == "Takeover Detection"
+            and item.get("status") in {"FAILED", "CANCELLED", "TIMED_OUT"}
+            for item in document.get("attempts", []) if isinstance(item, dict)
+        ):
+            raise RuntimeError("Takeover Detection failure evidence is missing")
+
+        transition_id = str(uuid.uuid4())
+        transition = {
+            "transition_id": transition_id,
+            "scan_id": 36,
+            "type": "reviewed_reliability_only_source_change",
+            "authorized_at": datetime.now().astimezone().isoformat(),
+            "old_identity": old_identity,
+            "new_identity": current_identity,
+            "checkpoint_next_order": next_order,
+        }
+        document["compatibility_transitions"] = [transition]
+        cur.execute(
+            """UPDATE scans SET stage_diagnostics = %s::jsonb
+                WHERE id = %s AND status = 'FAILED' AND runner_token = %s""",
+            (json.dumps(document, separators=(",", ":")), scan_id, runner_token),
+        )
+        if cur.rowcount != 1:
+            raise RuntimeError("scan ownership changed; refusing source transition")
+        conn.commit()
+        logging.warning(
+            "Recorded reviewed source compatibility transition scan_id=%s "
+            "transition_id=%s old_source=%s new_source=%s",
+            scan_id, transition_id, expected_old_source, expected_new_source,
+        )
+        return transition_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _matching_reviewed_transition(scan_id, document, old_identity, new_identity):
+    if scan_id != 36:
+        return None
+    transitions = document.get("compatibility_transitions")
+    if not isinstance(transitions, list) or len(transitions) != 1:
+        return None
+    transition = transitions[0]
+    if not isinstance(transition, dict):
+        return None
+    transition_old = transition.get("old_identity")
+    transition_new = transition.get("new_identity")
+    if not isinstance(transition_old, dict) or not isinstance(transition_new, dict):
+        return None
+    if (transition.get("scan_id") != 36
+            or transition.get("type") != "reviewed_reliability_only_source_change"
+            or not transition.get("transition_id")
+            or transition_old.get("source_sha256") == transition_new.get("source_sha256")
+            or transition.get("checkpoint_next_order") != 15
+            or transition_old != old_identity
+            or transition_new != new_identity
+            or _identity_without_source(old_identity)
+            != _identity_without_source(new_identity)):
+        return None
+    return transition
+
+
 def begin_recovery(scan_id, mode):
     """Atomically claim a FAILED scan after validating its exact pipeline."""
     if mode not in {"RESUME", "SINGLE_FAILED_STAGE"}:
@@ -1183,7 +1323,13 @@ def begin_recovery(scan_id, mode):
         pipeline = build_pipeline(scan_id, target_ids)
         expected_identity = pipeline_identity(pipeline, scan_id, target_ids)
         expected_identity["seed_domains_sha256"] = _seed_domains_fingerprint(cur)
-        if document.get("pipeline_identity") != expected_identity:
+        stored_identity = document.get("pipeline_identity")
+        transition = None
+        if stored_identity != expected_identity:
+            transition = _matching_reviewed_transition(
+                scan_id, document, stored_identity, expected_identity
+            )
+        if stored_identity != expected_identity and transition is None:
             raise RuntimeError(
                 "scan pipeline or seed configuration is missing or incompatible; "
                 "refusing recovery"
@@ -1191,6 +1337,15 @@ def begin_recovery(scan_id, mode):
         next_order, previous_attempt_counts = validate_resume_checkpoint(
             document, pipeline
         )
+        if transition and (
+            next_order != transition.get("checkpoint_next_order")
+            or next_order != 15
+            or len(pipeline) <= next_order
+            or pipeline[next_order][0] != "Takeover Detection"
+        ):
+            raise RuntimeError(
+                "reviewed source transition no longer matches the scan checkpoint"
+            )
         validate_recovery_replay_safety(
             cur, scan_id, document, pipeline, next_order, mode,
             recovery_history_was_persisted,
@@ -1222,6 +1377,17 @@ def begin_recovery(scan_id, mode):
             "stage": pipeline[next_order][0]
             if next_order < len(pipeline) else "Finalize scan",
             "failure_reason": str(failure_reason or "")[:500],
+            "compatibility_transition_id": (
+                transition["transition_id"] if transition else None
+            ),
+            "source_sha256_from": (
+                transition["old_identity"].get("source_sha256")
+                if transition else None
+            ),
+            "source_sha256_to": (
+                transition["new_identity"].get("source_sha256")
+                if transition else None
+            ),
             "previous_completed_at": (
                 completed_at.isoformat() if hasattr(completed_at, "isoformat")
                 else str(completed_at) if completed_at is not None else None
@@ -1525,6 +1691,14 @@ def main(argv=None):
     recovery = parser.add_mutually_exclusive_group()
     recovery.add_argument("--resume", type=int, metavar="SCAN_ID")
     recovery.add_argument("--run-failed-stage", type=int, metavar="SCAN_ID")
+    recovery.add_argument(
+        "--authorize-reviewed-source-transition",
+        type=int,
+        metavar="SCAN_ID",
+        help="record the explicitly reviewed reliability source transition for scan 36",
+    )
+    parser.add_argument("--expected-old-source-sha256")
+    parser.add_argument("--expected-new-source-sha256")
     parser.add_argument(
         "--dns-security-target-ids",
         help=("one-run DNS Security allowlist of 1 to 3 existing domain IDs; "
@@ -1547,6 +1721,21 @@ def main(argv=None):
         "RESUME" if args.resume is not None else
         "SINGLE_FAILED_STAGE" if args.run_failed_stage is not None else None
     )
+    transition_mode = args.authorize_reviewed_source_transition is not None
+    if transition_mode and not (
+        args.expected_old_source_sha256 and args.expected_new_source_sha256
+    ):
+        parser.error(
+            "reviewed source transition requires both expected old and new SHA-256 values"
+        )
+    if not transition_mode and (
+        args.expected_old_source_sha256 or args.expected_new_source_sha256
+    ):
+        parser.error("source fingerprint arguments require transition authorization mode")
+    if transition_mode and (
+        args.dns_security_target_ids or args.enable_dns_security
+    ):
+        parser.error("source transition authorization does not accept scan options")
     if recovery_mode and dns_security_target_ids is not None:
         parser.error("DNS Security target selection is stored on the failed scan")
     if args.enable_dns_security and dns_security_target_ids is None and not recovery_mode:
@@ -1575,6 +1764,17 @@ def main(argv=None):
                 "is already running; no scan was created"
             )
             sys.exit(OVERLAP_SKIP_EXIT_CODE)
+        if transition_mode:
+            transition_id = authorize_reviewed_source_transition(
+                args.authorize_reviewed_source_transition,
+                args.expected_old_source_sha256,
+                args.expected_new_source_sha256,
+            )
+            print(
+                "Recorded reviewed compatibility transition "
+                f"{transition_id} for scan {args.authorize_reviewed_source_transition}"
+            )
+            return
         recover_orphaned_scans(lock_conn)
         previous_operations = os.environ.get(DEFAULT_SCAN_OPERATIONS_ENV)
         if args.enable_dns_security:

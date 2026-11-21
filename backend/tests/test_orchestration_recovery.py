@@ -204,6 +204,155 @@ class RecoveryOwnershipTests(unittest.TestCase):
             self.module.begin_recovery(42, "RESUME")
         self.assertEqual(cursor.updates, [])
 
+    def test_explicit_transition_is_required_and_binds_both_identities(self):
+        module = self.module
+        pipeline = [(f"Stage {i}", f"worker {i}") for i in range(15)] + [
+            ("Takeover Detection", "takeover 36")
+        ]
+        attempts = [
+            {"order": i, "stage": pipeline[i][0], "attempt": 1,
+             "status": "SUCCEEDED"}
+            for i in range(15)
+        ] + [{"order": 15, "stage": "Takeover Detection", "attempt": 1,
+              "status": "CANCELLED"}]
+        old_identity = {
+            "version": module.PIPELINE_IDENTITY_VERSION,
+            "stages": [{"order": i, "name": name, "command": command}
+                       for i, (name, command) in enumerate(pipeline)],
+            "source_sha256": "a" * 64,
+            "policy_settings": {"ASIP_DEFAULT_SCAN_OPERATIONS": ""},
+            "runtime_config": {"database": {"host": "db", "name": "asip", "user": "asip"}},
+            "dns_security_target_ids": None,
+            "seed_domains_sha256": "seedhash",
+        }
+        new_identity = json.loads(json.dumps(old_identity))
+        new_identity["source_sha256"] = "b" * 64
+        document = {
+            "version": 1, "pipeline_identity": old_identity,
+            "attempts": attempts, "recovery_history": [],
+        }
+
+        class TransitionCursor:
+            rowcount = 1
+
+            def __init__(self):
+                self.query = ""
+                self.params = None
+
+            def execute(self, query, params=None):
+                self.query, self.params = query, params
+
+            def fetchone(self):
+                if "FROM scans WHERE id" in self.query:
+                    return "FAILED", "old-token", document, None
+                return None
+
+            def fetchall(self):
+                return []
+
+        cursor = TransitionCursor()
+        conn = RecoveryConnection(cursor)
+        with mock.patch.object(module, "get_conn", return_value=conn), \
+                mock.patch.object(module, "build_pipeline", return_value=pipeline), \
+                mock.patch.object(module, "pipeline_identity", return_value=new_identity), \
+                mock.patch.object(module, "_seed_domains_fingerprint", return_value="seedhash"):
+            transition_id = module.authorize_reviewed_source_transition(
+                36, "a" * 64, "b" * 64,
+            )
+        self.assertTrue(conn.committed)
+        transition = document["compatibility_transitions"][0]
+        self.assertEqual(transition["transition_id"], transition_id)
+        self.assertEqual(transition["old_identity"], old_identity)
+        self.assertEqual(transition["new_identity"], new_identity)
+        self.assertEqual(document["pipeline_identity"], old_identity)
+        self.assertEqual(transition["checkpoint_next_order"], 15)
+
+    def test_transition_rejects_source_or_configuration_mismatch(self):
+        module = self.module
+        pipeline = [(f"Stage {i}", f"worker {i}") for i in range(16)]
+        document = {"version": 1, "pipeline_identity": {"source_sha256": "a" * 64,
+                    "stages": [], "policy_settings": {}, "runtime_config": {}},
+                    "attempts": [], "recovery_history": []}
+
+        class TransitionCursor:
+            rowcount = 1
+            query = ""
+            def execute(self, query, params=None):
+                self.query = query
+            def fetchone(self):
+                return ("FAILED", "old-token", document, None)
+            def fetchall(self):
+                return []
+
+        for new_source, runtime, seed_hash in (
+            ("c" * 64, {}, "seedhash"),
+            ("b" * 64, {"changed": True}, "seedhash"),
+            ("b" * 64, {}, "different-seeds"),
+        ):
+            current = {"source_sha256": new_source, "stages": [],
+                       "policy_settings": {}, "runtime_config": runtime,
+                       "seed_domains_sha256": seed_hash}
+            conn = RecoveryConnection(TransitionCursor())
+            with self.subTest(new_source=new_source, runtime=runtime, seed_hash=seed_hash), \
+                    mock.patch.object(module, "get_conn", return_value=conn), \
+                    mock.patch.object(module, "build_pipeline", return_value=pipeline), \
+                    mock.patch.object(module, "pipeline_identity", return_value=current), \
+                    mock.patch.object(module, "_seed_domains_fingerprint", return_value=seed_hash), \
+                    self.assertRaises(RuntimeError):
+                module.authorize_reviewed_source_transition(36, "a" * 64, "b" * 64)
+            self.assertFalse(conn.committed)
+
+    def test_reviewed_transition_is_the_only_source_mismatch_accepted(self):
+        pipeline = [(f"Stage {i}", f"worker {i}") for i in range(15)] + [
+            ("Takeover Detection", "takeover 36")
+        ]
+        attempts = [
+            {"order": i, "stage": pipeline[i][0], "attempt": 1,
+             "status": "SUCCEEDED"}
+            for i in range(15)
+        ] + [{"order": 15, "stage": "Takeover Detection", "attempt": 1,
+              "status": "CANCELLED"}]
+        conn, cursor, _default_pipeline, old_identity = self.make_connection(
+            attempts=attempts, pipeline=pipeline,
+        )
+        old_identity["seed_domains_sha256"] = "seedhash"
+        cursor.document["pipeline_identity"] = old_identity
+        current_identity = json.loads(json.dumps(old_identity))
+        current_identity["source_sha256"] = "new-source"
+        transition = {
+            "transition_id": "reviewed-36",
+            "scan_id": 36,
+            "type": "reviewed_reliability_only_source_change",
+            "checkpoint_next_order": 15,
+            "old_identity": old_identity,
+            "new_identity": current_identity,
+        }
+        cursor.document["compatibility_transitions"] = [transition]
+        with mock.patch.object(self.module, "get_conn", return_value=conn), \
+                mock.patch.object(self.module, "build_pipeline", return_value=pipeline), \
+                mock.patch.object(self.module, "pipeline_identity", return_value=current_identity), \
+                mock.patch.object(self.module, "_seed_domains_fingerprint", return_value="seedhash"):
+            self.module.begin_recovery(36, "RESUME")
+        persisted = json.loads(cursor.update_params[1])
+        self.assertEqual(persisted["pipeline_identity"], old_identity)
+        self.assertEqual(
+            persisted["recovery_history"][0]["compatibility_transition_id"],
+            "reviewed-36",
+        )
+
+    def test_reviewed_transition_does_not_apply_to_another_scan(self):
+        old_identity = {"source_sha256": "old", "stages": []}
+        new_identity = {"source_sha256": "new", "stages": []}
+        document = {"compatibility_transitions": [{
+            "transition_id": "reviewed-36", "scan_id": 36,
+            "type": "reviewed_reliability_only_source_change",
+            "checkpoint_next_order": 15,
+            "old_identity": old_identity, "new_identity": new_identity,
+        }]}
+        self.assertIsNone(self.module._matching_reviewed_transition(
+            37, document, old_identity, new_identity,
+        ))
+
     def test_rejects_concurrent_recovery_or_active_runner(self):
         conn, cursor, pipeline, identity = self.make_connection(status="RUNNING")
         with mock.patch.object(self.module, "get_conn", return_value=conn), \

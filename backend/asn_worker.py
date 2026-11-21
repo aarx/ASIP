@@ -101,57 +101,65 @@ def asn_target_authorized(cur, target_scan_id, domain_id, ip):
 def main():
 
     conn = get_conn()
-    cur = conn.cursor()
-    require_running_scan(cur, scan_id)
+    try:
+        cur = conn.cursor()
+        require_running_scan(cur, scan_id)
+        domains = get_domains(cur, scan_id)
+        # Release the scan-row lock and selection transaction before HTTP.
+        conn.commit()
 
-    domains = get_domains(cur, scan_id)
+        results = []
+        for domain_id, domain, ip in domains:
+            # Recheck the exact current-scan address and operation grant
+            # immediately before sending it to the metadata service.
+            require_running_scan(cur, scan_id)
+            authorized = asn_target_authorized(cur, scan_id, domain_id, ip)
+            conn.commit()
+            if not authorized:
+                print(f"Skipping ASN metadata lookup outside authorized scope: {domain}")
+                continue
 
-    for domain_id, domain, ip in domains:
+            try:
+                address = ipaddress.ip_address(str(ip).strip())
+            except ValueError:
+                print(f"Skipping ASN metadata lookup for invalid address: {domain}")
+                continue
+            if not address.is_global:
+                print(f"Skipping ASN metadata lookup for non-public address: {domain}")
+                continue
+            ip = str(address)
 
-        # Recheck the exact current-scan address immediately before sending
-        # it to the third-party metadata service. The operation grant is
-        # separate from HTTP/TLS and port-scanning authorization.
-        if not asn_target_authorized(cur, scan_id, domain_id, ip):
-            print(f"Skipping ASN metadata lookup outside authorized scope: {domain}")
-            continue
+            print("ASN lookup →", domain)
+            print("Trying insert →", domain_id, ip)
 
-        try:
-            address = ipaddress.ip_address(str(ip).strip())
-        except ValueError:
-            print(f"Skipping ASN metadata lookup for invalid address: {domain}")
-            continue
-        if not address.is_global:
-            print(f"Skipping ASN metadata lookup for non-public address: {domain}")
-            continue
-        ip = str(address)
+            asn_result = enrich_asn(ip)
+            if asn_result is not None:
+                results.append((domain_id, domain, ip, asn_result))
 
-        print("ASN lookup →", domain)
-        print("Trying insert →", domain_id, ip)
+        # Keep result writes atomic as one stage transaction. Revalidate every
+        # target after network work, immediately before persisting its result.
+        require_running_scan(cur, scan_id)
+        for domain_id, domain, ip, (asn, org) in results:
+            if not asn_target_authorized(cur, scan_id, domain_id, ip):
+                print(f"Skipping ASN metadata persistence after authorization changed: {domain}")
+                continue
+            cur.execute("""
+            INSERT INTO domain_asn(domain_id, scan_id, ip, asn, org)
+            SELECT %s, %s, %s, %s, %s
+            WHERE EXISTS (
+                SELECT 1 FROM scan_results sr
+                WHERE sr.scan_id = %s AND sr.domain_id = %s
+            )
+            ON CONFLICT (domain_id, scan_id) DO NOTHING
+            """, (domain_id, scan_id, ip, asn, org, scan_id, domain_id))
 
-        asn_result = enrich_asn(ip)
-        if asn_result is None:
-            continue
-
-        if not asn_target_authorized(cur, scan_id, domain_id, ip):
-            print(f"Skipping ASN metadata persistence after authorization changed: {domain}")
-            continue
-
-        asn, org = asn_result
-
-        cur.execute("""
-        INSERT INTO domain_asn(domain_id, scan_id, ip, asn, org)
-        SELECT %s, %s, %s, %s, %s
-        WHERE EXISTS (
-            SELECT 1 FROM scan_results sr
-            WHERE sr.scan_id = %s AND sr.domain_id = %s
-        )
-        ON CONFLICT (domain_id, scan_id) DO NOTHING
-        """, (domain_id, scan_id, ip, asn, org, scan_id, domain_id))
-
-    conn.commit()
-    conn.close()
-
-    print("ASN enrichment done")
+        conn.commit()
+        print("ASN enrichment done")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     main()
