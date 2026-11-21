@@ -679,7 +679,7 @@ class DnsSecurityApiTests(unittest.TestCase):
     def test_summary_distinguishes_checked_unchecked_findings_and_not_executed(self):
         cursor = ApiCursor([
             ("SUCCEEDED", {"version": 1, "attempts": []}),
-            (10, 3, 5, 4, 2),
+            (10, 3, 5, 4, 2, 2, 0),
             [("CLEAR", 5), ("WARNING", 2), ("INCONCLUSIVE", 2)],
             [("INFO", 5), ("LOW", 4)],
             [("dns_a_resolution", 5), ("cname_health", 4)],
@@ -816,6 +816,8 @@ class PostgreSQLDnsSecurityReportingTests(unittest.TestCase):
                                       scannable boolean NOT NULL);
                 CREATE TABLE scan_results (scan_id integer NOT NULL, domain_id integer NOT NULL,
                                            seed text NOT NULL);
+                CREATE TABLE domain_findings (id integer PRIMARY KEY, domain_id integer,
+                                              scan_id integer, finding text, severity text, evidence text);
                 CREATE TABLE dns_security_checks (
                     id integer PRIMARY KEY, scan_id integer NOT NULL, domain_id integer NOT NULL,
                     check_key text NOT NULL, target_identity text NOT NULL DEFAULT '',
@@ -877,6 +879,16 @@ class PostgreSQLDnsSecurityReportingTests(unittest.TestCase):
             "POTENTIAL_EXPOSURE": 1, "WARNING": 2,
         })
         self.assertEqual(sum(result["counts_by_category"].values()), 8)
+
+    def test_subdomain_takeover_read_model_paginates_and_keeps_unknown_unverified(self):
+        with mock.patch.object(main, "get_conn", side_effect=self.connect):
+            result = main.subdomain_takeover_evidence(scan_id=91, category="UNKNOWN", page=1, limit=1)
+        self.assertEqual(result["scan_id"], 91)
+        self.assertEqual(result["limit"], 1)
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(len(result["hosts"]), 1)
+        self.assertEqual(result["hosts"][0]["finding_category"], "UNKNOWN")
+        self.assertEqual(result["hosts"][0]["verification_status"], "UNVERIFIED")
 
     def test_real_sql_findings_and_domain_evidence_deduplicate_seed_membership(self):
         with mock.patch.object(main, "get_conn", side_effect=self.connect):

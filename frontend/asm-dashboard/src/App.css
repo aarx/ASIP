@@ -308,6 +308,7 @@
 .dns-evidence-value-object dt { color: var(--asip-text-muted); font-size: 10px; text-transform: capitalize; }
 .dns-evidence-value-object dd { margin: 0; }
 .dns-evidence-value-list { display: grid; gap: 3px; margin: 0; padding-left: 16px; }
+.dns-evidence-json { max-height: 320px; overflow: auto; margin: 8px 0 0; padding: 10px; border-radius: 4px; background: rgba(7, 15, 27, .42); color: var(--asip-text-secondary); font: 10px/1.45 var(--asip-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .dns-finding-row-expanded td { background: rgba(61, 196, 255, .04); }
 .dns-finding-row-expanded + tr td { padding: 0; border-top: 0; }
 .dns-evidence-details { padding: 14px; border: 1px solid rgba(61, 196, 255, .18); border-radius: 4px; background: rgba(7, 15, 27, .22); }

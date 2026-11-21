@@ -16,6 +16,7 @@ from investigation_assistance import deterministic_asset_assistance
 from assistant_question import answer_question
 from urllib.parse import urlparse
 from db import get_conn, get_latest_authoritative_scan_id, get_previous_authoritative_scan_id
+from dns_security import interpret_cname_health
 from asset_reporting import (
     current_scan_asset_classes,
     current_scan_risks,
@@ -4832,32 +4833,53 @@ def dns_security_summary(scan_id: int = None):
         cur = conn.cursor()
         scan_id, diagnostics = _dns_security_scan(cur, scan_id)
         eligible_cte = _dns_security_eligible_cte()
+        authorization_blocked = """EXISTS (
+            SELECT 1 FROM jsonb_array_elements(
+                CASE WHEN jsonb_typeof(c.evidence->'chain') = 'array'
+                     THEN c.evidence->'chain' ELSE '[]'::jsonb END
+            ) chain_item
+            WHERE chain_item->>'state' = 'not_checked_authorization'
+        )"""
         cur.execute(eligible_cte + """
             , check_counts AS (
-                SELECT COUNT(*) FILTER (WHERE c.outcome <> 'NOT_CHECKED') AS checks_executed,
-                       COUNT(*) FILTER (WHERE c.outcome = 'NOT_CHECKED') AS not_checked_records,
+                SELECT COUNT(*) FILTER (WHERE c.outcome <> 'NOT_CHECKED'
+                                          AND NOT (""" + authorization_blocked + """)) AS checks_executed,
+                       COUNT(*) FILTER (WHERE c.outcome = 'NOT_CHECKED'
+                                          OR (""" + authorization_blocked + """)) AS not_checked_records,
                        COUNT(DISTINCT c.domain_id) FILTER (
                            WHERE c.outcome <> 'NOT_CHECKED'
+                             AND NOT (""" + authorization_blocked + """)
                        ) AS checked_assets,
                        COUNT(DISTINCT c.domain_id) FILTER (
-                           WHERE c.outcome IN ('CONFIRMED_ISSUE','POTENTIAL_EXPOSURE','WARNING')
+                           WHERE c.outcome IN ('CONFIRMED_ISSUE','WARNING')
+                              OR (c.outcome = 'POTENTIAL_EXPOSURE' AND NOT """ + authorization_blocked + """)
                        ) AS affected_assets
                   FROM dns_security_checks c
                   JOIN eligible e ON e.domain_id = c.domain_id
                  WHERE c.scan_id = %s
             )
             SELECT (SELECT COUNT(DISTINCT domain_id) FROM eligible),
-                   checked_assets, checks_executed, not_checked_records, affected_assets
+                   checked_assets, checks_executed, not_checked_records, affected_assets,
+                   (SELECT COUNT(*) FROM dns_security_checks c JOIN eligible e ON e.domain_id = c.domain_id
+                     WHERE c.scan_id = %s AND (c.outcome IN ('CONFIRMED_ISSUE','WARNING')
+                        OR (c.outcome = 'POTENTIAL_EXPOSURE' AND NOT """ + authorization_blocked + """))),
+                   (SELECT COUNT(DISTINCT c.domain_id) FROM dns_security_checks c JOIN eligible e ON e.domain_id = c.domain_id
+                     WHERE c.scan_id = %s AND """ + authorization_blocked + """
+                       AND EXISTS (SELECT 1 FROM jsonb_array_elements(
+                         CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
+                              THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
+                         WHERE NULLIF(x->>'provider','') IS NOT NULL))
               FROM check_counts
-        """, (scan_id, scan_id))
-        eligible, checked, check_count, not_checked_count, affected = cur.fetchone()
+        """, (scan_id, scan_id, scan_id, scan_id))
+        eligible, checked, check_count, not_checked_count, affected, actionable_record_count, unverified_provider_hosts = cur.fetchone()
 
         def grouped(column):
+            severity_filter = f" AND NOT ({authorization_blocked})" if column == "severity" else ""
             cur.execute(eligible_cte + f"""
                 SELECT c.{column}, COUNT(*)
                   FROM dns_security_checks c
                   JOIN eligible e ON e.domain_id = c.domain_id
-                 WHERE c.scan_id = %s
+                 WHERE c.scan_id = %s {severity_filter}
                  GROUP BY c.{column}
                  ORDER BY c.{column}
             """, (scan_id, scan_id))
@@ -4876,12 +4898,13 @@ def dns_security_summary(scan_id: int = None):
             "checked_assets": checked,
             "unchecked_assets": max(0, eligible - checked),
             "affected_assets": affected,
-            "dns_finding_records": sum(by_outcome.get(key, 0) for key in (
-                "CONFIRMED_ISSUE", "POTENTIAL_EXPOSURE", "WARNING",
-            )),
+            "dns_finding_records": actionable_record_count,
+            "unverified_provider_hosts": unverified_provider_hosts,
             "checks_executed": check_count,
             "not_checked_records": not_checked_count,
-            "checks_executed_semantics": "check records with an outcome other than NOT_CHECKED",
+            "checks_executed_semantics": "check records other than NOT_CHECKED, excluding legacy authorization-blocked CNAME verification",
+            "counts_by_outcome_semantics": "original persisted outcome; legacy CNAME rows also expose interpreted evidence in detail",
+            "counts_by_severity_semantics": "excludes legacy authorization-blocked CNAME provider signals",
             "counts_by_outcome": by_outcome,
             "counts_by_severity": by_severity,
             "counts_by_category": by_category,
@@ -4958,6 +4981,7 @@ def dns_security_findings(
                 "severity": row[6], "confidence": row[7], "record_type": row[8],
                 "target": row[9], "evidence": row[10], "remediation": row[11],
                 "checked_at": row[12],
+                **(interpret_cname_health(row[5], row[10]) if row[4] == "cname_health" else {}),
             } for row in rows],
         }
     except HTTPException:
@@ -4966,6 +4990,192 @@ def dns_security_findings(
         conn.rollback()
         if _dns_security_schema_unavailable(exc):
             return _dns_security_unavailable(scan_id)
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v2/subdomain-takeover")
+def subdomain_takeover_evidence(
+    scan_id: int = None, search: str = None, provider: str = None,
+    category: str = None, verification_status: str = None,
+    page: int = 1, limit: int = 50,
+):
+    """Deduplicated, read-only takeover-related evidence for Security Review."""
+    if page < 1 or limit < 1:
+        raise HTTPException(status_code=400, detail="page and limit must be positive")
+    limit = min(limit, 200)
+    search = (search or "").strip()[:253] or None
+    provider = (provider or "").strip()[:100] or None
+    verification_status = (verification_status or "").strip()[:80] or None
+    allowed_categories = {"DNS_NEGATIVE_SIGNAL", "UNVERIFIED_PROVIDER_ASSOCIATION",
+                          "PROVIDER_SPECIFIC_CANDIDATE", "UNKNOWN"}
+    category_value = str(category or "").strip().upper() or None
+    if category_value and category_value not in allowed_categories:
+        raise HTTPException(status_code=400, detail="invalid category")
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        scan_id, _diagnostics = _dns_security_scan(cur, scan_id)
+        classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
+        cte = f"""
+            WITH evidence AS (
+                SELECT d.id AS domain_id, d.domain AS hostname,
+                       CASE
+                         WHEN (EXISTS (SELECT 1 FROM jsonb_array_elements(
+                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
+                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
+                              WHERE x->>'state'='not_checked_authorization')
+                           OR c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION')
+                           AND EXISTS (SELECT 1 FROM jsonb_array_elements(
+                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
+                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
+                              WHERE NULLIF(x->>'provider','') IS NOT NULL)
+                           THEN 'UNVERIFIED_PROVIDER_ASSOCIATION'
+                         WHEN c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION'
+                           OR EXISTS (SELECT 1 FROM jsonb_array_elements(
+                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
+                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
+                              WHERE x->>'state'='not_checked_authorization')
+                           THEN 'UNKNOWN'
+                         WHEN c.evidence->>'verification_status'='VERIFIED_DNS_NEGATIVE'
+                           OR EXISTS (SELECT 1 FROM jsonb_array_elements(
+                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
+                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
+                              WHERE x->>'state'='potential_exposure')
+                           THEN 'DNS_NEGATIVE_SIGNAL'
+                         WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(
+                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
+                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
+                              WHERE x ? 'provider')
+                           THEN 'UNVERIFIED_PROVIDER_ASSOCIATION'
+                         ELSE 'UNKNOWN' END AS evidence_category,
+                       CASE
+                         WHEN c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION'
+                           OR EXISTS (SELECT 1 FROM jsonb_array_elements(
+                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
+                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
+                              WHERE x->>'state'='not_checked_authorization')
+                           THEN 'NOT_CHECKED_AUTHORIZATION'
+                         WHEN c.evidence->>'verification_status'='VERIFIED_DNS_NEGATIVE'
+                           THEN 'VERIFIED_DNS_NEGATIVE'
+                         WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(
+                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
+                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
+                              WHERE x->>'state'='potential_exposure')
+                           THEN 'UNVERIFIED_LEGACY_EVIDENCE'
+                         ELSE 'UNVERIFIED' END AS verification_status,
+                       c.confidence,
+                       COALESCE(c.evidence->>'cname_destination', (
+                           SELECT x->>'target' FROM jsonb_array_elements(
+                             CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
+                                  THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
+                            WHERE x ? 'target' LIMIT 1)) AS cname_destination,
+                       COALESCE((SELECT string_agg(DISTINCT x->>'provider', ', ' ORDER BY x->>'provider')
+                           FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
+                                THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
+                          WHERE NULLIF(x->>'provider','') IS NOT NULL), NULL) AS provider,
+                       c.checked_at AS observed_at,
+                       jsonb_build_object('source','dns_security_checks','source_outcome',c.outcome,
+                         'evidence_category',CASE
+                           WHEN (EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='not_checked_authorization') OR c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION') AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE NULLIF(x->>'provider','') IS NOT NULL) THEN 'UNVERIFIED_PROVIDER_ASSOCIATION'
+                           WHEN c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION' OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='not_checked_authorization') THEN 'UNKNOWN'
+                           WHEN c.evidence->>'verification_status'='VERIFIED_DNS_NEGATIVE' OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='potential_exposure') THEN 'DNS_NEGATIVE_SIGNAL'
+                           WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x ? 'provider') THEN 'UNVERIFIED_PROVIDER_ASSOCIATION' ELSE 'UNKNOWN' END,
+                         'verification_status',CASE
+                           WHEN c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION' OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='not_checked_authorization') THEN 'NOT_CHECKED_AUTHORIZATION'
+                           WHEN c.evidence->>'verification_status'='VERIFIED_DNS_NEGATIVE' THEN 'VERIFIED_DNS_NEGATIVE'
+                           WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='potential_exposure') THEN 'UNVERIFIED_LEGACY_EVIDENCE'
+                           ELSE 'UNVERIFIED' END,
+                         'confidence',c.confidence,'target',c.target_identity,'evidence',c.evidence,
+                         'rationale',CASE
+                           WHEN (c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION' OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='not_checked_authorization')) AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE NULLIF(x->>'provider','') IS NOT NULL) THEN 'Provider association was observed, but destination verification was blocked by authorization.'
+                           WHEN c.evidence->>'verification_status'='VERIFIED_DNS_NEGATIVE' THEN 'Recorded terminal DNS responses support a DNS-negative signal; this does not confirm takeover.'
+                           WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='potential_exposure') THEN 'Legacy potential-exposure evidence lacks raw terminal response categories.'
+                           ELSE 'Available evidence does not establish a dangling DNS condition.' END,
+                         'observed_at',c.checked_at) AS observation
+                  FROM dns_security_checks c JOIN domains d ON d.id=c.domain_id
+                 WHERE c.scan_id=%s AND c.check_key='cname_health'
+                   AND c.outcome IN ('POTENTIAL_EXPOSURE','NOT_CHECKED','CONFIRMED_ISSUE')
+                   AND EXISTS (SELECT 1 FROM scan_results sr WHERE sr.scan_id=c.scan_id AND sr.domain_id=c.domain_id)
+                   AND d.scannable IS TRUE AND ({classification}) IN ('KNOWN','SHADOW')
+                UNION ALL
+                SELECT d.id,d.domain,
+                       CASE WHEN lower(f.finding)='dangling_dns' THEN 'PROVIDER_SPECIFIC_CANDIDATE' ELSE 'UNKNOWN' END,
+                       CASE WHEN lower(f.finding)='dangling_dns' THEN 'FINGERPRINT_CANDIDATE' ELSE 'UNVERIFIED_PROVIDER_RESPONSE' END,
+                       NULL::text,NULL::text,NULL::text,NULL::timestamptz,
+                       jsonb_build_object('source','domain_findings','finding',f.finding,'severity',f.severity,
+                         'evidence_category',CASE WHEN lower(f.finding)='dangling_dns' THEN 'PROVIDER_SPECIFIC_CANDIDATE' ELSE 'UNKNOWN' END,
+                         'verification_status',CASE WHEN lower(f.finding)='dangling_dns' THEN 'FINGERPRINT_CANDIDATE' ELSE 'UNVERIFIED_PROVIDER_RESPONSE' END,
+                         'rationale',CASE WHEN lower(f.finding)='dangling_dns' THEN 'Existing provider-specific fingerprint finding; takeover confirmation is not implied.' ELSE 'Existing suspicious DNS response signal; it is not a provider fingerprint confirmation.' END,
+                         'evidence',jsonb_build_object('raw_evidence',f.evidence))
+                  FROM domain_findings f JOIN domains d ON d.id=f.domain_id
+                 WHERE f.scan_id=%s AND lower(f.finding) IN ('dangling_dns','suspicious_dns')
+                   AND EXISTS (SELECT 1 FROM scan_results sr WHERE sr.scan_id=f.scan_id AND sr.domain_id=f.domain_id)
+                   AND d.scannable IS TRUE AND ({classification}) IN ('KNOWN','SHADOW')
+            ), grouped AS (
+                SELECT domain_id,hostname,array_agg(DISTINCT evidence_category) AS categories,
+                       string_agg(DISTINCT provider, ', ' ORDER BY provider) FILTER (WHERE provider IS NOT NULL) AS provider,
+                       (array_agg(confidence ORDER BY observed_at DESC NULLS LAST))[1] AS confidence,
+                       (array_agg(cname_destination ORDER BY observed_at DESC NULLS LAST))[1] AS cname_destination,
+                       string_agg(DISTINCT verification_status, ', ' ORDER BY verification_status) AS verification_status,
+                       max(observed_at) AS observed_at,
+                       jsonb_agg(observation ORDER BY observed_at DESC NULLS LAST) AS observations
+                  FROM evidence GROUP BY domain_id,hostname
+            ), classified AS (
+                SELECT *, CASE WHEN 'PROVIDER_SPECIFIC_CANDIDATE'=ANY(categories) THEN 'PROVIDER_SPECIFIC_CANDIDATE'
+                               WHEN 'DNS_NEGATIVE_SIGNAL'=ANY(categories) THEN 'DNS_NEGATIVE_SIGNAL'
+                               WHEN 'UNVERIFIED_PROVIDER_ASSOCIATION'=ANY(categories) THEN 'UNVERIFIED_PROVIDER_ASSOCIATION'
+                               ELSE 'UNKNOWN' END AS finding_category
+                  FROM grouped
+            )
+        """
+        cur.execute(cte + """
+            SELECT COUNT(*) FILTER (WHERE 'DNS_NEGATIVE_SIGNAL'=ANY(categories)),
+                   COUNT(*) FILTER (WHERE 'UNVERIFIED_PROVIDER_ASSOCIATION'=ANY(categories)),
+                   COUNT(*) FILTER (WHERE 'PROVIDER_SPECIFIC_CANDIDATE'=ANY(categories))
+              FROM grouped
+        """, (scan_id, scan_id))
+        negative_count, unverified_count, candidate_count = cur.fetchone()
+        filters = []
+        params = []
+        if category_value:
+            filters.append("%s=ANY(categories)")
+            params.append(category_value)
+        else:
+            filters.append("(finding_category IN ('DNS_NEGATIVE_SIGNAL','PROVIDER_SPECIFIC_CANDIDATE'))")
+        if search:
+            filters.append("hostname ILIKE %s")
+            params.append(f"%{search}%")
+        if provider:
+            filters.append("COALESCE(provider,'') ILIKE %s")
+            params.append(f"%{provider}%")
+        if verification_status:
+            filters.append("verification_status ILIKE %s")
+            params.append(f"%{verification_status}%")
+        where = " AND ".join(filters)
+        cur.execute(cte + f"SELECT COUNT(*) FROM classified WHERE {where}", (scan_id, scan_id, *params))
+        total = cur.fetchone()[0]
+        cur.execute(cte + f"""
+            SELECT domain_id,hostname,cname_destination,provider,finding_category,confidence,
+                   verification_status,observed_at,observations,categories
+              FROM classified WHERE {where}
+             ORDER BY hostname COLLATE "C" ASC,domain_id ASC
+             LIMIT %s OFFSET %s
+        """, (scan_id, scan_id, *params, limit, (page - 1) * limit))
+        hosts = [{"domain_id": row[0], "hostname": row[1], "cname_destination": row[2],
+                  "provider": row[3], "finding_category": row[4], "confidence": row[5],
+                  "verification_status": row[6] or "UNVERIFIED", "observed_at": row[7],
+                  "observations": row[8], "categories": row[9]} for row in cur.fetchall()]
+        return {"scan_id": scan_id, "availability_state": "AVAILABLE",
+                "summary": {"dns_negative_hosts": negative_count or 0,
+                            "unverified_provider_hosts": unverified_count or 0,
+                            "provider_candidate_hosts": candidate_count or 0},
+                "page": page, "limit": limit, "total": total, "hosts": hosts}
+    except HTTPException:
+        raise
+    except Exception:
+        conn.rollback()
         raise
     finally:
         conn.close()
@@ -5087,6 +5297,8 @@ def dns_security_hosts(
                 distribution[outcome_name] = distribution.get(outcome_name, 0) + 1
                 if outcome_name != "NOT_CHECKED":
                     host["assessment_state"] = "ASSESSED"
+                interpreted = (interpret_cname_health(outcome_name, row[8])
+                               if row[2] == "cname_health" else {})
                 host["checks"].append({
                     "check_id": row[1], "check_key": row[2],
                     "outcome": outcome_name, "severity": row[4],
@@ -5094,6 +5306,7 @@ def dns_security_hosts(
                     "target": row[7], "evidence": row[8],
                     "remediation": row[9], "checked_at": row[10],
                     "scan_id": scan_id,
+                    **interpreted,
                 })
 
         return {

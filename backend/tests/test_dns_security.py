@@ -30,6 +30,7 @@ from dns_security import (  # noqa: E402
     MAX_EVIDENCE_BYTES,
     ResolverOutcome,
     assess_dns_domain,
+    interpret_cname_health,
     dns_security_query_authorizer,
     normalize_dns_name,
     parse_dmarc,
@@ -422,10 +423,30 @@ class DnsSecurityTests(unittest.TestCase):
         self.assertEqual(cname["outcome"], "POTENTIAL_EXPOSURE")
         self.assertFalse(cname["evidence"]["takeover_confirmed"])
 
+    def test_servfail_or_mixed_address_responses_are_not_dangling_classifications(self):
+        for terminal_cname, a_outcome, aaaa_outcome in (
+            ("SERVFAIL", "NXDOMAIN", "NXDOMAIN"),
+            ("NODATA", "NXDOMAIN", "NODATA"),
+        ):
+            def query(name, rrtype, *, authorize):
+                self.assertTrue(authorize())
+                if name == "owner.example" and rrtype == "CNAME":
+                    return ResolverOutcome(name, rrtype, "ANSWER", ("target.example.net",), "now", {})
+                if name == "target.example.net" and rrtype == "CNAME":
+                    return ResolverOutcome(name, rrtype, terminal_cname, (), "now", {})
+                if name == "target.example.net" and rrtype == "A":
+                    return ResolverOutcome(name, rrtype, a_outcome, (), "now", {})
+                if name == "target.example.net" and rrtype == "AAAA":
+                    return ResolverOutcome(name, rrtype, aaaa_outcome, (), "now", {})
+                return ResolverOutcome(name, rrtype, "NODATA", (), "now", {})
+            report = assess_dns_domain("owner.example", mock.Mock(query=query), lambda _name: True)
+            check = next(item for item in report["checks"] if item["check_key"] == "cname_health")
+            self.assertEqual(check["outcome"], "INCONCLUSIVE")
+
     def test_cname_terminal_address_queries_use_actual_target(self):
         cases = (
             ("ANSWER", "ANSWER", "CLEAR"),
-            ("NXDOMAIN", "NODATA", "POTENTIAL_EXPOSURE"),
+            ("NXDOMAIN", "NODATA", "INCONCLUSIVE"),
         )
         for a_outcome, aaaa_outcome, expected in cases:
             with self.subTest(a_outcome=a_outcome, aaaa_outcome=aaaa_outcome):
@@ -504,6 +525,33 @@ class DnsSecurityTests(unittest.TestCase):
         cname = next(item for item in report["checks"] if item["check_key"] == "cname_health")
         self.assertEqual(cname["outcome"], "INCONCLUSIVE")
         self.assertIn(("terminal.example.net", "A"), calls)
+
+    def test_provider_authorization_block_is_not_exposure_and_retains_rationale(self):
+        def query(name, rrtype, *, authorize):
+            if rrtype == "CNAME" and name == "owner.example":
+                return ResolverOutcome(name, rrtype, "ANSWER", ("bucket.amazonaws.com",), "now", {})
+            if name == "bucket.amazonaws.com":
+                return ResolverOutcome(name, rrtype, "INCONCLUSIVE", (), "now",
+                                       {"error_category": "AUTHORIZATION_DENIED"})
+            return ResolverOutcome(name, rrtype, "NODATA", (), "now", {})
+        report = assess_dns_domain("owner.example", mock.Mock(query=query), lambda _name: True)
+        check = next(item for item in report["checks"] if item["check_key"] == "cname_health")
+        self.assertEqual(check["outcome"], "NOT_CHECKED")
+        self.assertEqual(check["evidence"]["verification_status"], "NOT_CHECKED_AUTHORIZATION")
+        self.assertEqual(check["evidence"]["chain"][-1]["authorization_result"], "DENIED")
+        self.assertEqual(check["evidence"]["chain"][-1]["provider"], "aws")
+
+    def test_legacy_interpretation_does_not_upgrade_missing_evidence(self):
+        blocked = interpret_cname_health("POTENTIAL_EXPOSURE", {
+            "chain": [{"state": "provider_indicator", "provider": "AWS"},
+                      {"state": "not_checked_authorization"}],
+        })
+        self.assertEqual(blocked["evidence_category"], "UNVERIFIED_PROVIDER_ASSOCIATION")
+        negative = interpret_cname_health("POTENTIAL_EXPOSURE", {"chain": [{"state": "potential_exposure"}]})
+        self.assertEqual(negative["verification_status"], "UNVERIFIED_LEGACY_EVIDENCE")
+        unknown = interpret_cname_health("POTENTIAL_EXPOSURE", None)
+        self.assertEqual(unknown["evidence_category"], "UNKNOWN")
+        self.assertEqual(unknown["verification_status"], "UNVERIFIED")
 
         def loop_query(name, rrtype, *, authorize):
             self.assertTrue(authorize())

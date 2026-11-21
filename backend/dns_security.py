@@ -491,6 +491,42 @@ def _provider_indicator(name):
     return None
 
 
+def interpret_cname_health(outcome, evidence):
+    """Conservatively classify current and legacy CNAME health evidence."""
+    if isinstance(evidence, str):
+        try:
+            evidence = json.loads(evidence)
+        except (TypeError, ValueError):
+            evidence = {}
+    evidence = evidence if isinstance(evidence, dict) else {}
+    chain = evidence.get("chain") if isinstance(evidence.get("chain"), list) else []
+    states = {str(item.get("state", "")).lower() for item in chain if isinstance(item, dict)}
+    has_provider = any(isinstance(item, dict) and item.get("provider") for item in chain)
+    authorization_blocked = ("not_checked_authorization" in states
+                             or evidence.get("verification_status") == "NOT_CHECKED_AUTHORIZATION")
+    if authorization_blocked and has_provider:
+        return {"evidence_category": "UNVERIFIED_PROVIDER_ASSOCIATION",
+                "verification_status": "NOT_CHECKED_AUTHORIZATION",
+                "rationale": "Provider association was observed, but destination verification was blocked by authorization."}
+    if authorization_blocked:
+        return {"evidence_category": "UNKNOWN", "verification_status": "NOT_CHECKED_AUTHORIZATION",
+                "rationale": "Destination verification was blocked by authorization; no provider association is established."}
+    if evidence.get("verification_status") == "VERIFIED_DNS_NEGATIVE":
+        return {"evidence_category": "DNS_NEGATIVE_SIGNAL",
+                "verification_status": "VERIFIED_DNS_NEGATIVE",
+                "rationale": "Recorded terminal DNS responses support a DNS-negative signal; this does not confirm takeover."}
+    if "potential_exposure" in states:
+        return {"evidence_category": "DNS_NEGATIVE_SIGNAL",
+                "verification_status": "UNVERIFIED_LEGACY_EVIDENCE",
+                "rationale": "Legacy record was classified as potential exposure; raw terminal response categories are unavailable."}
+    if any(isinstance(item, dict) and item.get("provider") for item in chain):
+        return {"evidence_category": "UNVERIFIED_PROVIDER_ASSOCIATION",
+                "verification_status": "UNVERIFIED",
+                "rationale": "A provider indicator was observed without verified destination evidence."}
+    return {"evidence_category": "UNKNOWN", "verification_status": "UNVERIFIED",
+            "rationale": "Available evidence does not establish a dangling DNS condition."}
+
+
 def assess_dns_domain(domain, resolver, authorize_query, *, mail_usage_known=False,
                       max_chain_hops=MAX_CHAIN_HOPS, max_mx_targets=MAX_MX_TARGETS):
     """Run bounded recursive-DNS observations; authorization is checked per query.
@@ -546,8 +582,10 @@ def assess_dns_domain(domain, resolver, authorize_query, *, mail_usage_known=Fal
             seen.add(target)
             target_cname = query(target, "CNAME", target)
             if target_cname.evidence.get("error_category") == "AUTHORIZATION_DENIED":
-                chain.append({"target": target, "state": "not_checked_authorization"})
-                status = "POTENTIAL_EXPOSURE" if provider else "NOT_CHECKED"
+                chain.append({"target": target, "state": "not_checked_authorization",
+                              "provider": provider, "authorization_result": "DENIED",
+                              "verification_status": "NOT_CHECKED_AUTHORIZATION"})
+                status = "NOT_CHECKED"
                 break
             if target_cname.outcome == "ANSWER" and target_cname.answers:
                 current, target = target, target_cname.answers[0]
@@ -557,34 +595,48 @@ def assess_dns_domain(domain, resolver, authorize_query, *, mail_usage_known=Fal
             # ``current`` validates the owner/previous hop instead.
             target_a = query(target, "A", target)
             target_aaaa = query(target, "AAAA", target)
+            response_evidence = {"target_cname": target_cname.outcome,
+                                 "target_a": target_a.outcome,
+                                 "target_aaaa": target_aaaa.outcome,
+                                 "authorization_result": "ALLOWED"}
             if target_a.outcome == "ANSWER" or target_aaaa.outcome == "ANSWER":
                 status = "CLEAR"
-            elif target_a.outcome == "NXDOMAIN" or target_aaaa.outcome == "NXDOMAIN":
+            elif (target_cname.outcome in {"NODATA", "NXDOMAIN"}
+                  and target_a.outcome == "NXDOMAIN"
+                  and target_aaaa.outcome == "NXDOMAIN"):
                 status = "POTENTIAL_EXPOSURE"
+                response_evidence["verification_status"] = "VERIFIED_DNS_NEGATIVE"
             elif (target_cname.outcome == "NODATA"
                   and target_a.outcome == "NODATA"
                   and target_aaaa.outcome == "NODATA"):
                 status = "CLEAR"
             else:
                 status = "INCONCLUSIVE"
-            chain.append({"target": target, "state": status.lower()})
+            chain.append({"target": target, "state": status.lower(), **response_evidence})
             break
         else:
             status = "INCONCLUSIVE"
             chain.append({"target": target, "state": "hop_limit"})
         if status == "CONFIRMED_ISSUE":
             checks.append(_assessment("cname_health", status, severity="LOW", confidence="HIGH",
-                                      target_identity=owner, record_type="CNAME", evidence={"chain": chain},
+                                      target_identity=owner, record_type="CNAME", evidence={"observed_hostname": owner,
+                                          "cname_destination": cname_target, "chain": chain},
                                       remediation="Review the observed CNAME loop."))
         elif status == "POTENTIAL_EXPOSURE":
             checks.append(_assessment("cname_health", status, severity="LOW", confidence="LOW",
-                                      target_identity=owner, record_type="CNAME", evidence={"chain": chain,
-                                                                      "takeover_confirmed": False},
+                                      target_identity=owner, record_type="CNAME", evidence={"observed_hostname": owner,
+                                                                      "cname_destination": cname_target, "chain": chain,
+                                                                      "takeover_confirmed": False,
+                                                                      "verification_status": "VERIFIED_DNS_NEGATIVE",
+                                                                      "classification_rationale": "Both terminal A and AAAA queries returned NXDOMAIN; provider takeover was not verified."},
                                       remediation="Review DNS target ownership and provider state."))
         else:
             checks.append(_assessment("cname_health", status, confidence="HIGH" if status == "CLEAR" else "UNKNOWN",
-                                      target_identity=owner, record_type="CNAME", evidence={"chain": chain,
-                                                                      "takeover_confirmed": False}))
+                                      target_identity=owner, record_type="CNAME", evidence={"observed_hostname": owner,
+                                                                      "cname_destination": cname_target, "chain": chain,
+                                                                      "takeover_confirmed": False,
+                                                                      "verification_status": "NOT_CHECKED_AUTHORIZATION" if status == "NOT_CHECKED" else "UNVERIFIED",
+                                                                      "classification_rationale": "Destination verification was blocked by authorization." if status == "NOT_CHECKED" else "DNS evidence did not establish a dangling destination."}))
 
     mx_records = mx_result.answers if mx_result.outcome == "ANSWER" else ()
     checks.append(_resolver_assessment("mx_observation", mx_result, owner))
