@@ -846,7 +846,7 @@ class PostgreSQLDnsSecurityReportingTests(unittest.TestCase):
                   (4,91,4,'dns_a_resolution','','A','NOT_CHECKED','UNKNOWN','UNKNOWN','{}',NULL,'2026-01-04'),
                   (5,91,5,'dns_a_resolution','','A','NOT_CHECKED','UNKNOWN','UNKNOWN','{}',NULL,'2026-01-05'),
                   (6,91,5,'dns_aaaa_resolution','','AAAA','INCONCLUSIVE','UNKNOWN','LOW','{}',NULL,'2026-01-06'),
-                  (7,91,6,'cname_health','a.example.test','CNAME','POTENTIAL_EXPOSURE','MEDIUM','MEDIUM','{}',NULL,'2026-01-07'),
+                  (7,91,6,'cname_health','a.example.test','CNAME','POTENTIAL_EXPOSURE','MEDIUM','MEDIUM','{"chain":[{"state":"provider_indicator","provider":null}]}',NULL,'2026-01-07'),
                   (8,91,6,'cname_health','b.example.test','CNAME','WARNING','LOW','MEDIUM','{}',NULL,'2026-01-08'),
                   (9,91,7,'dns_a_resolution','','A','CONFIRMED_ISSUE','HIGH','HIGH','{}',NULL,'2026-01-09'),
                   (10,91,8,'dns_a_resolution','','A','CONFIRMED_ISSUE','HIGH','HIGH','{}',NULL,'2026-01-10');

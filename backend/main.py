@@ -5047,7 +5047,7 @@ def subdomain_takeover_evidence(
                          WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(
                               CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
                                    THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
-                              WHERE x ? 'provider')
+                              WHERE NULLIF(x->>'provider','') IS NOT NULL)
                            THEN 'UNVERIFIED_PROVIDER_ASSOCIATION'
                          ELSE 'UNKNOWN' END AS evidence_category,
                        CASE
@@ -5081,7 +5081,7 @@ def subdomain_takeover_evidence(
                            WHEN (EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='not_checked_authorization') OR c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION') AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE NULLIF(x->>'provider','') IS NOT NULL) THEN 'UNVERIFIED_PROVIDER_ASSOCIATION'
                            WHEN c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION' OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='not_checked_authorization') THEN 'UNKNOWN'
                            WHEN c.evidence->>'verification_status'='VERIFIED_DNS_NEGATIVE' OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='potential_exposure') THEN 'DNS_NEGATIVE_SIGNAL'
-                           WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x ? 'provider') THEN 'UNVERIFIED_PROVIDER_ASSOCIATION' ELSE 'UNKNOWN' END,
+                           WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE NULLIF(x->>'provider','') IS NOT NULL) THEN 'UNVERIFIED_PROVIDER_ASSOCIATION' ELSE 'UNKNOWN' END,
                          'verification_status',CASE
                            WHEN c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION' OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='not_checked_authorization') THEN 'NOT_CHECKED_AUTHORIZATION'
                            WHEN c.evidence->>'verification_status'='VERIFIED_DNS_NEGATIVE' THEN 'VERIFIED_DNS_NEGATIVE'
