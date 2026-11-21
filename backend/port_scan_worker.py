@@ -65,6 +65,10 @@ class PortScanHostUnavailable(PortScanError):
     """Nmap could not resolve or reach the approved hostname."""
 
 
+class PortScanHostUnreachable(PortScanError):
+    """Nmap completed its host check but reported the target unreachable."""
+
+
 class PortScanStageError(RuntimeError):
     def __init__(self, message, outcomes=()):
         super().__init__(message)
@@ -84,7 +88,7 @@ def configured_worker_count(value=None):
 def get_resolving_domains(cur, scan_id):
     asset_class = reporting_asset_class_sql("d.domain", "d.ownership_status")
     cur.execute(f"""
-    SELECT DISTINCT ON (d.id) d.id, d.domain, s.ip
+    SELECT DISTINCT ON (d.id) d.id, d.domain, s.ip, s.has_ip
     FROM domains d
     JOIN scan_results sr
       ON sr.domain_id = d.id
@@ -166,6 +170,36 @@ def _known_destination_is_non_public(value):
     return not address.is_global
 
 
+def port_scan_ip_skip_reason(has_ip, value):
+    """Require a usable address recorded for this scan and supported by Nmap."""
+    if has_ip is not True or value is None or not str(value).strip():
+        return "no_current_scan_ip"
+    try:
+        address = ipaddress.ip_address(str(value).strip())
+    except ValueError:
+        return "invalid_ip"
+    if not address.is_global:
+        return "non_public_ip"
+    if address.version != 4:
+        # This worker invokes Nmap without -6, so IPv6-only targets are not
+        # eligible until the actual scan path supports IPv6.
+        return "unsupported_ip_family"
+    return None
+
+
+def partition_port_scan_targets(rows):
+    """Split authorized current-scan candidates into eligible and explicit skips."""
+    targets = []
+    skips = {}
+    for domain_id, domain, ip, has_ip in rows:
+        reason = port_scan_ip_skip_reason(has_ip, ip)
+        if reason:
+            skips[reason] = skips.get(reason, 0) + 1
+        else:
+            targets.append((domain_id, domain))
+    return targets, skips
+
+
 def _reported_destination_ip(stdout):
     """Extract the address Nmap reports for its hostname target, if present."""
     text = stdout.decode("utf-8", errors="replace") if isinstance(stdout, bytes) else str(stdout or "")
@@ -245,10 +279,12 @@ def scan_ports(hostname, cancel_event=None):
 
     ports = _parse_ports(stdout)
     destination_ip = _reported_destination_ip(stdout)
+    combined = f"{stdout or ''}\n{stderr or ''}"
+    if re.search(r"failed to resolve|could not resolve|unable to resolve", combined, re.IGNORECASE):
+        raise PortScanHostUnavailable(f"Nmap could not resolve hostname {hostname}")
+    if re.search(r"host seems down|0 hosts? up|host is unreachable", combined, re.IGNORECASE):
+        raise PortScanHostUnreachable(f"Nmap reported hostname unreachable: {hostname}")
     if process.returncode != 0:
-        combined = f"{stdout or ''}\n{stderr or ''}"
-        if re.search(r"failed to resolve|could not resolve|unable to resolve", combined, re.IGNORECASE):
-            raise PortScanHostUnavailable(f"Nmap could not resolve hostname {hostname}")
         raise PortScanError(
             f"Nmap exited {process.returncode} for {hostname}: {stderr or ''}; "
             f"discarded {len(ports)} partial ports",
@@ -260,6 +296,7 @@ def scan_ports(hostname, cancel_event=None):
 def scan_target(scan_id, domain_id, domain, cancel_event):
     """Authorize, scan, and persist one target using its own DB connection."""
     conn = None
+    nmap_attempted = False
     try:
         if cancel_event.is_set():
             return {"status": "cancelled", "domain_id": domain_id, "domain": domain}
@@ -271,7 +308,7 @@ def scan_target(scan_id, domain_id, domain, cancel_event):
         require_running_scan(cur, scan_id)
         asset_class = reporting_asset_class_sql("d.domain", "d.ownership_status")
         cur.execute(f"""
-        SELECT d.domain, {asset_class}, ds.ip
+        SELECT d.domain, {asset_class}, ds.ip, ds.has_ip
         FROM domains d
         JOIN scan_results sr ON sr.domain_id = d.id AND sr.scan_id = %s
         JOIN scans scan ON scan.id = sr.scan_id AND scan.status = 'RUNNING'
@@ -287,15 +324,18 @@ def scan_target(scan_id, domain_id, domain, cancel_event):
                 "status": "skipped",
                 "domain_id": domain_id,
                 "domain": domain,
+                "skip_reason": "authorization",
                 "reason": "domain is not an authorized current-scan KNOWN/SHADOW member",
             }
-        if _known_destination_is_non_public(target_state[2]):
+        ip_skip_reason = port_scan_ip_skip_reason(target_state[3], target_state[2])
+        if ip_skip_reason:
             conn.rollback()
             return {
                 "status": "skipped",
                 "domain_id": domain_id,
                 "domain": domain,
-                "reason": "current DNS observation is a non-public or special-use address",
+                "skip_reason": ip_skip_reason,
+                "reason": f"current-scan DNS IP is not usable for Port Scan: {ip_skip_reason}",
             }
 
         # Recheck the domain operation grant immediately before handing the
@@ -316,7 +356,8 @@ def scan_target(scan_id, domain_id, domain, cancel_event):
                     "reason": "runtime authorization could not be verified",
                 }
             logging.info("Skipping port scan for %s: %s", domain, reason)
-            return {"status": "skipped", "domain_id": domain_id, "domain": domain, "reason": reason}
+            return {"status": "skipped", "domain_id": domain_id, "domain": domain,
+                    "skip_reason": "authorization", "reason": reason}
         conn.commit()
 
         # Authorization is checked independently in the worker immediately
@@ -324,12 +365,21 @@ def scan_target(scan_id, domain_id, domain, cancel_event):
         if cancel_event.is_set():
             return {"status": "cancelled", "domain_id": domain_id, "domain": domain}
         logging.info("Scanning %s", domain)
+        nmap_attempted = True
         try:
             ports = scan_ports(hostname, cancel_event=cancel_event)
         except PortScanHostUnavailable as exc:
             logging.info("Port scan target unavailable: %s", domain)
-            return {"status": "unavailable", "domain_id": domain_id, "domain": domain,
-                    "reason": str(exc)}
+            return {"status": "dns_unresolved", "domain_id": domain_id, "domain": domain,
+                    "reason": str(exc), "nmap_attempted": True}
+        except PortScanTimeout as exc:
+            logging.info("Port scan target timed out: %s", domain)
+            return {"status": "timeout", "domain_id": domain_id, "domain": domain,
+                    "reason": str(exc), "nmap_attempted": True}
+        except PortScanHostUnreachable as exc:
+            logging.info("Port scan target unreachable: %s", domain)
+            return {"status": "unreachable", "domain_id": domain_id, "domain": domain,
+                    "reason": str(exc), "nmap_attempted": True}
 
         if cancel_event.is_set():
             return {"status": "cancelled", "domain_id": domain_id, "domain": domain}
@@ -378,16 +428,19 @@ def scan_target(scan_id, domain_id, domain, cancel_event):
             "domain": domain,
             "ports": len(ports),
             "destination_ip": destination_ip,
+            "nmap_attempted": True,
         }
     except PortScanCancelled as exc:
         if conn is not None:
             conn.rollback()
-        return {"status": "cancelled", "domain_id": domain_id, "domain": domain, "reason": str(exc)}
+        return {"status": "cancelled", "domain_id": domain_id, "domain": domain,
+                "reason": str(exc), "nmap_attempted": nmap_attempted}
     except PortScanError as exc:
         if conn is not None:
             conn.rollback()
         logging.error("Port scan failed for %s: %s", domain, exc)
-        return {"status": "failed", "domain_id": domain_id, "domain": domain, "reason": str(exc)}
+        return {"status": "failed", "domain_id": domain_id, "domain": domain,
+                "reason": str(exc), "nmap_attempted": nmap_attempted}
     except Exception as exc:
         if conn is not None:
             try:
@@ -395,7 +448,8 @@ def scan_target(scan_id, domain_id, domain, cancel_event):
             except Exception:
                 pass
         logging.error("Port scan failed for %s: %s", domain, exc)
-        return {"status": "failed", "domain_id": domain_id, "domain": domain, "reason": str(exc)}
+        return {"status": "failed", "domain_id": domain_id, "domain": domain,
+                "reason": str(exc), "nmap_attempted": nmap_attempted}
     finally:
         if conn is not None:
             conn.close()
@@ -426,16 +480,20 @@ def run_port_scan_pool(
     futures = {
         executor.submit(
             target_worker, scan_id, domain_id, domain, cancel_event
-        ): domain
+        ): (domain_id, domain)
         for domain_id, domain in unique_targets
     }
     try:
         for future in as_completed(futures):
-            domain = futures[future]
+            domain_id, domain = futures[future]
             try:
                 outcome = future.result()
             except Exception as exc:
-                outcome = {"status": "failed", "domain": domain, "reason": str(exc)}
+                outcome = {"status": "failed", "domain_id": domain_id,
+                           "domain": domain, "reason": str(exc)}
+            if isinstance(outcome, dict):
+                outcome.setdefault("domain_id", domain_id)
+                outcome.setdefault("domain", domain)
             outcomes.append(outcome)
             if progress_callback is not None:
                 try:
@@ -451,14 +509,36 @@ def run_port_scan_pool(
     else:
         executor.shutdown(wait=True)
 
-    incomplete = [item for item in outcomes if item.get("status") in ("failed", "cancelled")]
+    expected_ids = {domain_id for domain_id, _domain in unique_targets}
+    outcome_ids = [item.get("domain_id") if isinstance(item, dict) else None
+                   for item in outcomes]
+    allowed_statuses = {
+        "complete", "no_sensitive_ports", "dns_unresolved", "timeout",
+        "unreachable", "skipped", "failed", "cancelled",
+    }
+    malformed = [item for item in outcomes
+                 if not isinstance(item, dict)
+                 or item.get("status") not in allowed_statuses
+                 or item.get("domain_id") is None]
+    duplicate_ids = len(outcome_ids) != len(set(outcome_ids))
+    missing_ids = expected_ids - set(outcome_ids)
+    unexpected_ids = set(outcome_ids) - expected_ids
+    incomplete = [item for item in outcomes if isinstance(item, dict)
+                  and item.get("status") in ("failed", "cancelled")]
+    if malformed or duplicate_ids or missing_ids or unexpected_ids:
+        raise PortScanStageError(
+            "port scan could not account for every selected target exactly once "
+            f"(missing={len(missing_ids)}, duplicate={duplicate_ids}, "
+            f"unexpected={len(unexpected_ids)}, malformed={len(malformed)})",
+            outcomes,
+        )
     if incomplete:
         examples = "; ".join(
             f"{item.get('domain')}: {item.get('reason', item['status'])}"
             for item in incomplete[:3]
         )
         raise PortScanStageError(
-            f"port scan incomplete for {len(incomplete)} target(s): {examples}",
+            f"port scan had operationally incomplete work for {len(incomplete)} target(s): {examples}",
             outcomes,
         )
     return outcomes
@@ -486,9 +566,15 @@ def main():
         conn.close()
 
     print("Scan ID:", scan_id)
+    candidates = domains
+    domains, ip_skips = partition_port_scan_targets(candidates)
+    print("Port scan IP eligibility:", json.dumps({
+        "candidates": len(candidates), "eligible": len(domains), "skipped": ip_skips,
+    }, sort_keys=True))
     print("Rows to scan:", len(domains))
     if not domains:
-        _emit_worker_summary([], [], 0.0)
+        _emit_worker_summary([], [], 0.0, candidates=len(candidates),
+                             ip_skips=ip_skips)
         print("No domains to scan for this run")
         print("Port scan enrichment complete")
         return
@@ -504,16 +590,17 @@ def main():
             now = time.monotonic()
             if not force and now - last_progress < 30:
                 return
-            completed_count = sum(
-                item.get("status") in ("complete", "no_sensitive_ports", "unavailable")
-                for item in outcomes
-            )
+            completed_count = len(outcomes)
+            succeeded_count = sum(item.get("status") in ("complete", "no_sensitive_ports")
+                                  for item in outcomes)
             emit_stage_progress(
-                scan_id, "Port Scan", selected=len(domains), total=len(domains),
-                processed=len(outcomes), completed=completed_count,
-                succeeded=completed_count,
+                scan_id, "Port Scan", selected=len(domains), total=len(candidates),
+                processed=len(outcomes) + sum(ip_skips.values()), completed=completed_count,
+                succeeded=succeeded_count,
                 failed=sum(item.get("status") == "failed" for item in outcomes),
-                skipped=sum(item.get("status") in ("skipped", "cancelled") for item in outcomes),
+                skipped=sum(ip_skips.values()) + sum(
+                    item.get("status") in ("skipped", "cancelled") for item in outcomes
+                ),
                 elapsed_seconds=now - started,
             )
             last_progress = now
@@ -526,20 +613,23 @@ def main():
             )
         except PortScanStageError as exc:
             report_progress(exc.outcomes, force=True)
-            _emit_worker_summary(domains, exc.outcomes, time.monotonic() - started)
+            _emit_worker_summary(domains, exc.outcomes, time.monotonic() - started,
+                                 candidates=len(candidates), ip_skips=ip_skips)
             raise
         report_progress(outcomes, force=True)
-        _emit_worker_summary(domains, outcomes, time.monotonic() - started)
+        _emit_worker_summary(domains, outcomes, time.monotonic() - started,
+                             candidates=len(candidates), ip_skips=ip_skips)
     finally:
         for sig, handler in previous_handlers.items():
             signal.signal(sig, handler)
 
-    complete = sum(item["status"] in ("complete", "no_sensitive_ports", "unavailable") for item in outcomes)
-    skipped = sum(item["status"] == "skipped" for item in outcomes)
-    print(f"Port scan enrichment complete: {complete} completed, {skipped} policy skips")
+    complete = len(outcomes)
+    skipped = sum(item["status"] == "skipped" for item in outcomes) + sum(ip_skips.values())
+    print(f"Port scan enrichment complete: {complete} completed, {skipped} skipped")
 
 
-def _emit_worker_summary(selected_targets, outcomes, elapsed_seconds):
+def _emit_worker_summary(selected_targets, outcomes, elapsed_seconds, *, candidates=None,
+                         ip_skips=None):
     reported = [
         {
             "domain_id": item["domain_id"],
@@ -550,11 +640,37 @@ def _emit_worker_summary(selected_targets, outcomes, elapsed_seconds):
     ]
     summary = {
         "selected": len(selected_targets),
-        "completed": sum(item.get("status") in ("complete", "no_sensitive_ports", "unavailable") for item in outcomes),
+        "total_candidates": len(selected_targets) + sum((ip_skips or {}).values())
+        if candidates is None else int(candidates),
+        "processed": len(outcomes),
+        "attempted": sum(item.get("nmap_attempted") is True for item in outcomes),
+        "attempted_nmap_targets": sum(item.get("nmap_attempted") is True for item in outcomes),
+        "ip_eligibility_skips": sum((ip_skips or {}).values()),
+        "no_current_scan_ip_skips": (ip_skips or {}).get("no_current_scan_ip", 0),
+        "invalid_ip_skips": (ip_skips or {}).get("invalid_ip", 0),
+        "non_public_ip_skips": (ip_skips or {}).get("non_public_ip", 0),
+        "unsupported_ip_family_skips": (ip_skips or {}).get("unsupported_ip_family", 0),
+        "completed": len(outcomes),
+        "succeeded": sum(item.get("status") in ("complete", "no_sensitive_ports") for item in outcomes),
+        "successfully_probed_targets": sum(item.get("status") in ("complete", "no_sensitive_ports") for item in outcomes),
         "open_port_targets": sum(item.get("status") == "complete" for item in outcomes),
         "no_sensitive_ports": sum(item.get("status") == "no_sensitive_ports" for item in outcomes),
         "unavailable_targets": sum(item.get("status") == "unavailable" for item in outcomes),
-        "authorization_skips": sum(item.get("status") == "skipped" for item in outcomes),
+        "dns_unresolved_targets": sum(item.get("status") == "dns_unresolved" for item in outcomes),
+        "timeout_targets": sum(item.get("status") == "timeout" for item in outcomes),
+        "unreachable_targets": sum(item.get("status") == "unreachable" for item in outcomes),
+        "authorization_skips": sum(item.get("status") == "skipped"
+                                     and item.get("skip_reason") == "authorization"
+                                     for item in outcomes),
+        "runtime_non_public_ip_skips": sum(item.get("status") == "skipped"
+                                           and item.get("skip_reason") == "non_public_ip"
+                                           for item in outcomes),
+        "skipped": sum((ip_skips or {}).values()) + sum(
+            item.get("status") in ("skipped", "cancelled") for item in outcomes
+        ),
+        "failed": sum(item.get("status") == "failed" for item in outcomes),
+        "operational_failures": sum(item.get("status") == "failed" for item in outcomes),
+        "accounted_targets": len(outcomes) + sum((ip_skips or {}).values()),
         "failed_targets": sum(item.get("status") == "failed" for item in outcomes),
         "cancelled_targets": sum(item.get("status") == "cancelled" for item in outcomes),
         "worker_errors": sum(item.get("status") == "failed" for item in outcomes),

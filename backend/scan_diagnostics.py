@@ -52,8 +52,19 @@ WORKER_SUMMARY_FIELDS = {
     "run_scoped", "run_scope_target_count", "query_attempts",
     "query_budget_exhausted",
     "open_port_targets", "no_sensitive_ports", "unavailable_targets",
+    "dns_unresolved_targets", "timeout_targets", "unreachable_targets",
+    "successfully_probed_targets", "operational_failures", "accounted_targets",
+    "attempted_nmap_targets",
     "failed_targets", "nmap_destination_observations_truncated",
     "nmap_destination_observations",
+    "total_candidates", "attempted", "processed", "succeeded", "skipped",
+    "ip_eligibility_skips",
+    "no_current_scan_ip_skips", "invalid_ip_skips", "non_public_ip_skips",
+    "unsupported_ip_family_skips", "runtime_non_public_ip_skips",
+    "candidate_targets", "eligible_targets", "processed_targets",
+    "unique_ips_queried", "duplicate_ip_lookup_reuses", "lookup_failures",
+    "disabled_by_policy", "asn_input_rows", "invalid_asn_ip_skips",
+    "mapped_targets", "reused_provider_rows",
 }
 WORKER_SUMMARY_LIST_FIELDS = {"nmap_destination_observations"}
 
@@ -97,7 +108,8 @@ def sanitize_worker_summary(value):
                 if (isinstance(domain_id, bool) or not isinstance(domain_id, int)
                         or domain_id <= 0
                         or status not in {
-                            "complete", "no_sensitive_ports", "unavailable",
+                        "complete", "no_sensitive_ports", "unavailable",
+                            "dns_unresolved", "timeout", "unreachable",
                             "skipped", "failed", "cancelled",
                         }):
                     continue

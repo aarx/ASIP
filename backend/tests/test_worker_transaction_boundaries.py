@@ -94,6 +94,7 @@ class WorkerTransactionBoundaryTests(unittest.TestCase):
              mock.patch.object(
                  self.asn, "get_domains", return_value=[(11, "candidate.example", "8.8.8.8")]
              ), \
+             mock.patch.object(self.asn, "default_operation_enabled", return_value=True), \
              mock.patch.object(self.asn, "asn_target_authorized", return_value=True), \
              mock.patch.object(self.asn, "enrich_asn", side_effect=observe_http):
             self.asn.main()
@@ -113,6 +114,7 @@ class WorkerTransactionBoundaryTests(unittest.TestCase):
              mock.patch.object(
                  self.asn, "get_domains", return_value=[(11, "candidate.example", "8.8.8.8")]
              ), \
+             mock.patch.object(self.asn, "default_operation_enabled", return_value=True), \
              mock.patch.object(self.asn, "asn_target_authorized", return_value=False), \
              mock.patch.object(self.asn, "enrich_asn") as http_lookup:
             self.asn.main()
