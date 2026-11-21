@@ -1,6 +1,7 @@
 import os
 import pathlib
 import sys
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 from datetime import datetime, timezone
 from unittest import mock
@@ -127,6 +128,14 @@ class DnsSecurityTests(unittest.TestCase):
         self.assertIn("d.ownership_status = 'CONFIRMED'", sql)
         self.assertIn("d.scannable IS TRUE", sql)
         self.assertIn("manually rejected", sql)
+
+    def test_shared_query_budget_is_safe_under_hostname_concurrency(self):
+        budget = DnsQueryBudget(60)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            outcomes = list(pool.map(lambda _index: budget.consume(), range(500)))
+        self.assertEqual(sum(outcomes), 60)
+        self.assertEqual(budget.attempted, 60)
+        self.assertTrue(budget.exhausted)
 
     def test_per_query_authorization_rechecks_run_target_membership(self):
         os.environ.pop("ASIP_DEFAULT_SCAN_OPERATIONS", None)

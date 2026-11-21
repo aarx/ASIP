@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import ipaddress
 import json
 import re
+import threading
 from typing import Callable
 
 import dns.exception
@@ -105,13 +106,15 @@ class DnsQueryBudget:
         self.maximum = max(0, min(int(maximum), MAX_RUN_SCOPED_DNS_QUERIES))
         self.attempted = 0
         self.exhausted = False
+        self._lock = threading.Lock()
 
     def consume(self):
-        if self.attempted >= self.maximum:
-            self.exhausted = True
-            return False
-        self.attempted += 1
-        return True
+        with self._lock:
+            if self.attempted >= self.maximum:
+                self.exhausted = True
+                return False
+            self.attempted += 1
+            return True
 
 
 def _text_answer(rdata, record_type):
