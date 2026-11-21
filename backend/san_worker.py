@@ -27,8 +27,8 @@ from ownership import (
 from stage_progress import emit_stage_progress
 
 scan_id = int(sys.argv[1])
-DEFAULT_SAN_WORKERS = 2
-MAX_SAN_WORKERS = 2
+DEFAULT_SAN_WORKERS = 3
+MAX_SAN_WORKERS = 3
 TESTING_LEVEL = "HTTP_TLS_OBSERVATION"
 _fetch_state = threading.local()
 

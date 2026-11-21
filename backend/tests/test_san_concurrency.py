@@ -109,8 +109,8 @@ class SanConcurrencyTests(unittest.TestCase):
     def rows(count):
         return [(i, f"parent-{i}.example") for i in range(1, count + 1)]
 
-    def test_two_worker_limit_and_independent_connections(self):
-        barrier = threading.Barrier(2)
+    def test_three_worker_limit_and_independent_connections(self):
+        barrier = threading.Barrier(3)
         count_lock = threading.Lock()
         active = maximum = 0
 
@@ -126,12 +126,12 @@ class SanConcurrencyTests(unittest.TestCase):
             return []
 
         self.worker.fetch_san_domains = retrieve
-        summary = self.worker.run_san_expansion(self.rows(4), 17, Trusted())
-        self.assertEqual(maximum, 2)
-        self.assertEqual(summary["maximum_concurrency"], 2)
-        self.assertEqual(summary["successful"], 4)
-        self.assertEqual(len(self.connections), 4)
-        self.assertEqual(len({c.identity for c in self.connections}), 4)
+        summary = self.worker.run_san_expansion(self.rows(6), 17, Trusted())
+        self.assertEqual(maximum, 3)
+        self.assertEqual(summary["maximum_concurrency"], 3)
+        self.assertEqual(summary["successful"], 6)
+        self.assertEqual(len(self.connections), 6)
+        self.assertEqual(len({c.identity for c in self.connections}), 6)
         self.assertTrue(all(c.closed for c in self.connections))
 
     def test_serial_mode_and_duplicate_parent_deduplication(self):
@@ -339,10 +339,10 @@ class SanConcurrencyTests(unittest.TestCase):
             for sql, _ in connection.cur.executions
         ))
 
-    def test_worker_setting_is_clamped_to_two(self):
+    def test_worker_setting_is_clamped_to_three(self):
         self.assertEqual(self.worker.configured_san_workers(1), 1)
         self.assertEqual(self.worker.configured_san_workers(2), 2)
-        self.assertEqual(self.worker.configured_san_workers(50), 2)
+        self.assertEqual(self.worker.configured_san_workers(50), 3)
 
     def test_retrieval_categories_preserve_timeout_and_address_policy(self):
         with mock.patch.object(

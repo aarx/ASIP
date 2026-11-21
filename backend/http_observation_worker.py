@@ -20,8 +20,8 @@ from stage_progress import emit_stage_progress
 
 scan_id = int(sys.argv[1])
 TESTING_LEVEL = "HTTP_TLS_OBSERVATION"
-DEFAULT_HTTP_WORKERS = 2
-MAX_HTTP_WORKERS = 2
+DEFAULT_HTTP_WORKERS = 3
+MAX_HTTP_WORKERS = 3
 logger = logging.getLogger("http_observation")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -346,7 +346,7 @@ def run_observations(rows, target_scan_id, *, workers=None, cancel_event=None):
             target_scan_id, "HTTP/TLS Observation", selected=len(targets),
             total=len(targets), processed=processed_targets,
             completed=counts["completed_observations"] + counts["http_no_response"],
-            succeeded=counts["persisted_results"], failed=counts["worker_errors"],
+            succeeded=counts["completed_observations"], failed=counts["worker_errors"],
             skipped=counts["authorization_skips"] + counts["cancelled_targets"],
             elapsed_seconds=now - started,
         )
