@@ -1,87 +1,282 @@
 
 cd ~/Desktop/Projects/ASIP || exit 1
 
-echo "========== 1. MACHINE =========="
-hostname
-pwd
-date
+cat > /tmp/asip-machine2-deploy.sh <<'BASH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-echo
-echo "========== 2. GIT =========="
-git branch --show-current
-git rev-parse HEAD
-git remote -v
-git status --short --untracked-files=no -- . \
-  ':(exclude)backend/data' \
-  ':(exclude)backend/seeds.txt'
+TARGET="e28fb67bf7880c04b03046597bfc5768a8c8a0c9"
+BRANCH="fix/brand-redirect-uuid"
+TAG="machine2-e28fb67-20261123"
+BACKEND_IMAGE="asip-backend:$TAG"
+FRONTEND_IMAGE="asip-frontend:$TAG"
+BACKUP="$HOME/asip-release-backup-$(date +%Y%m%d-%H%M%S)"
 
-echo
-echo "========== 3. COMPOSE SERVICES =========="
-sudo docker compose -p asip config --services
+cd "$HOME/Desktop/Projects/ASIP"
 
-echo
-echo "========== 4. CURRENT CONTAINERS =========="
-sudo docker compose -p asip ps
+echo "===== 1. PREFLIGHT ====="
 
-echo
-echo "========== 5. RUNNING IMAGE TAGS =========="
-for c in asm_backend asm_frontend asm_db asm_mcp; do
-  sudo docker inspect "$c" \
-    --format '{{.Name}} | {{.Config.Image}} | {{.State.Status}}' \
-    2>/dev/null || true
+mkdir -m 700 "$BACKUP"
+cp -a docker-compose.yml "$BACKUP/"
+for f in .env backend/.env backend/seeds.txt; do
+  if [ -e "$f" ]; then
+    mkdir -p "$BACKUP/$(dirname "$f")"
+    cp -a "$f" "$BACKUP/$f"
+  fi
 done
 
-echo
-echo "========== 6. BUILD FILES =========="
-find . -maxdepth 3 -type f \
-  \( -name 'Dockerfile' -o \
-     -name 'Dockerfile.*' -o \
-     -name 'compose.yaml' -o \
-     -name 'compose.yml' -o \
-     -name 'docker-compose.yml' \
-  \) -not -path './backend/data/*' -print
+docker inspect asm_backend \
+  --format '{{.Config.Image}}' > "$BACKUP/old-backend-image.txt"
+docker inspect asm_frontend \
+  --format '{{.Config.Image}}' > "$BACKUP/old-frontend-image.txt"
 
-echo
-echo "========== 7. COMPOSE BUILD CONFIG =========="
-sudo docker compose -p asip config --format json |
-python3 -c '
-import json,sys
-data=json.load(sys.stdin)
-for name,svc in data.get("services",{}).items():
-    if name in ("backend","frontend"):
-        print(name)
-        print("  image:",svc.get("image"))
-        print("  build:",svc.get("build"))
-        print("  mounts:",[
-          {"type":v.get("type"),"target":v.get("target")}
-          for v in svc.get("volumes",[])
-        ])
-'
+echo "Backup: $BACKUP"
+echo "Old backend: $(cat "$BACKUP/old-backend-image.txt")"
+echo "Old frontend: $(cat "$BACKUP/old-frontend-image.txt")"
 
-echo
-echo "========== 8. LOCAL COMPOSE CHANGES =========="
-git status --short -- docker-compose.yml
+# Refuse unexpected tracked modifications outside protected data.
+CHANGES=$(git status --porcelain --untracked-files=no \
+  -- . ':(exclude)backend/data' ':(exclude)backend/seeds.txt')
 
-echo
-echo "========== 9. MACHINE RESOURCES =========="
-df -h .
-free -h
+if [ -n "$CHANGES" ] &&
+   [ "$CHANGES" != ' M docker-compose.yml' ]; then
+  echo "STOP: Unexpected tracked modifications:"
+  echo "$CHANGES"
+  exit 1
+fi
 
-echo
-echo "========== 10. ACTIVE SCANS =========="
-sudo docker compose -p asip exec -T backend \
-  python -c '
+# Never switch source while a scan is active.
+ACTIVE=$(docker compose -p asip exec -T backend python -c '
 from db import get_conn
 c=get_conn()
 try:
     c.set_session(readonly=True)
     q=c.cursor()
-    q.execute("SELECT id,status FROM scans WHERE status=%s",("RUNNING",))
-    print(q.fetchall())
+    q.execute("SELECT COUNT(*) FROM scans WHERE status=%s",
+              ("RUNNING",))
+    print(q.fetchone()[0])
 finally:
     c.rollback()
     c.close()
-' 2>&1
+')
+
+if [ "$ACTIVE" != "0" ]; then
+  echo "STOP: Active scans or unverifiable scan state: $ACTIVE"
+  exit 1
+fi
+
+echo "===== 2. FETCH VERIFIED RELEASE ====="
+
+git fetch origin "$BRANCH"
+git cat-file -e "$TARGET^{commit}"
+
+REMOTE=$(git rev-parse FETCH_HEAD)
+if [ "$REMOTE" != "$TARGET" ]; then
+  echo "STOP: Remote release does not match expected SHA."
+  exit 1
+fi
+
+if ! git merge-base --is-ancestor HEAD "$TARGET"; then
+  echo "STOP: Current checkout is not an ancestor."
+  echo "No automatic merge or reset will be attempted."
+  exit 1
+fi
+
+echo "===== 3. SWITCH RELEASE SOURCE ====="
+
+# Local Compose is backed up before this narrowly scoped restore.
+git restore --worktree -- docker-compose.yml
+
+if ! git switch -c "machine2-release-e28fb67" "$TARGET"; then
+  cp -a "$BACKUP/docker-compose.yml" docker-compose.yml
+  echo "STOP: Branch switch failed. Local Compose restored."
+  exit 1
+fi
+
+# Restore Machine 2-specific configuration after switching.
+cp -a "$BACKUP/docker-compose.yml" docker-compose.yml
+for f in .env backend/.env backend/seeds.txt; do
+  if [ -e "$BACKUP/$f" ]; then
+    cp -a "$BACKUP/$f" "$f"
+  fi
+done
+
+test "$(git rev-parse HEAD)" = "$TARGET"
+
+echo "===== 4. UPDATE ONLY APPLICATION SETTINGS ====="
+
+python3 - "$BACKEND_IMAGE" "$FRONTEND_IMAGE" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path("docker-compose.yml")
+lines = path.read_text().splitlines(keepends=True)
+images = {"backend": sys.argv[1], "frontend": sys.argv[2]}
+service = None
+seen = set()
+output = []
+
+for line in lines:
+    match = re.match(r"^  ([\w-]+):\s*$", line)
+    if match:
+        service = match.group(1)
+
+    if service in images and re.match(r"^    image:\s*", line):
+        line = f"    image: {images[service]}\n"
+        seen.add(service)
+
+    output.append(line)
+
+if seen != set(images):
+    raise SystemExit("STOP: Expected backend/frontend image fields missing")
+
+lines = output
+start = next(
+    i for i, line in enumerate(lines)
+    if re.match(r"^  backend:\s*$", line)
+)
+end = next(
+    (i for i in range(start + 1, len(lines))
+     if re.match(r"^  [\w-]+:\s*$", lines[i])),
+    len(lines)
+)
+
+block = lines[start:end]
+env_index = next(
+    (i for i, line in enumerate(block)
+     if re.match(r"^    environment:\s*$", line)),
+    None
+)
+
+if env_index is None:
+    block.extend([
+        "    environment:\n",
+        '      ASIP_SAN_WORKERS: "3"\n',
+        '      ASIP_HTTP_WORKERS: "3"\n',
+    ])
+else:
+    tail = next(
+        (i for i in range(env_index + 1, len(block))
+         if re.match(r"^    [^\s#]", block[i])),
+        len(block)
+    )
+    env = block[env_index + 1:tail]
+    is_list = any(re.match(r"^\s+-\s+", x) for x in env)
+    keys = {
+        "ASIP_SAN_WORKERS": "3",
+        "ASIP_HTTP_WORKERS": "3",
+    }
+
+    for key, value in keys.items():
+        matched = False
+        for i, line in enumerate(env):
+            if re.match(rf"^\s+{key}:\s*", line):
+                env[i] = f'      {key}: "{value}"\n'
+                matched = True
+            elif re.match(rf"^\s+-\s+{key}=", line):
+                env[i] = f"      - {key}={value}\n"
+                matched = True
+        if not matched:
+            env.append(
+                f"      - {key}={value}\n" if is_list
+                else f'      {key}: "{value}"\n'
+            )
+
+    block[env_index + 1:tail] = env
+
+lines[start:end] = block
+path.write_text("".join(lines))
+PY
+
+# Validate complete Compose configuration.
+docker compose -p asip config -q
+
+docker compose -p asip config --format json |
+python3 -c '
+import json,sys
+s=json.load(sys.stdin)["services"]
+b=s["backend"]
+f=s["frontend"]
+e=b.get("environment",{})
+assert b["image"].startswith("asip-backend:machine2-e28fb67")
+assert f["image"].startswith("asip-frontend:machine2-e28fb67")
+assert str(e.get("ASIP_SAN_WORKERS"))=="3"
+assert str(e.get("ASIP_HTTP_WORKERS"))=="3"
+print("Compose image and worker configuration: PASS")
+'
+
+echo "===== 5. BUILD BACKEND ====="
+
+docker build \
+  -t "$BACKEND_IMAGE" \
+  -f backend/Dockerfile backend
+
+echo "===== 6. BUILD FRONTEND ====="
+
+docker compose -p asip build frontend
+
+docker image inspect "$BACKEND_IMAGE" >/dev/null
+docker image inspect "$FRONTEND_IMAGE" >/dev/null
+
+echo "===== 7. DEPLOY APPLICATION CONTAINERS ====="
+
+docker compose -p asip up -d \
+  --no-deps --no-build backend frontend
+
+echo "===== 8. VERIFY ====="
+
+docker compose -p asip ps
+
+docker inspect asm_backend asm_frontend \
+  --format '{{.Name}} | {{.Config.Image}} | {{.State.Status}}'
+
+docker compose -p asip exec -T backend python -c '
+from db import get_conn
+import dns_security_worker
+import san_worker
+import http_observation_worker
+
+c=get_conn()
+try:
+    c.set_session(readonly=True)
+    q=c.cursor()
+    q.execute("SELECT 1")
+    assert q.fetchone()[0]==1
+    q.execute("SELECT COUNT(*) FROM scans WHERE status=%s",
+              ("RUNNING",))
+    assert q.fetchone()[0]==0
+    print("Database connection: PASS")
+    print("No active scans: PASS")
+finally:
+    c.rollback()
+    c.close()
+'
+
+docker compose -p asip exec -T backend \
+  python orchestration.py --help >/dev/null
+
+echo "===== 9. FINAL VERSION ====="
+
+git rev-parse HEAD
+docker compose -p asip config --format json |
+python3 -c '
+import json,sys
+s=json.load(sys.stdin)["services"]
+for name in ("backend","frontend"):
+    print(name, s[name]["image"])
+print("SAN workers:",
+      s["backend"]["environment"].get("ASIP_SAN_WORKERS"))
+print("HTTP workers:",
+      s["backend"]["environment"].get("ASIP_HTTP_WORKERS"))
+'
 
 echo
-echo "========== DIAGNOSTICS COMPLETE =========="
+echo "DEPLOYMENT COMMANDS COMPLETED"
+echo "Backup directory: $BACKUP"
+echo "Verify the frontend in the browser before final sign-off."
+BASH
+
+chmod 700 /tmp/asip-machine2-deploy.sh
+sudo -v
+sudo bash /tmp/asip-machine2-deploy.sh
