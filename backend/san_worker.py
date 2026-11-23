@@ -24,10 +24,11 @@ from ownership import (
     normalize_hostname,
     ownership_for_discovery,
 )
+from stage_progress import emit_stage_progress
 
 scan_id = int(sys.argv[1])
-DEFAULT_SAN_WORKERS = 2
-MAX_SAN_WORKERS = 2
+DEFAULT_SAN_WORKERS = 3
+MAX_SAN_WORKERS = 3
 TESTING_LEVEL = "HTTP_TLS_OBSERVATION"
 _fetch_state = threading.local()
 
@@ -502,6 +503,7 @@ def run_san_expansion(rows, target_scan_id, trusted_domains, workers=None,
     # explicit so completion timing never chooses scan_results.seed.
     selected = sorted(selected_by_id.values(), key=lambda row: row[0])
     started = time.monotonic()
+    last_progress = 0.0
     counts = {key: 0 for key in (
         "completed_parent_targets", "successful_tls_retrievals",
         "no_permitted_destinations", "tls_timeouts", "other_tls_failures",
@@ -522,12 +524,30 @@ def run_san_expansion(rows, target_scan_id, trusted_domains, workers=None,
     interrupted = False
     successful_targets = 0
 
+    def report_progress(force=False):
+        nonlocal last_progress
+        now = time.monotonic()
+        if not force and now - last_progress < 30:
+            return
+        processed = counts["completed_parent_targets"] + counts["cancelled_targets"]
+        emit_stage_progress(
+            target_scan_id, "SAN Expansion", selected=len(selected),
+            total=len(selected), processed=processed,
+            completed=counts["completed_parent_targets"],
+            succeeded=counts["completed_parent_targets"],
+            failed=counts["worker_errors"],
+            skipped=counts["authorization_skips"] + counts["cancelled_targets"],
+            elapsed_seconds=now - started,
+        )
+        last_progress = now
+
     def submit_one(ordinal, row):
         future = pool.submit(_process_parent, row, ordinal, target_scan_id,
                              trusted_domains, gate, tracker)
         pending[future] = (ordinal, row)
 
     try:
+        report_progress(force=True)
         while next_index < len(selected) and len(pending) < worker_count and not gate.is_set():
             ordinal = next_index
             submit_one(ordinal, selected[ordinal]); next_index += 1
@@ -591,6 +611,7 @@ def run_san_expansion(rows, target_scan_id, trusted_domains, workers=None,
                             counts[metric] += value
                     failure = exc
                     gate.set()
+                report_progress()
             while (failure is None and not gate.is_set() and next_index < len(selected)
                    and len(pending) < worker_count):
                 ordinal = next_index
@@ -598,6 +619,7 @@ def run_san_expansion(rows, target_scan_id, trusted_domains, workers=None,
         interrupted = gate.is_set() and failure is None
     finally:
         pool.shutdown(wait=not gate.is_set(), cancel_futures=True)
+        report_progress(force=True)
         summary = {
             "selected_parent_targets": len(selected), **counts,
             "unique_normalized_san_names": len(unique_normalized_names),

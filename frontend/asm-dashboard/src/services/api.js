@@ -150,6 +150,11 @@ export const getDnsSecurityFindings = async (params) => {
   return res.data;
 };
 
+export const getSubdomainTakeoverEvidence = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/subdomain-takeover`, { params });
+  return res.data;
+};
+
 export const getDnsSecurityHosts = async (params) => {
   const res = await axios.get(`${API_URL}/v2/dns-security/hosts`, { params });
   return res.data;

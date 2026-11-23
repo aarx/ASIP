@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import shlex
@@ -6,6 +7,7 @@ import socket
 import sys
 import tempfile
 import subprocess
+import threading
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -104,9 +106,16 @@ class DnsSecurityWorkerTests(unittest.TestCase):
 
         lines = stdout.getvalue().splitlines()
         self.assertEqual(result, 0)
-        self.assertEqual(len(lines), 1)
-        self.assertTrue(lines[0].startswith("dns_security_stage {"))
-        summary = extract_worker_summary(lines[0])
+        progress_lines = [line for line in lines if line.startswith("ASIP_STAGE_PROGRESS {")]
+        summary_lines = [line for line in lines if line.startswith("dns_security_stage {")]
+        self.assertEqual(len(progress_lines), 2)
+        self.assertEqual(len(summary_lines), 1)
+        first_progress = json.loads(progress_lines[0].split(" ", 1)[1])
+        self.assertEqual(first_progress["selected"], 1)
+        self.assertEqual(first_progress["processed"], 0)
+        final_progress = json.loads(progress_lines[-1].split(" ", 1)[1])
+        self.assertEqual(final_progress["processed"], 1)
+        summary = extract_worker_summary(summary_lines[0])
         self.assertEqual(summary["selected"], 1)
         self.assertEqual(summary["completed"], 1)
         self.assertEqual(summary["checks_persisted"], 6)
@@ -114,6 +123,189 @@ class DnsSecurityWorkerTests(unittest.TestCase):
         self.assertTrue(summary["run_scoped"])
         self.assertEqual(summary["run_scope_target_count"], 3)
         self.assertFalse(summary["query_budget_exhausted"])
+
+    def test_bounded_workers_assess_every_host_once_with_isolated_resolvers_and_connections(self):
+        targets = [(i, f"host{i}.example") for i in range(1, 9)]
+        selection_cursor = WorkerCursor(targets)
+        selection_conn = WorkerConnection(selection_cursor)
+        worker_connections = []
+        connection_lock = threading.Lock()
+        active = {"count": 0, "maximum": 0, "lock": threading.Lock()}
+
+        class RecordingCursor:
+            def __init__(self, connection):
+                self.connection = connection
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class RecordingConnection:
+            def __init__(self):
+                self.autocommit = False
+                self.closed = False
+                self.commits = 0
+                self.rollbacks = 0
+
+            def cursor(self):
+                return RecordingCursor(self)
+
+            def commit(self):
+                self.commits += 1
+
+            def rollback(self):
+                self.rollbacks += 1
+
+            def close(self):
+                self.closed = True
+
+        connection_calls = 0
+
+        def get_connection():
+            nonlocal connection_calls
+            with connection_lock:
+                connection_calls += 1
+                call_number = connection_calls
+                if call_number == 1:
+                    return selection_conn
+                connection = RecordingConnection()
+                worker_connections.append(connection)
+            return connection
+
+        barrier = threading.Barrier(2)
+        seen_hosts = []
+        resolvers = []
+        persisted_checks = []
+        assessment_lock = threading.Lock()
+
+        def assess(domain, resolver, authorize):
+            cur_connection = threading.current_thread().ident
+            with assessment_lock:
+                seen_hosts.append(domain)
+                resolvers.append(resolver)
+            authorize(domain)
+            # The authorization SELECT is autocommit: no read transaction
+            # remains open while this mocked DNS operation waits.
+            cursor_for_thread = authorized_cursors[cur_connection]
+            self.assertTrue(cursor_for_thread.connection.autocommit)
+            with active["lock"]:
+                active["count"] += 1
+                active["maximum"] = max(active["maximum"], active["count"])
+            try:
+                barrier.wait(timeout=2)
+            finally:
+                with active["lock"]:
+                    active["count"] -= 1
+            resolver.query_attempts = 7
+            checks = [
+                {"check_key": "dns_a_resolution", "outcome": "INFORMATIONAL",
+                 "record_type": "A", "evidence": {}},
+                {"check_key": "dns_aaaa_resolution", "outcome": "INFORMATIONAL",
+                 "record_type": "AAAA", "evidence": {}},
+            ]
+            return {"observations": [], "checks": checks}
+
+        authorized_cursors = {}
+
+        def make_authorizer(cursor, _scan_id):
+            authorized_cursors[threading.current_thread().ident] = cursor
+            return lambda _name: True
+
+        def persist(cursor, **_kwargs):
+            self.assertFalse(cursor.connection.autocommit)
+            persisted_checks.append((_kwargs["domain_id"], _kwargs["check"]["check_key"]))
+            return True
+
+        def connection_factory():
+            return get_connection()
+
+        # Distinguish worker connections from the initial selection connection.
+        # A barrier forces both configured workers to be active at once.
+        with mock.patch.object(dns_security_worker, "default_operation_enabled", return_value=True), \
+             mock.patch.object(dns_security_worker, "get_conn", side_effect=connection_factory), \
+             mock.patch.object(dns_security_worker, "dns_security_query_authorizer", side_effect=make_authorizer), \
+             mock.patch.object(dns_security_worker, "assess_dns_domain", side_effect=assess), \
+             mock.patch.object(dns_security_worker, "persist_dns_security_check", side_effect=persist), \
+             mock.patch.object(dns_security_worker, "emit_stage_progress") as progress, \
+             mock.patch.object(dns_security_worker, "_emit") as emit:
+            result = dns_security_worker.run_dns_security_stage(91, workers=2)
+
+        self.assertEqual(result, 0)
+        self.assertCountEqual(seen_hosts, [domain for _, domain in targets])
+        self.assertEqual(len(seen_hosts), len(set(seen_hosts)))
+        summary = emit.call_args.args[0]
+        self.assertEqual(summary["selected"], len(targets))
+        self.assertEqual(summary["completed"], len(targets))
+        self.assertEqual(summary["query_attempts"], 7 * len(targets))
+        self.assertEqual(summary["checks_persisted"], 2 * len(targets))
+        self.assertCountEqual(
+            persisted_checks,
+            [(domain_id, key) for domain_id, _domain in targets
+             for key in ("dns_a_resolution", "dns_aaaa_resolution")],
+        )
+        self.assertEqual(progress.call_args_list[-1].kwargs["processed"], len(targets))
+        self.assertGreaterEqual(active["maximum"], 2)
+        self.assertEqual(len(worker_connections), 2)
+        self.assertEqual(connection_calls, 3)  # one selection + one per worker
+        self.assertTrue(all(connection.closed for connection in worker_connections))
+        self.assertEqual(sum(connection.commits for connection in worker_connections), len(targets))
+        self.assertTrue(all(connection.autocommit for connection in worker_connections))
+        # Each host receives its own bounded resolver, with no cross-host cache.
+        assessed_resolvers = [item for item in resolvers if hasattr(item, "query_attempts")]
+        self.assertEqual(len(assessed_resolvers), len(targets))
+        self.assertEqual(len({id(item) for item in assessed_resolvers}), len(targets))
+        self.assertFalse(any(
+            thread.name.startswith("dns-security")
+            for thread in threading.enumerate()
+        ))
+
+    def test_persistence_failure_rolls_back_and_fails_the_stage(self):
+        selection_conn = WorkerConnection(WorkerCursor([(1, "host.example")]))
+
+        class TxCursor:
+            def __init__(self, connection):
+                self.connection = connection
+
+            def close(self):
+                pass
+
+        class TxConnection:
+            def __init__(self):
+                self.autocommit = False
+                self.closed = False
+                self.rollbacks = 0
+
+            def cursor(self):
+                return TxCursor(self)
+
+            def rollback(self):
+                self.rollbacks += 1
+
+            def commit(self):
+                pass
+
+            def close(self):
+                self.closed = True
+
+        worker_conn = TxConnection()
+        def assessment(_domain, resolver, _authorize):
+            resolver.query_attempts = 4
+            return {"observations": [], "checks": [{"check_key": "x", "outcome": "CLEAR"}]}
+
+        with mock.patch.object(dns_security_worker, "default_operation_enabled", return_value=True), \
+             mock.patch.object(dns_security_worker, "get_conn", side_effect=(selection_conn, worker_conn)), \
+             mock.patch.object(dns_security_worker, "dns_security_query_authorizer", return_value=lambda _name: True), \
+             mock.patch.object(dns_security_worker, "assess_dns_domain", side_effect=assessment), \
+             mock.patch.object(dns_security_worker, "persist_dns_security_check",
+                               side_effect=RuntimeError("database unavailable")), \
+             mock.patch.object(dns_security_worker, "_emit") as emit:
+            result = dns_security_worker.run_dns_security_stage(91, workers=1)
+        self.assertEqual(result, 1)
+        self.assertGreaterEqual(worker_conn.rollbacks, 1)
+        self.assertTrue(worker_conn.closed)
+        self.assertEqual(emit.call_args.args[0]["completed"], 0)
+        self.assertEqual(emit.call_args.args[0]["worker_errors"], 1)
+        self.assertEqual(emit.call_args.args[0]["query_attempts"], 4)
 
     def test_orchestrator_captures_dns_worker_summary_from_stdout(self):
         output = (
@@ -125,13 +317,13 @@ class DnsSecurityWorkerTests(unittest.TestCase):
         with mock.patch.object(orchestration, "_diagnostics_start"), \
              mock.patch.object(orchestration, "_diagnostics_finish") as finish:
             result = orchestration.run_step(
-                "DNS Security", command, 1, 1, timeout_seconds=5,
+                "DNS Security", command, 1, 1,
                 scan_id=91, runner_token="runner", stage_order=12,
             )
 
         self.assertEqual(result, 0)
         finish.assert_called_once()
-        summary = finish.call_args.args[-1]
+        summary = finish.call_args.args[8]
         self.assertEqual(summary, {
             "selected": 3,
             "completed": 2,
@@ -163,15 +355,17 @@ class DnsSecurityWorkerTests(unittest.TestCase):
         self.assertEqual(emit.call_args.args[0]["checks_persisted"], 0)
 
     def test_orchestration_registers_dns_stage_only_under_operation_gate(self):
-        source = (BACKEND / "orchestration.py").read_text(encoding="utf-8")
-        self.assertIn('if default_operation_enabled("DNS_SECURITY"):', source)
-        self.assertIn('--dns-security-target-ids', source)
-        self.assertIn('--enable-dns-security', source)
-        self.assertIn('dns_security_target_ids', source)
-        self.assertIn('dns_stage = (\n                "DNS Security",', source)
-        self.assertIn('" --run-scoped" if dns_security_target_ids else ""', source)
-        self.assertIn('insertion = next(i for i, item in enumerate(pipeline)', source)
-        self.assertIn('if item[0] == "HTTP/TLS Observation"', source)
+        with mock.patch.object(orchestration, "default_operation_enabled", return_value=False):
+            disabled = orchestration.build_pipeline(91, (4, 5))
+        self.assertNotIn("DNS Security", [stage for stage, _ in disabled])
+
+        with mock.patch.object(orchestration, "default_operation_enabled", return_value=True):
+            enabled = orchestration.build_pipeline(91, (4, 5))
+        names = [stage for stage, _ in enabled]
+        self.assertLess(names.index("DNS Security"), names.index("HTTP/TLS Observation"))
+        command = dict(enabled)["DNS Security"]
+        self.assertIn("--run-scoped", command)
+        self.assertEqual(names.count("Automatic Eligibility"), 2)
 
     def test_enabled_stage_selects_only_authorized_current_scan_members(self):
         cursor = WorkerCursor([(4, "known.example")])
@@ -228,6 +422,7 @@ class DnsSecurityWorkerTests(unittest.TestCase):
         self.assertTrue(summary["run_scoped"])
         self.assertEqual(summary["run_scope_target_count"], 3)
         self.assertEqual(summary["query_attempts"], 6)
+        self.assertEqual(summary["worker_count"], 1)
 
     def test_run_scoped_flag_without_persisted_allowlist_performs_no_queries(self):
         cursor = WorkerCursor(scan_row=("RUNNING", None))
@@ -484,7 +679,7 @@ class DnsSecurityApiTests(unittest.TestCase):
     def test_summary_distinguishes_checked_unchecked_findings_and_not_executed(self):
         cursor = ApiCursor([
             ("SUCCEEDED", {"version": 1, "attempts": []}),
-            (10, 3, 5, 4, 2),
+            (10, 3, 5, 4, 2, 2, 0),
             [("CLEAR", 5), ("WARNING", 2), ("INCONCLUSIVE", 2)],
             [("INFO", 5), ("LOW", 4)],
             [("dns_a_resolution", 5), ("cname_health", 4)],
@@ -621,6 +816,8 @@ class PostgreSQLDnsSecurityReportingTests(unittest.TestCase):
                                       scannable boolean NOT NULL);
                 CREATE TABLE scan_results (scan_id integer NOT NULL, domain_id integer NOT NULL,
                                            seed text NOT NULL);
+                CREATE TABLE domain_findings (id integer PRIMARY KEY, domain_id integer,
+                                              scan_id integer, finding text, severity text, evidence text);
                 CREATE TABLE dns_security_checks (
                     id integer PRIMARY KEY, scan_id integer NOT NULL, domain_id integer NOT NULL,
                     check_key text NOT NULL, target_identity text NOT NULL DEFAULT '',
@@ -649,7 +846,7 @@ class PostgreSQLDnsSecurityReportingTests(unittest.TestCase):
                   (4,91,4,'dns_a_resolution','','A','NOT_CHECKED','UNKNOWN','UNKNOWN','{}',NULL,'2026-01-04'),
                   (5,91,5,'dns_a_resolution','','A','NOT_CHECKED','UNKNOWN','UNKNOWN','{}',NULL,'2026-01-05'),
                   (6,91,5,'dns_aaaa_resolution','','AAAA','INCONCLUSIVE','UNKNOWN','LOW','{}',NULL,'2026-01-06'),
-                  (7,91,6,'cname_health','a.example.test','CNAME','POTENTIAL_EXPOSURE','MEDIUM','MEDIUM','{}',NULL,'2026-01-07'),
+                  (7,91,6,'cname_health','a.example.test','CNAME','POTENTIAL_EXPOSURE','MEDIUM','MEDIUM','{"chain":[{"state":"provider_indicator","provider":null}]}',NULL,'2026-01-07'),
                   (8,91,6,'cname_health','b.example.test','CNAME','WARNING','LOW','MEDIUM','{}',NULL,'2026-01-08'),
                   (9,91,7,'dns_a_resolution','','A','CONFIRMED_ISSUE','HIGH','HIGH','{}',NULL,'2026-01-09'),
                   (10,91,8,'dns_a_resolution','','A','CONFIRMED_ISSUE','HIGH','HIGH','{}',NULL,'2026-01-10');
@@ -682,6 +879,16 @@ class PostgreSQLDnsSecurityReportingTests(unittest.TestCase):
             "POTENTIAL_EXPOSURE": 1, "WARNING": 2,
         })
         self.assertEqual(sum(result["counts_by_category"].values()), 8)
+
+    def test_subdomain_takeover_read_model_paginates_and_keeps_unknown_unverified(self):
+        with mock.patch.object(main, "get_conn", side_effect=self.connect):
+            result = main.subdomain_takeover_evidence(scan_id=91, category="UNKNOWN", page=1, limit=1)
+        self.assertEqual(result["scan_id"], 91)
+        self.assertEqual(result["limit"], 1)
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(len(result["hosts"]), 1)
+        self.assertEqual(result["hosts"][0]["finding_category"], "UNKNOWN")
+        self.assertEqual(result["hosts"][0]["verification_status"], "UNVERIFIED")
 
     def test_real_sql_findings_and_domain_evidence_deduplicate_seed_membership(self):
         with mock.patch.object(main, "get_conn", side_effect=self.connect):

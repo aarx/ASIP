@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 
 
 CONTRACT_VERSION = 1
-MAX_STAGE_ATTEMPTS = 34  # 16 base stages + optional DNS Security, at most two attempts each.
+# Diagnostics remain bounded. Recovery refuses to start when this budget is
+# exhausted so it never executes a stage whose outcome cannot be recorded.
+MAX_STAGE_ATTEMPTS = 128
+MAX_RECOVERY_ATTEMPTS = 32
 MAX_SUMMARY_FIELDS = 32
 MAX_SUMMARY_JSON_BYTES = 2048
 MAX_STAGE_NAME_LENGTH = 80
@@ -49,8 +52,19 @@ WORKER_SUMMARY_FIELDS = {
     "run_scoped", "run_scope_target_count", "query_attempts",
     "query_budget_exhausted",
     "open_port_targets", "no_sensitive_ports", "unavailable_targets",
+    "dns_unresolved_targets", "timeout_targets", "unreachable_targets",
+    "successfully_probed_targets", "operational_failures", "accounted_targets",
+    "attempted_nmap_targets",
     "failed_targets", "nmap_destination_observations_truncated",
     "nmap_destination_observations",
+    "total_candidates", "attempted", "processed", "succeeded", "skipped",
+    "ip_eligibility_skips",
+    "no_current_scan_ip_skips", "invalid_ip_skips", "non_public_ip_skips",
+    "unsupported_ip_family_skips", "runtime_non_public_ip_skips",
+    "candidate_targets", "eligible_targets", "processed_targets",
+    "unique_ips_queried", "duplicate_ip_lookup_reuses", "lookup_failures",
+    "disabled_by_policy", "asn_input_rows", "invalid_asn_ip_skips",
+    "mapped_targets", "reused_provider_rows",
 }
 WORKER_SUMMARY_LIST_FIELDS = {"nmap_destination_observations"}
 
@@ -65,8 +79,10 @@ SUMMARY_MARKERS = (
 def empty_diagnostics():
     return {
         "version": CONTRACT_VERSION,
+        "pipeline_identity": None,
         "current_stage": None,
         "attempts": [],
+        "recovery_history": [],
         "scan_outcome": None,
         "last_updated_at": None,
     }
@@ -92,7 +108,8 @@ def sanitize_worker_summary(value):
                 if (isinstance(domain_id, bool) or not isinstance(domain_id, int)
                         or domain_id <= 0
                         or status not in {
-                            "complete", "no_sensitive_ports", "unavailable",
+                        "complete", "no_sensitive_ports", "unavailable",
+                            "dns_unresolved", "timeout", "unreachable",
                             "skipped", "failed", "cancelled",
                         }):
                     continue
@@ -157,6 +174,11 @@ def _as_document(value):
     attempts = value.get("attempts")
     if not isinstance(attempts, list) or len(attempts) > MAX_STAGE_ATTEMPTS:
         raise ValueError("invalid or oversized scan diagnostics attempts")
+    history = value.get("recovery_history", [])
+    if not isinstance(history, list) or len(history) > MAX_RECOVERY_ATTEMPTS:
+        raise ValueError("invalid or oversized scan recovery history")
+    value.setdefault("pipeline_identity", None)
+    value.setdefault("recovery_history", [])
     return value
 
 
@@ -190,7 +212,8 @@ def _commit_document(conn, cur, scan_id, runner_token, document):
     return True
 
 
-def start_stage_attempt(conn, scan_id, runner_token, stage, stage_order, attempt):
+def start_stage_attempt(conn, scan_id, runner_token, stage, stage_order, attempt,
+                        execution_mode="FULL", runner_id=None):
     cur, document, now = _load_locked(conn, scan_id, runner_token)
     if cur is None:
         return False
@@ -213,18 +236,78 @@ def start_stage_attempt(conn, scan_id, runner_token, stage, stage_order, attempt
         "duration_seconds": None,
         "error_category": None,
         "worker_summary": None,
+        "execution_mode": execution_mode,
+        "runner_id": runner_id,
     }
+    initial_progress = sanitize_stage_progress(
+        {"status": "RUNNING", "elapsed_seconds": 0},
+        scan_id=scan_id, stage=record["stage"],
+    )
+    record["progress"] = initial_progress
     attempts.append(record)
     document["current_stage"] = {
         "stage": record["stage"], "order": record["order"],
         "attempt": record["attempt"], "started_at": record["started_at"],
+        "progress": initial_progress,
     }
+    return _commit_document(conn, cur, scan_id, runner_token, document)
+
+
+PROGRESS_COUNTERS = (
+    "selected", "total", "processed", "completed", "succeeded", "failed", "skipped",
+)
+
+
+def sanitize_stage_progress(value, *, scan_id, stage, started_at=None):
+    """Return a bounded, numeric-only progress snapshot for API persistence."""
+    if not isinstance(value, dict):
+        value = {}
+    progress = {
+        "scan_id": value.get("scan_id") if isinstance(value.get("scan_id"), int) else int(scan_id),
+        "stage": str(stage)[:MAX_STAGE_NAME_LENGTH],
+        "status": value.get("status") if value.get("status") in STAGE_OUTCOMES else "RUNNING",
+    }
+    for key in PROGRESS_COUNTERS:
+        item = value.get(key)
+        progress[key] = item if isinstance(item, int) and not isinstance(item, bool) and 0 <= item <= MAX_COUNTER_VALUE else None
+    for key in ("elapsed_seconds", "throughput", "estimated_remaining_seconds"):
+        item = value.get(key)
+        progress[key] = round(item, 3) if isinstance(item, (int, float)) and math.isfinite(item) and item >= 0 else None
+    last_progress_at = value.get("last_progress_at")
+    progress["last_progress_at"] = (
+        str(last_progress_at)[:64] if isinstance(last_progress_at, str)
+        else datetime.now(timezone.utc).isoformat()
+    )
+    return progress
+
+
+def update_stage_progress(conn, scan_id, runner_token, stage, stage_order,
+                          attempt, progress):
+    cur, document, _now_value = _load_locked(conn, scan_id, runner_token)
+    if cur is None:
+        return False
+    current = document.get("current_stage")
+    if (not isinstance(current, dict)
+            or current.get("order") != int(stage_order)
+            or current.get("attempt") != int(attempt)
+            or current.get("stage") != str(stage)[:MAX_STAGE_NAME_LENGTH]):
+        conn.rollback()
+        return False
+    current["progress"] = sanitize_stage_progress(
+        progress, scan_id=scan_id, stage=stage, started_at=current.get("started_at")
+    )
+    record = next((item for item in reversed(document["attempts"])
+                   if item.get("order") == int(stage_order)
+                   and item.get("attempt") == int(attempt)
+                   and item.get("status") == "RUNNING"), None)
+    if record is not None:
+        record["progress"] = current["progress"]
     return _commit_document(conn, cur, scan_id, runner_token, document)
 
 
 def finish_stage_attempt(
     conn, scan_id, runner_token, stage, stage_order, attempt, status,
-    duration_seconds, error_category=None, worker_summary=None,
+    duration_seconds, error_category=None, worker_summary=None, exit_code=None,
 ):
     if status not in STAGE_OUTCOMES - {"RUNNING"}:
         raise ValueError("invalid stage outcome")
@@ -253,6 +336,53 @@ def finish_stage_attempt(
     )
     record["error_category"] = error_category
     record["worker_summary"] = sanitize_worker_summary(worker_summary)
+    record["exit_code"] = (
+        int(exit_code) if isinstance(exit_code, int) and -255 <= exit_code <= 255
+        else None
+    )
+    prior_progress = record.get("progress")
+    final_progress = dict(prior_progress) if isinstance(prior_progress, dict) else sanitize_stage_progress(
+        {"status": status, "elapsed_seconds": duration_seconds},
+        scan_id=scan_id, stage=stage,
+    )
+    final_progress["status"] = status
+    final_progress["elapsed_seconds"] = (
+        round(float(duration_seconds), 3)
+        if isinstance(duration_seconds, (int, float)) and math.isfinite(duration_seconds)
+        else final_progress.get("elapsed_seconds")
+    )
+    if isinstance(worker_summary, dict):
+        for key in PROGRESS_COUNTERS:
+            item = worker_summary.get(key)
+            if isinstance(item, int) and not isinstance(item, bool) and item >= 0:
+                final_progress[key] = item
+        if final_progress.get("selected") is None:
+            final_progress["selected"] = worker_summary.get(
+                "selected", worker_summary.get("selected_parent_targets")
+            )
+        if final_progress.get("total") is None:
+            final_progress["total"] = final_progress.get("selected")
+        if final_progress.get("processed") is None:
+            for key in ("completed", "completed_parent_targets",
+                        "completed_observations", "persisted_results"):
+                if isinstance(worker_summary.get(key), int):
+                    final_progress["processed"] = worker_summary[key]
+                    break
+        if final_progress.get("failed") is None:
+            final_progress["failed"] = worker_summary.get(
+                "failed_targets", worker_summary.get("worker_errors", 0)
+            )
+        if final_progress.get("skipped") is None:
+            final_progress["skipped"] = worker_summary.get("authorization_skips", 0)
+        elapsed = final_progress.get("elapsed_seconds")
+        processed = final_progress.get("processed")
+        if isinstance(processed, int) and isinstance(elapsed, (int, float)) and elapsed > 0:
+            final_progress["throughput"] = round(processed / elapsed, 3)
+        if (status == "SUCCEEDED" and isinstance(final_progress.get("total"), int)
+                and processed == final_progress["total"]):
+            final_progress["estimated_remaining_seconds"] = 0.0
+    final_progress["last_progress_at"] = datetime.now(timezone.utc).isoformat()
+    record["progress"] = final_progress
     current = document.get("current_stage")
     if isinstance(current, dict) and current.get("order") == int(stage_order) \
             and current.get("attempt") == int(attempt):
@@ -280,6 +410,14 @@ def api_diagnostics(value, scan_status):
             "stage": str(item.get("stage", ""))[:MAX_STAGE_NAME_LENGTH],
             "order": item.get("order") if isinstance(item.get("order"), int) else None,
             "attempt": item.get("attempt") if isinstance(item.get("attempt"), int) else None,
+            "exit_code": item.get("exit_code")
+            if isinstance(item.get("exit_code"), int) and -255 <= item["exit_code"] <= 255
+            else None,
+            "execution_mode": item.get("execution_mode")
+            if item.get("execution_mode") in {"FULL", "RESUME", "SINGLE_FAILED_STAGE"}
+            else "FULL",
+            "runner_id": str(item.get("runner_id"))[:36]
+            if item.get("runner_id") is not None else None,
             "status": status,
             "started_at": item.get("started_at"),
             "completed_at": item.get("completed_at"),
@@ -287,6 +425,9 @@ def api_diagnostics(value, scan_status):
             if isinstance(item.get("duration_seconds"), (int, float)) else None,
             "error_category": category if category in ERROR_CATEGORIES else None,
             "worker_summary": sanitize_worker_summary(item.get("worker_summary")),
+            "progress": sanitize_stage_progress(
+                item.get("progress"), scan_id=0, stage=item.get("stage", "")
+            ) if isinstance(item.get("progress"), dict) else None,
         })
     raw_current = document.get("current_stage") if scan_status == "RUNNING" else None
     current = None
@@ -299,6 +440,10 @@ def api_diagnostics(value, scan_status):
             if isinstance(raw_current.get("attempt"), int) else None,
             "started_at": str(raw_current.get("started_at"))[:64]
             if raw_current.get("started_at") is not None else None,
+            "progress": sanitize_stage_progress(
+                raw_current.get("progress"), scan_id=0,
+                stage=raw_current.get("stage", ""),
+            ) if isinstance(raw_current.get("progress"), dict) else None,
         }
     scan_outcome = document.get("scan_outcome")
     safe_scan_outcome = None
@@ -315,6 +460,23 @@ def api_diagnostics(value, scan_status):
         "version": CONTRACT_VERSION,
         "current_stage": current,
         "attempts": safe_attempts,
+        "pipeline_identity_available": isinstance(
+            document.get("pipeline_identity"), dict
+        ),
+        "recovery_history": [
+            {
+                "mode": item.get("mode")
+                if item.get("mode") in {"RESUME", "SINGLE_FAILED_STAGE"} else None,
+                "runner_id": str(item.get("runner_id", ""))[:36],
+                "started_at": item.get("started_at"),
+                "completed_at": item.get("completed_at"),
+                "status": item.get("status")
+                if item.get("status") in {"RUNNING", "SUCCEEDED", "FAILED"} else None,
+                "stage": str(item.get("stage", ""))[:MAX_STAGE_NAME_LENGTH],
+            }
+            for item in document.get("recovery_history", [])[-MAX_RECOVERY_ATTEMPTS:]
+            if isinstance(item, dict)
+        ],
         "scan_outcome": safe_scan_outcome,
         "last_updated_at": document.get("last_updated_at"),
     }

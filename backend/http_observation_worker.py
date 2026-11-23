@@ -15,12 +15,13 @@ from authorization_policy import (
 )
 from db import get_conn, require_running_scan
 from http_probe import HTTP_FAILED, HTTP_NO_RESPONSE, HTTP_UNKNOWN, http_probe
+from stage_progress import emit_stage_progress
 
 
 scan_id = int(sys.argv[1])
 TESTING_LEVEL = "HTTP_TLS_OBSERVATION"
-DEFAULT_HTTP_WORKERS = 2
-MAX_HTTP_WORKERS = 2
+DEFAULT_HTTP_WORKERS = 3
+MAX_HTTP_WORKERS = 3
 logger = logging.getLogger("http_observation")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -333,6 +334,23 @@ def run_observations(rows, target_scan_id, *, workers=None, cancel_event=None):
     stop_dispatch = False
     internal_failure = False
     submitted = 0
+    processed_targets = 0
+    last_progress = 0.0
+
+    def report_progress(force=False):
+        nonlocal last_progress
+        now = time.monotonic()
+        if not force and now - last_progress < 30:
+            return
+        emit_stage_progress(
+            target_scan_id, "HTTP/TLS Observation", selected=len(targets),
+            total=len(targets), processed=processed_targets,
+            completed=counts["completed_observations"] + counts["http_no_response"],
+            succeeded=counts["completed_observations"], failed=counts["worker_errors"],
+            skipped=counts["authorization_skips"] + counts["cancelled_targets"],
+            elapsed_seconds=now - started,
+        )
+        last_progress = now
 
     def run_target(row):
         with active_state["lock"]:
@@ -343,6 +361,7 @@ def run_observations(rows, target_scan_id, *, workers=None, cancel_event=None):
         return _observe_target(row, target_scan_id, cancel_event, active_state)
 
     try:
+        report_progress(force=True)
         while futures or (not exhausted and not stop_dispatch):
             while (not exhausted and not stop_dispatch
                    and not cancel_event.is_set()
@@ -371,8 +390,11 @@ def run_observations(rows, target_scan_id, *, workers=None, cancel_event=None):
             )
             for future in done:
                 domain_id = futures.pop(future)
+                if not future.cancelled():
+                    processed_targets += 1
                 if future.cancelled():
                     counts["cancelled_targets"] += 1
+                    report_progress()
                     continue
                 try:
                     result = future.result()
@@ -382,6 +404,7 @@ def run_observations(rows, target_scan_id, *, workers=None, cancel_event=None):
                     stop_dispatch = True
                     internal_failure = True
                     cancel_event.set()
+                    report_progress()
                     continue
                 if result["kind"] == "authorization_skipped":
                     counts["authorization_skips"] += 1
@@ -398,8 +421,9 @@ def run_observations(rows, target_scan_id, *, workers=None, cancel_event=None):
                         counts["http_no_response"] += 1
                     if result["incomplete"]:
                         counts["failed_incomplete"] += 1
-                    if result["stop_reason"]:
+                    if result.get("stop_reason"):
                         counts["unresolved_redirects"] += 1
+                report_progress()
 
         if cancel_event.is_set() and not internal_failure:
             interrupted = interrupted or not errors
@@ -418,6 +442,8 @@ def run_observations(rows, target_scan_id, *, workers=None, cancel_event=None):
 
     if interrupted:
         counts["cancelled_targets"] += max(0, len(targets) - submitted)
+
+    report_progress(force=True)
 
     summary = {
         "scan_id": target_scan_id,

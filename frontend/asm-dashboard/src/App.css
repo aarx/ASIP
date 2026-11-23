@@ -308,6 +308,7 @@
 .dns-evidence-value-object dt { color: var(--asip-text-muted); font-size: 10px; text-transform: capitalize; }
 .dns-evidence-value-object dd { margin: 0; }
 .dns-evidence-value-list { display: grid; gap: 3px; margin: 0; padding-left: 16px; }
+.dns-evidence-json { max-height: 320px; overflow: auto; margin: 8px 0 0; padding: 10px; border-radius: 4px; background: rgba(7, 15, 27, .42); color: var(--asip-text-secondary); font: 10px/1.45 var(--asip-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .dns-finding-row-expanded td { background: rgba(61, 196, 255, .04); }
 .dns-finding-row-expanded + tr td { padding: 0; border-top: 0; }
 .dns-evidence-details { padding: 14px; border: 1px solid rgba(61, 196, 255, .18); border-radius: 4px; background: rgba(7, 15, 27, .22); }
@@ -738,6 +739,12 @@
 .scan-diagnostics-unavailable { justify-content: space-between; }
 .scan-diagnostics-unavailable strong { color: var(--asip-text-primary); font-size: 11px; }
 .scan-diagnostics { display: grid; gap: 16px; padding: 18px 20px 20px; }
+.scan-stage-progress { display: grid; gap: 7px; min-width: 220px; padding: 10px 12px; border: 1px solid var(--asip-border); border-radius: 5px; background: rgba(16, 29, 47, .46); color: var(--asip-text-secondary); font-size: 10px; }
+.scan-stage-progress-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.scan-stage-progress-heading strong { color: var(--asip-text-primary); }
+.scan-stage-progress-track { height: 5px; overflow: hidden; border-radius: 4px; background: rgba(100, 116, 139, .25); }
+.scan-stage-progress-track span { display: block; height: 100%; background: #57a9d8; transition: width .25s ease; }
+.scan-stage-progress-updated { color: var(--asip-text-muted); font-size: 9px; }
 .scan-detail-grid { display: grid; grid-template-columns: repeat(5, minmax(100px, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--asip-border); border-radius: 5px; background: var(--asip-border); }
 .scan-diagnostic-stat { display: grid; gap: 6px; min-width: 0; padding: 11px 12px; background: var(--asip-surface); }
 .scan-diagnostic-stat span { color: var(--asip-text-muted); font-size: 8px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }

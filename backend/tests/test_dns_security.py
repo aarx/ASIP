@@ -1,6 +1,7 @@
 import os
 import pathlib
 import sys
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 from datetime import datetime, timezone
 from unittest import mock
@@ -29,6 +30,7 @@ from dns_security import (  # noqa: E402
     MAX_EVIDENCE_BYTES,
     ResolverOutcome,
     assess_dns_domain,
+    interpret_cname_health,
     dns_security_query_authorizer,
     normalize_dns_name,
     parse_dmarc,
@@ -128,6 +130,14 @@ class DnsSecurityTests(unittest.TestCase):
         self.assertIn("d.scannable IS TRUE", sql)
         self.assertIn("manually rejected", sql)
 
+    def test_shared_query_budget_is_safe_under_hostname_concurrency(self):
+        budget = DnsQueryBudget(60)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            outcomes = list(pool.map(lambda _index: budget.consume(), range(500)))
+        self.assertEqual(sum(outcomes), 60)
+        self.assertEqual(budget.attempted, 60)
+        self.assertTrue(budget.exhausted)
+
     def test_per_query_authorization_rechecks_run_target_membership(self):
         os.environ.pop("ASIP_DEFAULT_SCAN_OPERATIONS", None)
         cursor = FakeCursor()
@@ -172,6 +182,18 @@ class DnsSecurityTests(unittest.TestCase):
         self.assertEqual(budget.attempted, 1)
         self.assertTrue(budget.exhausted)
         self.assertEqual(len(calls), 1)
+
+    def test_resolver_instance_is_reused_per_host_without_skipping_authorization(self):
+        resolver, created = self.resolver()
+        authorization_checks = []
+        for record_type in ("A", "AAAA", "CNAME"):
+            resolver.query(
+                "host.example", record_type,
+                authorize=lambda: authorization_checks.append(True) or True,
+            )
+        self.assertEqual(len(created), 1)
+        self.assertEqual(len(created[0].queries), 3)
+        self.assertEqual(len(authorization_checks), 3)
 
     def test_authorization_recheck_uses_scan_membership_and_fails_closed(self):
         os.environ["ASIP_DEFAULT_SCAN_OPERATIONS"] = "DNS_SECURITY"
@@ -401,10 +423,30 @@ class DnsSecurityTests(unittest.TestCase):
         self.assertEqual(cname["outcome"], "POTENTIAL_EXPOSURE")
         self.assertFalse(cname["evidence"]["takeover_confirmed"])
 
+    def test_servfail_or_mixed_address_responses_are_not_dangling_classifications(self):
+        for terminal_cname, a_outcome, aaaa_outcome in (
+            ("SERVFAIL", "NXDOMAIN", "NXDOMAIN"),
+            ("NODATA", "NXDOMAIN", "NODATA"),
+        ):
+            def query(name, rrtype, *, authorize):
+                self.assertTrue(authorize())
+                if name == "owner.example" and rrtype == "CNAME":
+                    return ResolverOutcome(name, rrtype, "ANSWER", ("target.example.net",), "now", {})
+                if name == "target.example.net" and rrtype == "CNAME":
+                    return ResolverOutcome(name, rrtype, terminal_cname, (), "now", {})
+                if name == "target.example.net" and rrtype == "A":
+                    return ResolverOutcome(name, rrtype, a_outcome, (), "now", {})
+                if name == "target.example.net" and rrtype == "AAAA":
+                    return ResolverOutcome(name, rrtype, aaaa_outcome, (), "now", {})
+                return ResolverOutcome(name, rrtype, "NODATA", (), "now", {})
+            report = assess_dns_domain("owner.example", mock.Mock(query=query), lambda _name: True)
+            check = next(item for item in report["checks"] if item["check_key"] == "cname_health")
+            self.assertEqual(check["outcome"], "INCONCLUSIVE")
+
     def test_cname_terminal_address_queries_use_actual_target(self):
         cases = (
             ("ANSWER", "ANSWER", "CLEAR"),
-            ("NXDOMAIN", "NODATA", "POTENTIAL_EXPOSURE"),
+            ("NXDOMAIN", "NODATA", "INCONCLUSIVE"),
         )
         for a_outcome, aaaa_outcome, expected in cases:
             with self.subTest(a_outcome=a_outcome, aaaa_outcome=aaaa_outcome):
@@ -484,6 +526,33 @@ class DnsSecurityTests(unittest.TestCase):
         self.assertEqual(cname["outcome"], "INCONCLUSIVE")
         self.assertIn(("terminal.example.net", "A"), calls)
 
+    def test_provider_authorization_block_is_not_exposure_and_retains_rationale(self):
+        def query(name, rrtype, *, authorize):
+            if rrtype == "CNAME" and name == "owner.example":
+                return ResolverOutcome(name, rrtype, "ANSWER", ("bucket.amazonaws.com",), "now", {})
+            if name == "bucket.amazonaws.com":
+                return ResolverOutcome(name, rrtype, "INCONCLUSIVE", (), "now",
+                                       {"error_category": "AUTHORIZATION_DENIED"})
+            return ResolverOutcome(name, rrtype, "NODATA", (), "now", {})
+        report = assess_dns_domain("owner.example", mock.Mock(query=query), lambda _name: True)
+        check = next(item for item in report["checks"] if item["check_key"] == "cname_health")
+        self.assertEqual(check["outcome"], "NOT_CHECKED")
+        self.assertEqual(check["evidence"]["verification_status"], "NOT_CHECKED_AUTHORIZATION")
+        self.assertEqual(check["evidence"]["chain"][-1]["authorization_result"], "DENIED")
+        self.assertEqual(check["evidence"]["chain"][-1]["provider"], "aws")
+
+    def test_legacy_interpretation_does_not_upgrade_missing_evidence(self):
+        blocked = interpret_cname_health("POTENTIAL_EXPOSURE", {
+            "chain": [{"state": "provider_indicator", "provider": "AWS"},
+                      {"state": "not_checked_authorization"}],
+        })
+        self.assertEqual(blocked["evidence_category"], "UNVERIFIED_PROVIDER_ASSOCIATION")
+        negative = interpret_cname_health("POTENTIAL_EXPOSURE", {"chain": [{"state": "potential_exposure"}]})
+        self.assertEqual(negative["verification_status"], "UNVERIFIED_LEGACY_EVIDENCE")
+        unknown = interpret_cname_health("POTENTIAL_EXPOSURE", None)
+        self.assertEqual(unknown["evidence_category"], "UNKNOWN")
+        self.assertEqual(unknown["verification_status"], "UNVERIFIED")
+
         def loop_query(name, rrtype, *, authorize):
             self.assertTrue(authorize())
             if rrtype == "CNAME":
@@ -524,28 +593,33 @@ class DnsSecurityTests(unittest.TestCase):
 
     def test_persistence_is_authorized_scan_scoped_idempotent_and_bounded(self):
         os.environ["ASIP_DEFAULT_SCAN_OPERATIONS"] = "DNS_SECURITY"
-        cursor = FakeCursor([(1,), (99,)])
+        cursor = FakeCursor([(99,)])
         check = {"check_key": "spf_configuration", "target_identity": "example.com",
                  "outcome": "WARNING", "severity": "LOW", "confidence": "HIGH",
                  "evidence": {"spf_record_count": 0}, "remediation": "Review email configuration."}
         self.assertTrue(persist_dns_security_check(cursor, scan_id=2, domain_id=7, check=check))
-        sql, params = cursor.executions[1]
+        sql, params = cursor.executions[0]
         self.assertIn("WHERE EXISTS", sql)
         self.assertIn("FROM scan_results sr", sql)
+        self.assertIn("JOIN scans scan", sql)
+        self.assertIn("scan.status = 'RUNNING'", sql)
+        self.assertIn("d.scannable IS TRUE", sql)
+        self.assertIn("scan.dns_security_target_ids", sql)
         self.assertIn("ON CONFLICT (scan_id, domain_id, check_key, target_identity, record_type)", sql)
+        self.assertEqual(len(cursor.executions), 1)
         self.assertEqual(params[0:5], (2, 7, "spf_configuration", "example.com", ""))
         check_a = {**check, "check_key": "mx_target", "target_identity": "mx1.example", "record_type": "A"}
-        self.assertTrue(persist_dns_security_check(FakeCursor([(1,), (99,)]), scan_id=2, domain_id=7, check=check_a))
+        self.assertTrue(persist_dns_security_check(FakeCursor([(99,)]), scan_id=2, domain_id=7, check=check_a))
         check_aaaa = {**check_a, "record_type": "AAAA"}
-        aaaa_cursor = FakeCursor([(1,), (100,)])
+        aaaa_cursor = FakeCursor([(100,)])
         self.assertTrue(persist_dns_security_check(aaaa_cursor, scan_id=2, domain_id=7, check=check_aaaa))
-        self.assertEqual(aaaa_cursor.executions[1][1][4], "AAAA")
-        repeated_cursor = FakeCursor([(1,), (101,)])
+        self.assertEqual(aaaa_cursor.executions[0][1][4], "AAAA")
+        repeated_cursor = FakeCursor([(101,)])
         self.assertTrue(persist_dns_security_check(repeated_cursor, scan_id=2, domain_id=7, check=check_a))
-        self.assertEqual(repeated_cursor.executions[1][1][4], "A")
-        other_scan_cursor = FakeCursor([(1,), (102,)])
+        self.assertEqual(repeated_cursor.executions[0][1][4], "A")
+        other_scan_cursor = FakeCursor([(102,)])
         self.assertTrue(persist_dns_security_check(other_scan_cursor, scan_id=3, domain_id=7, check=check_a))
-        self.assertEqual(other_scan_cursor.executions[1][1][0], 3)
+        self.assertEqual(other_scan_cursor.executions[0][1][0], 3)
         denied = FakeCursor([None])
         self.assertFalse(persist_dns_security_check(denied, scan_id=2, domain_id=7, check=check))
         self.assertEqual(len(denied.executions), 1)

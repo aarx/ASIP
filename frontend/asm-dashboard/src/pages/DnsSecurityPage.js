@@ -153,10 +153,13 @@ function HostEvidenceDetails({ host }) {
         <div className="dns-evidence-list">
           {host.checks.map((check, index) => (
             <section className="dns-check-detail" key={`${check.check_id || check.check_key}-${check.checked_at || index}`}>
-              <div className="dns-check-heading"><strong>{readableCategory(check.check_key)}</strong><StatusBadge value={check.outcome} /></div>
+              <div className="dns-check-heading"><strong>{readableCategory(check.check_key)}</strong><StatusBadge value={check.evidence_category || check.outcome} /></div>
               <div className="dns-evidence-grid">
                 <div><small>Check type</small><strong>{readableCategory(check.check_key)}</strong></div>
-                <div><small>Outcome</small><strong>{readableValue(check.outcome)}</strong></div>
+                <div><small>Interpreted evidence</small><strong>{readableValue(check.evidence_category, readableValue(check.outcome))}</strong></div>
+                {check.evidence_category && <div><small>Stored outcome</small><strong>{readableValue(check.outcome)}</strong></div>}
+                {check.verification_status && <div><small>Verification</small><strong>{readableValue(check.verification_status)}</strong></div>}
+                {check.rationale && <div className="dns-evidence-wide"><small>Classification rationale</small><strong>{check.rationale}</strong></div>}
                 <div><small>Severity</small><strong>{readableValue(check.severity)}</strong></div>
                 <div><small>Confidence</small><strong>{readableValue(check.confidence)}</strong></div>
                 <div><small>Record type</small><strong>{readableValue(check.record_type)}</strong></div>

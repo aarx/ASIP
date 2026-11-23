@@ -100,19 +100,19 @@ class HttpObservationConcurrencyTests(unittest.TestCase):
         return [(i, f"asset-{i}.example", f"198.51.100.{i}")
                 for i in range(1, count + 1)]
 
-    def test_worker_configuration_defaults_and_clamps_to_two(self):
+    def test_worker_configuration_defaults_and_clamps_to_three(self):
         with mock.patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(self.worker.configured_http_workers(None), 2)
+            self.assertEqual(self.worker.configured_http_workers(None), 3)
         with mock.patch.dict(os.environ, {"ASIP_HTTP_WORKERS": "1"}):
             self.assertEqual(self.worker.configured_http_workers(None), 1)
         for value in (0, -1, "invalid"):
             with self.subTest(value=value):
-                self.assertEqual(self.worker.configured_http_workers(value), 1 if value in (0, -1) else 2)
-        for value in (2, 4, 99):
+                self.assertEqual(self.worker.configured_http_workers(value), 1 if value in (0, -1) else 3)
+        for value in (3, 4, 99):
             with self.subTest(value=value):
-                self.assertEqual(self.worker.configured_http_workers(value), 2)
+                self.assertEqual(self.worker.configured_http_workers(value), 3)
 
-    def test_two_workers_are_the_default_maximum_and_connections_are_independent(self):
+    def test_three_workers_are_the_default_maximum_and_connections_are_independent(self):
         active = 0
         maximum = 0
         lock = threading.Lock()
@@ -130,9 +130,9 @@ class HttpObservationConcurrencyTests(unittest.TestCase):
 
         self.worker.http_probe = probe
         summary = self.worker.run_observations(self.rows(6), 17)
-        self.assertEqual(maximum, 2)
-        self.assertEqual(summary["maximum_observed_concurrency"], 2)
-        self.assertEqual(summary["configured_workers"], 2)
+        self.assertEqual(maximum, 3)
+        self.assertEqual(summary["maximum_observed_concurrency"], 3)
+        self.assertEqual(summary["configured_workers"], 3)
         self.assertEqual(summary["completed_observations"], 6)
         self.assertEqual(len(self.connections), 6)
         self.assertEqual(len({conn.identity for conn in self.connections}), 6)
@@ -217,9 +217,14 @@ class HttpObservationConcurrencyTests(unittest.TestCase):
 
     def test_no_response_is_reported_separately_from_worker_errors(self):
         self.worker.http_probe = lambda *_args, **_kwargs: response("NO_RESPONSE")
-        summary = self.worker.run_observations(self.rows(1), 17)
+        with mock.patch.object(self.worker, "emit_stage_progress") as progress:
+            summary = self.worker.run_observations(self.rows(1), 17)
         self.assertEqual(summary["http_no_response"], 1)
         self.assertEqual(summary["worker_errors"], 0)
+        final_progress = progress.call_args.kwargs
+        self.assertEqual(final_progress["processed"], 1)
+        self.assertEqual(final_progress["completed"], 1)
+        self.assertEqual(final_progress["succeeded"], 0)
 
     def test_worker_exception_fails_stage_and_does_not_dispatch_remaining_targets(self):
         calls = []

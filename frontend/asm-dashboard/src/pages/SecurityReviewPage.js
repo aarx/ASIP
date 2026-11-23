@@ -3,11 +3,13 @@ import PriorityAssetsPanel from "../components/ui/PriorityAssetsPanel";
 import ReviewIndicatorsPanel from "../components/ui/ReviewIndicatorsPanel";
 import SensitivePortsPanel from "../components/ui/SensitivePortsPanel";
 import SecurityFindingsPage from "./SecurityFindingsPage";
+import SubdomainTakeoverPage from "./SubdomainTakeoverPage";
 
 const TABS = [
   ["prioritized-assets", "Prioritized Assets"],
   ["evidence-signals", "Evidence & Signals"],
   ["sensitive-ports", "Sensitive Ports"],
+  ["subdomain-takeover", "Subdomain Takeover"],
 ];
 
 function readTab(query) {
@@ -86,6 +88,9 @@ export default function SecurityReviewPage({ query = "" }) {
       </div>
       <div id="sensitive-ports" role="tabpanel" aria-labelledby="sensitive-ports-tab" hidden={tab !== "sensitive-ports"}>
         {tab === "sensitive-ports" && <SensitivePortsPanel />}
+      </div>
+      <div id="subdomain-takeover" role="tabpanel" aria-labelledby="subdomain-takeover-tab" hidden={tab !== "subdomain-takeover"}>
+        {tab === "subdomain-takeover" && <SubdomainTakeoverPage query={query} />}
       </div>
     </div>
   );

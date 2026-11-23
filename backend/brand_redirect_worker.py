@@ -147,39 +147,49 @@ def _run_target(row, scan_id, operation_id, request_budget):
             reporting_class = reporting_asset_class_sql(
                 "candidate.domain", "candidate.ownership_status"
             )
-            cur.execute(f"""
-                SELECT 1
-                  FROM scans scan
-                  JOIN scan_results sr
-                    ON sr.scan_id = scan.id AND sr.domain_id = %s
-                  JOIN domains candidate ON candidate.id = sr.domain_id
-                 WHERE scan.id = %s AND scan.status = 'RUNNING'
-                   AND ({reporting_class}) = 'CANDIDATE'
-                   AND NOT COALESCE(
-                       'manually rejected' = ANY(candidate.confidence_reasons), FALSE
-                   )
-                   AND EXISTS (
-                        SELECT 1 FROM domain_sources source
-                         WHERE source.scan_id = sr.scan_id
-                           AND source.domain_id = sr.domain_id
-                           AND source.source = ANY(%s)
-                           AND NULLIF(BTRIM(source.seed), '') IS NOT NULL
-                   )
-                   AND NOT ({_exclusion_sql('%s')})
-                   AND NOT EXISTS (
-                       SELECT 1 FROM domains rejected_destination
-                        WHERE LOWER(TRIM(TRAILING '.' FROM rejected_destination.domain)) = %s
-                          AND COALESCE(
-                              'manually rejected' = ANY(rejected_destination.confidence_reasons),
-                              FALSE
-                          )
-                   )
-                 LIMIT 1
-            """, (
-                domain_id, int(scan_id), list(BRAND_DISCOVERY_SOURCES),
-                target_host, target_host, target_host,
-            ))
-            return cur.fetchone() is not None
+            try:
+                cur.execute(f"""
+                    SELECT 1
+                      FROM scans scan
+                      JOIN scan_results sr
+                        ON sr.scan_id = scan.id AND sr.domain_id = %s
+                      JOIN domains candidate ON candidate.id = sr.domain_id
+                     WHERE scan.id = %s AND scan.status = 'RUNNING'
+                       AND ({reporting_class}) = 'CANDIDATE'
+                       AND NOT COALESCE(
+                           'manually rejected' = ANY(candidate.confidence_reasons), FALSE
+                       )
+                       AND EXISTS (
+                            SELECT 1 FROM domain_sources source
+                             WHERE source.scan_id = sr.scan_id
+                               AND source.domain_id = sr.domain_id
+                               AND source.source = ANY(%s)
+                               AND NULLIF(BTRIM(source.seed), '') IS NOT NULL
+                       )
+                       AND NOT ({_exclusion_sql('%s')})
+                       AND NOT EXISTS (
+                           SELECT 1 FROM domains rejected_destination
+                            WHERE LOWER(TRIM(TRAILING '.' FROM rejected_destination.domain)) = %s
+                              AND COALESCE(
+                                  'manually rejected' = ANY(rejected_destination.confidence_reasons),
+                                  FALSE
+                              )
+                       )
+                     LIMIT 1
+                """, (
+                    domain_id, int(scan_id), list(BRAND_DISCOVERY_SOURCES),
+                    target_host, target_host, target_host,
+                ))
+                authorized = cur.fetchone() is not None
+            except Exception:
+                # Authorization uncertainty remains fail-closed and must not
+                # leave this worker connection in an aborted/open transaction.
+                conn.rollback()
+                raise
+            # observe_redirect_chain invokes this immediately before DNS and
+            # each pinned HTTP request; finish the read transaction here.
+            conn.commit()
+            return authorized
 
         evidence = observe_redirect_chain(
             domain,

@@ -112,86 +112,119 @@ def check_takeover(target):
 def main():
 
     conn = get_conn()
-    cur = conn.cursor()
-    require_running_scan(cur, scan_id)
-
-    print("Takeover scan for scan_id:", scan_id)
-
-    cur.execute("""
-    SELECT d.id, d.domain, dd.value
-    FROM domain_dns dd
-    JOIN domains d ON d.id = dd.domain_id
-    JOIN scan_results sr
-      ON sr.domain_id = dd.domain_id
-      AND sr.scan_id = dd.scan_id
-    WHERE dd.scan_id = %s
-    AND dd.record_type = 'CNAME'
-    """, (scan_id,))
-
-    rows = cur.fetchall()
-
-    print("Domains to check:", len(rows))
-
-    for domain_id, domain, cname in rows:
-
-        # This refresh is passive DNS discovery, not a DNS_SECURITY check.
-        # Reuse the seed-provenance policy and recheck membership, rejection,
-        # exclusions and revocation immediately before each resolver call.
+    try:
+        cur = conn.cursor()
         require_running_scan(cur, scan_id)
-        cur.execute(f"""
-        SELECT EXISTS (
-            SELECT 1
-            FROM domains d
-            JOIN scan_results sr
-              ON sr.domain_id = d.id AND sr.scan_id = %s
-            WHERE d.id = %s
-              AND {passive_dns_discovery_sql('d', 'sr')}
-        )
-        """, (scan_id, domain_id))
-        authorized_row = cur.fetchone()
-        if not authorized_row or not authorized_row[0]:
-            print(f"Skipping CNAME refresh outside permitted discovery scope: {domain}")
-            continue
 
-        live_cname = get_live_cname(domain)
+        print("Takeover scan for scan_id:", scan_id)
 
-        print(f"{domain} → DB: {cname} → LIVE: {live_cname}")
+        cur.execute("""
+        SELECT d.id, d.domain, dd.value
+        FROM domain_dns dd
+        JOIN domains d ON d.id = dd.domain_id
+        JOIN scan_results sr
+          ON sr.domain_id = dd.domain_id
+          AND sr.scan_id = dd.scan_id
+        WHERE dd.scan_id = %s
+        AND dd.record_type = 'CNAME'
+        """, (scan_id,))
 
-        if not live_cname or live_cname != cname:
-            print(f"Skipping {domain} → DNS mismatch")
-            continue
+        rows = cur.fetchall()
+        # Release the scan-row lock from require_running_scan before any DNS.
+        conn.commit()
 
-        provider = identify_provider(cname)
+        print("Domains to check:", len(rows))
+        findings = []
 
-        print(f"{domain} → Provider: {provider}")
+        for domain_id, domain, cname in rows:
+            # Recheck membership, rejection, exclusions and revocation
+            # immediately before each resolver call, then close that read
+            # transaction before entering DNS or HTTP.
+            require_running_scan(cur, scan_id)
+            cur.execute(f"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM domains d
+                JOIN scan_results sr
+                  ON sr.domain_id = d.id AND sr.scan_id = %s
+                WHERE d.id = %s
+                  AND {passive_dns_discovery_sql('d', 'sr')}
+            )
+            """, (scan_id, domain_id))
+            authorized_row = cur.fetchone()
+            authorized = bool(authorized_row and authorized_row[0])
+            conn.commit()
+            if not authorized:
+                print(f"Skipping CNAME refresh outside permitted discovery scope: {domain}")
+                continue
 
-        if not provider:
-            continue
+            live_cname = get_live_cname(domain)
 
-        print(f"Checking {domain}")
+            print(f"{domain} → DB: {cname} → LIVE: {live_cname}")
 
-        resp = check_takeover(domain)
+            if not live_cname or live_cname != cname:
+                print(f"Skipping {domain} → DNS mismatch")
+                continue
 
-        if resp is None:
-            print(f"Skipping {domain} → HTTP observation failed")
-            continue
+            provider = identify_provider(cname)
 
-        body = resp["body"]
-        status = resp["status"]
-        length = resp["length"]
+            print(f"{domain} → Provider: {provider}")
 
-        print(f"{domain} → status: {status}, length: {length}")
+            if not provider:
+                continue
 
-        # 🔥 HIGH confidence (fingerprints)
-        fingerprints = FINGERPRINTS.get(provider, [])
+            print(f"Checking {domain}")
+            resp = check_takeover(domain)
+            if resp is None:
+                print(f"Skipping {domain} → HTTP observation failed")
+                continue
 
-        found = False
+            body = resp["body"]
+            status = resp["status"]
+            length = resp["length"]
+            print(f"{domain} → status: {status}, length: {length}")
 
-        for fp in fingerprints:
-            if fp.lower() in body.lower():
+            found = False
+            for fp in FINGERPRINTS.get(provider, []):
+                if fp.lower() in body.lower():
+                    print(f"🚨 HIGH: TAKEOVER → {domain}")
+                    findings.append((domain_id, "dangling_dns", "HIGH", fp))
+                    found = True
+                    break
 
-                print(f"🚨 HIGH: TAKEOVER → {domain}")
+            if not found:
+                severity = None
+                if status in [404, 410]:
+                    print(f"⚠️ MEDIUM: suspicious status → {domain}")
+                    severity = "MEDIUM"
+                elif length < 50:
+                    print(f"⚠️ LOW: suspicious dns empty → {domain}")
+                    severity = "LOW"
+                if severity:
+                    findings.append((
+                        domain_id, "suspicious_dns", severity,
+                        f"status={status}, length={length}",
+                    ))
 
+        # Revalidate at the persistence boundary even if there are no findings.
+        # This transaction contains database work only, and findings remain
+        # stage-atomic.
+        require_running_scan(cur, scan_id)
+        if findings:
+            for domain_id, finding, severity, evidence in findings:
+                cur.execute(f"""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM domains d
+                    JOIN scan_results sr
+                      ON sr.domain_id = d.id AND sr.scan_id = %s
+                    WHERE d.id = %s
+                      AND {passive_dns_discovery_sql('d', 'sr')}
+                )
+                """, (scan_id, domain_id))
+                authorized_row = cur.fetchone()
+                if not authorized_row or not authorized_row[0]:
+                    continue
                 cur.execute("""
                 INSERT INTO domain_findings(domain_id, scan_id, finding, severity, evidence)
                 SELECT %s, %s, %s, %s, %s
@@ -201,55 +234,17 @@ def main():
                 )
                 ON CONFLICT (domain_id, scan_id, finding) DO NOTHING
                 """, (
-                    domain_id,
-                    scan_id,
-                    "dangling_dns",
-                    "HIGH",
-                    fp,
-                    scan_id,
-                    domain_id
+                    domain_id, scan_id, finding, severity, evidence,
+                    scan_id, domain_id,
                 ))
+        conn.commit()
 
-                found = True
-                break
-
-        # 🔥 MEDIUM / LOW signals
-        if not found:
-        
-            severity = None
-        
-            if status in [404, 410]:
-                print(f"⚠️ MEDIUM: suspicious status → {domain}")
-                severity = "MEDIUM"
-        
-            elif length < 50:
-                print(f"⚠️ LOW: suspicious dns empty → {domain}")
-                severity = "LOW"
-        
-            # only insert if we actually flagged something
-            if severity:
-                cur.execute("""
-                INSERT INTO domain_findings(domain_id, scan_id, finding, severity, evidence)
-                SELECT %s, %s, %s, %s, %s
-                WHERE EXISTS (
-                    SELECT 1 FROM scan_results sr
-                    WHERE sr.scan_id = %s AND sr.domain_id = %s
-                )
-                ON CONFLICT (domain_id, scan_id, finding) DO NOTHING
-                """, (
-                    domain_id,
-                    scan_id,
-                    "suspicious_dns",
-                    severity,
-                    f"status={status}, length={length}",
-                    scan_id,
-                    domain_id
-                ))
-
-    conn.commit()
-    conn.close()
-
-    print("Takeover detection complete")
+        print("Takeover detection complete")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

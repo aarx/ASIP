@@ -6,7 +6,6 @@ import argparse
 import csv
 import os
 import re
-import signal
 import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -36,7 +35,6 @@ PREFIX_PATTERNS = ["get","join","try","my","secure"]
 SUFFIX_PATTERNS = ["group","corp","global","cloud","tech","services"]
 
 MAX_WORKERS = 40
-DEFAULT_RECON_TOOL_TIMEOUT_SECONDS = 120
 
 KNOWN_DOMAINS_FILE = "known_domains.csv"
 
@@ -183,39 +181,13 @@ def run_tool(cmd):
     process = None
 
     try:
-        timeout_seconds = int(os.getenv(
-            "ASIP_RECON_TOOL_TIMEOUT_SECONDS",
-            str(DEFAULT_RECON_TOOL_TIMEOUT_SECONDS),
-        ))
-        if timeout_seconds <= 0:
-            timeout_seconds = DEFAULT_RECON_TOOL_TIMEOUT_SECONDS
-
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            start_new_session=True,
         )
-        try:
-            stdout, stderr = process.communicate(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired:
-            debug(
-                f"Tool timed out after {timeout_seconds}s: {' '.join(cmd)}"
-            )
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait(timeout=5)
-            return False, [], f"timeout after {timeout_seconds}s"
+        stdout, stderr = process.communicate()
 
         if process.returncode != 0:
             debug(
