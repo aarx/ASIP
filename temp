@@ -4,23 +4,28 @@ from pathlib import Path
 p = Path("/tmp/asip-machine2-deploy.sh")
 s = p.read_text()
 
-s = s.replace(
-    'cd "$HOME/Desktop/Projects/ASIP"',
-    'cd "/home/kali/Desktop/Projects/ASIP"'
-)
+old = '''if ! git merge-base --is-ancestor HEAD "$TARGET"; then
+  echo "STOP: Current checkout is not an ancestor."
+  echo "No automatic merge or reset will be attempted."
+  exit 1
+fi'''
 
-s = s.replace(
-    'BACKUP="$HOME/asip-release-backup-',
-    'BACKUP="/home/kali/asip-release-backup-'
-)
+new = '''# A release may come from a separate Git branch.
+# Verify the target exists and matches the fetched release.
+git cat-file -e "$TARGET^{commit}"
 
-s = s.replace(
-    'docker compose -p asip build frontend',
-    '''docker build \
-  -t "$FRONTEND_IMAGE" \
-  -f frontend/Dockerfile frontend'''
-)
+# Preserve a reference to the current checkout.
+CURRENT=$(git rev-parse HEAD)
+echo "Previous checkout: $CURRENT"
+echo "Verified target: $TARGET"
 
-p.write_text(s)
-print("Deployment script corrected.")
+# Do not require the current branch to be an ancestor.
+# The release switch below creates a new local branch.
+'''
+
+if old not in s:
+    raise SystemExit("STOP: Expected ancestry guard not found")
+
+p.write_text(s.replace(old, new, 1))
+print("Release branch handling corrected.")
 PY
