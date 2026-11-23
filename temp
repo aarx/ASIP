@@ -1,0 +1,87 @@
+
+cd ~/Desktop/Projects/ASIP || exit 1
+
+echo "========== 1. MACHINE =========="
+hostname
+pwd
+date
+
+echo
+echo "========== 2. GIT =========="
+git branch --show-current
+git rev-parse HEAD
+git remote -v
+git status --short --untracked-files=no -- . \
+  ':(exclude)backend/data' \
+  ':(exclude)backend/seeds.txt'
+
+echo
+echo "========== 3. COMPOSE SERVICES =========="
+sudo docker compose -p asip config --services
+
+echo
+echo "========== 4. CURRENT CONTAINERS =========="
+sudo docker compose -p asip ps
+
+echo
+echo "========== 5. RUNNING IMAGE TAGS =========="
+for c in asm_backend asm_frontend asm_db asm_mcp; do
+  sudo docker inspect "$c" \
+    --format '{{.Name}} | {{.Config.Image}} | {{.State.Status}}' \
+    2>/dev/null || true
+done
+
+echo
+echo "========== 6. BUILD FILES =========="
+find . -maxdepth 3 -type f \
+  \( -name 'Dockerfile' -o \
+     -name 'Dockerfile.*' -o \
+     -name 'compose.yaml' -o \
+     -name 'compose.yml' -o \
+     -name 'docker-compose.yml' \
+  \) -not -path './backend/data/*' -print
+
+echo
+echo "========== 7. COMPOSE BUILD CONFIG =========="
+sudo docker compose -p asip config --format json |
+python3 -c '
+import json,sys
+data=json.load(sys.stdin)
+for name,svc in data.get("services",{}).items():
+    if name in ("backend","frontend"):
+        print(name)
+        print("  image:",svc.get("image"))
+        print("  build:",svc.get("build"))
+        print("  mounts:",[
+          {"type":v.get("type"),"target":v.get("target")}
+          for v in svc.get("volumes",[])
+        ])
+'
+
+echo
+echo "========== 8. LOCAL COMPOSE CHANGES =========="
+git status --short -- docker-compose.yml
+
+echo
+echo "========== 9. MACHINE RESOURCES =========="
+df -h .
+free -h
+
+echo
+echo "========== 10. ACTIVE SCANS =========="
+sudo docker compose -p asip exec -T backend \
+  python -c '
+from db import get_conn
+c=get_conn()
+try:
+    c.set_session(readonly=True)
+    q=c.cursor()
+    q.execute("SELECT id,status FROM scans WHERE status=%s",("RUNNING",))
+    print(q.fetchall())
+finally:
+    c.rollback()
+    c.close()
+' 2>&1
+
+echo
+echo "========== DIAGNOSTICS COMPLETE =========="
