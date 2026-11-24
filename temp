@@ -1,45 +1,24 @@
 cd ~/Desktop/Projects/ASIP
 
-echo "========== COMPOSE BUILD CONFIG =========="
-
+echo "===== COMPOSE SERVICES ====="
 sudo docker compose config --format json | python3 -c '
 import json,sys
 d=json.load(sys.stdin)
 for name in ("backend","frontend"):
     s=d.get("services",{}).get(name,{})
-    print("\nSERVICE:",name)
-    print("IMAGE:",s.get("image"))
-    print("BUILD:",s.get("build","NOT CONFIGURED"))
-    print("WORKING_DIR:",s.get("working_dir"))
-    for v in s.get("volumes",[]):
-        if isinstance(v,dict):
-            print("MOUNT:",v.get("type"),v.get("target"))
+    print(name, "image:",s.get("image"))
+    print(name, "build:",s.get("build","NONE"))
 '
 
-echo
-echo "========== RELEASE SOURCE =========="
-find /home/kali -maxdepth 1 -type d \
-  -name 'asip-report-source-*' -print
+echo "===== AVAILABLE DOCKERFILES ====="
+find backend frontend -maxdepth 3 \
+  -type f \( -name "Dockerfile" -o -name "Dockerfile.*" \) \
+  -print
 
-echo
-echo "========== TRACKED DOCKERFILES =========="
-git ls-files \
-  'backend/*Dockerfile*' \
-  'backend/**/*Dockerfile*' \
-  'frontend/*Dockerfile*' \
-  'frontend/**/*Dockerfile*' \
-  '*compose*.yml' \
-  '*compose*.yaml'
-
-echo
-echo "========== RUNNING IMAGE TAGS =========="
+echo "===== EXISTING IMAGE TAGS ====="
 sudo docker inspect asm_backend asm_frontend \
   --format '{{.Name}} | {{.Config.Image}} | {{.State.Status}}'
 
-echo
-echo "========== DEPLOYMENT BACKUPS =========="
+echo "===== RELEASE SOURCE ====="
 find /home/kali -maxdepth 1 -type d \
-  -name 'asip-report-backup-*' -print
-
-echo
-echo "========== DONE =========="
+  -name 'asip-report-source-*' -print
