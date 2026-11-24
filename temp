@@ -1,29 +1,280 @@
-DOMAIN="portal.example.com"
+cat > /tmp/asip-report-machine2.sh <<'BASH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-echo "=== CNAME CHAIN ==="
-dig +noall +answer "$DOMAIN" CNAME
+ROOT="/home/kali/Desktop/Projects/ASIP"
+BRANCH="release/reporting-only-20261124"
+SHA="fdd3c54266a20e46401713af41ebcc5854deb6e4"
+BASE="e28fb67bf7880c04b03046597bfc5768a8c8a0c9"
 
-echo "=== ADDRESS RESOLUTION ==="
-dig +noall +answer "$DOMAIN" A
-dig +noall +answer "$DOMAIN" AAAA
+STAMP="$(date +%Y%m%d-%H%M%S)"
+BACKUP="/home/kali/asip-report-backup-$STAMP"
+SOURCE="/home/kali/asip-report-source-$STAMP"
+OVERRIDE="$BACKUP/release.json"
+ROLLBACK="$BACKUP/rollback.json"
 
-echo "=== DNS STATUS ==="
-dig +noall +comments "$DOMAIN" A | grep status
+fail() {
+  echo
+  echo "DEPLOYMENT STOPPED: $*"
+  echo "Backup directory: $BACKUP"
+  exit 1
+}
 
-echo "=== HTTP RESPONSE ==="
-curl -sS -I --max-time 8 "https://$DOMAIN"
+mkdir -p "$BACKUP"
+chmod 700 "$BACKUP"
+exec > >(tee "$BACKUP/deployment.log") 2>&1
 
-echo "=== TLS CERTIFICATE ==="
-timeout 10 openssl s_client \
-  -connect "$DOMAIN:443" \
-  -servername "$DOMAIN" \
-  </dev/null 2>/dev/null |
-  openssl x509 -noout -subject -issuer -dates
+cd "$ROOT" || fail "Project directory missing"
 
+sudo -v
 
+echo "========== 1. VERIFY GIT RELEASE =========="
 
-TARGET="app123.azurewebsites.net"
+git fetch origin \
+  "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
+  || fail "Git fetch failed"
 
-dig +noall +answer "$TARGET" A
-dig +noall +answer "$TARGET" AAAA
-dig +noall +comments "$TARGET" A | grep status
+ACTUAL="$(git rev-parse "refs/remotes/origin/$BRANCH")"
+
+[ "$ACTUAL" = "$SHA" ] || fail "Release SHA mismatch"
+
+git merge-base --is-ancestor "$BASE" "$SHA" \
+  || fail "Incorrect release ancestry"
+
+[ "$(git rev-list --count "$BASE..$SHA")" = "2" ] \
+  || fail "Unexpected release history"
+
+echo "RELEASE VERIFIED: $SHA"
+
+echo "========== 2. VERIFY REPORTING FILES =========="
+
+python3 - "$BASE" "$SHA" <<'PY'
+import subprocess
+import sys
+
+base, sha = sys.argv[1:]
+
+expected = {
+    "backend/main.py",
+    "backend/scan_report.py",
+    "backend/subdomain_takeover_reporting.py",
+    "backend/tests/test_scan_report_exports.py",
+    "frontend/asm-dashboard/src/App.css",
+    "frontend/asm-dashboard/src/SubdomainTakeover.test.js",
+    "frontend/asm-dashboard/src/pages/SubdomainTakeoverPage.js",
+    "frontend/asm-dashboard/src/services/api.js",
+}
+
+actual = set(subprocess.check_output([
+    "git", "diff", "--name-only", base, sha, "--",
+    ":(exclude)backend/data/**"
+], text=True).splitlines())
+
+if actual != expected:
+    raise SystemExit(
+        "STOP: Release contains unexpected changed files: "
+        + str(sorted(actual ^ expected))
+    )
+
+print("REPORTING FILE BOUNDARY: PASS")
+PY
+
+echo "========== 3. PRESERVE CURRENT IMAGES =========="
+
+BACKEND_ID="$(sudo docker compose ps -q backend)"
+FRONTEND_ID="$(sudo docker compose ps -q frontend)"
+
+[ -n "$BACKEND_ID" ] || fail "Backend container missing"
+[ -n "$FRONTEND_ID" ] || fail "Frontend container missing"
+
+PROJECT="$(sudo docker inspect "$BACKEND_ID" \
+  --format '{{index .Config.Labels "com.docker.compose.project"}}')"
+
+FRONT_PROJECT="$(sudo docker inspect "$FRONTEND_ID" \
+  --format '{{index .Config.Labels "com.docker.compose.project"}}')"
+
+[ -n "$PROJECT" ] || fail "Compose project unknown"
+[ "$PROJECT" = "$FRONT_PROJECT" ] \
+  || fail "Backend/frontend belong to different projects"
+
+export COMPOSE_PROJECT_NAME="$PROJECT"
+export COMPOSE_PARALLEL_LIMIT=1
+
+OLD_BACKEND="$(sudo docker inspect "$BACKEND_ID" \
+  --format '{{.Image}}')"
+
+OLD_FRONTEND="$(sudo docker inspect "$FRONTEND_ID" \
+  --format '{{.Image}}')"
+
+sudo docker image tag "$OLD_BACKEND" \
+  "asip-rollback-backend:$STAMP"
+
+sudo docker image tag "$OLD_FRONTEND" \
+  "asip-rollback-frontend:$STAMP"
+
+printf '%s\n' "$OLD_BACKEND" > "$BACKUP/backend-image-id"
+printf '%s\n' "$OLD_FRONTEND" > "$BACKUP/frontend-image-id"
+
+echo "ROLLBACK IMAGES PRESERVED"
+
+echo "========== 4. CREATE RELEASE CHECKOUT =========="
+
+git worktree add --detach "$SOURCE" "$SHA" \
+  || fail "Release checkout failed"
+
+echo "========== 5. PREPARE BUILD OVERRIDES =========="
+
+python3 - "$ROOT" "$SOURCE" "$SHA" \
+  "$OVERRIDE" "$ROLLBACK" "$STAMP" <<'PY'
+import copy
+import json
+import os
+import subprocess
+import sys
+
+root, source, sha, output, rollback, stamp = sys.argv[1:]
+
+config = json.loads(subprocess.check_output(
+    ["sudo", "docker", "compose", "config", "--format", "json"],
+    cwd=root,
+    text=True
+))
+
+release = {"services": {}}
+previous = {"services": {}}
+
+for name in ("backend", "frontend"):
+    service = config["services"].get(name)
+
+    if not service or not isinstance(service.get("build"), dict):
+        raise SystemExit(f"STOP: Unsupported build for {name}")
+
+    build = copy.deepcopy(service["build"])
+    original = os.path.realpath(build["context"])
+    relative = os.path.relpath(original, root)
+
+    if relative == ".." or relative.startswith("../"):
+        raise SystemExit("STOP: Build context outside repository")
+
+    new_context = os.path.join(source, relative)
+
+    if not os.path.isdir(new_context):
+        raise SystemExit("STOP: Release build context missing")
+
+    build["context"] = new_context
+
+    dockerfile = build.get("dockerfile")
+
+    if dockerfile and os.path.isabs(dockerfile):
+        resolved = os.path.realpath(dockerfile)
+
+        if not resolved.startswith(original + os.sep):
+            raise SystemExit("STOP: External Dockerfile")
+
+        build["dockerfile"] = os.path.join(
+            new_context,
+            os.path.relpath(resolved, original)
+        )
+
+    if build.get("additional_contexts"):
+        raise SystemExit("STOP: Additional build contexts")
+
+    for volume in service.get("volumes", []):
+        if not isinstance(volume, dict):
+            continue
+
+        if volume.get("type") != "bind":
+            continue
+
+        mount = os.path.realpath(volume.get("source", ""))
+
+        source_roots = [
+            os.path.realpath(root),
+            os.path.realpath(os.path.join(root, "backend")),
+            os.path.realpath(os.path.join(root, "frontend")),
+            os.path.realpath(
+                os.path.join(root, "frontend/asm-dashboard")
+            ),
+        ]
+
+        if mount in source_roots:
+            raise SystemExit(
+                f"STOP: {name} has a source-code bind mount"
+            )
+
+    release["services"][name] = {
+        "build": build,
+        "image": f"asip-{name}:report-{sha[:12]}"
+    }
+
+    previous["services"][name] = {
+        "image": f"asip-rollback-{name}:{stamp}"
+    }
+
+with open(output, "w") as f:
+    json.dump(release, f, indent=2)
+
+with open(rollback, "w") as f:
+    json.dump(previous, f, indent=2)
+
+print("BUILD AND ROLLBACK OVERRIDES: READY")
+PY
+
+echo "========== 6. BUILD BACKEND =========="
+
+sudo docker compose \
+  -f "$ROOT/docker-compose.yml" \
+  -f "$OVERRIDE" \
+  build backend \
+  || fail "Backend build failed"
+
+echo "========== 7. BUILD FRONTEND =========="
+
+sudo docker compose \
+  -f "$ROOT/docker-compose.yml" \
+  -f "$OVERRIDE" \
+  build frontend \
+  || fail "Frontend build failed"
+
+echo "========== 8. DEPLOY APPLICATION ONLY =========="
+
+sudo docker compose \
+  -f "$ROOT/docker-compose.yml" \
+  -f "$OVERRIDE" \
+  up -d --no-deps --no-build --force-recreate \
+  backend frontend \
+  || fail "Application deployment failed; rollback images saved"
+
+echo "========== 9. VERIFY =========="
+
+sudo docker compose \
+  -f "$ROOT/docker-compose.yml" \
+  -f "$OVERRIDE" \
+  ps backend frontend
+
+echo "========== 10. FRONTEND HEALTH =========="
+
+if curl -fsS --max-time 10 \
+  -o /dev/null http://127.0.0.1:3555/; then
+    echo "FRONTEND HTTP: PASS"
+else
+    echo "FRONTEND HTTP: CHECK REQUIRED"
+fi
+
+echo
+echo "=========================================="
+echo "REPORTING DEPLOYMENT COMMANDS COMPLETED"
+echo "=========================================="
+echo "Release: $SHA"
+echo "Compose project: $PROJECT"
+echo "Backup: $BACKUP"
+echo "Rollback override: $ROLLBACK"
+echo "Deployment log: $BACKUP/deployment.log"
+echo
+echo "No database migration or scan initiated."
+echo "Database and MCP were not redeployed."
+echo "Verify historical reports in the UI."
+BASH
+
+chmod +x /tmp/asip-report-machine2.sh
+bash /tmp/asip-report-machine2.sh
