@@ -155,6 +155,20 @@ export const getSubdomainTakeoverEvidence = async (params) => {
   return res.data;
 };
 
+export const getSubdomainTakeoverHostnames = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/subdomain-takeover`, {
+    params: { ...params, output: "hostnames" }, responseType: "text",
+  });
+  return res.data;
+};
+
+export const exportSubdomainTakeoverCsv = async (params) => {
+  const res = await axios.get(`${API_URL}/v2/subdomain-takeover`, {
+    params: { ...params, output: "csv" }, responseType: "blob",
+  });
+  return res;
+};
+
 export const getDnsSecurityHosts = async (params) => {
   const res = await axios.get(`${API_URL}/v2/dns-security/hosts`, { params });
   return res.data;

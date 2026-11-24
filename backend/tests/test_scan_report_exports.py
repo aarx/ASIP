@@ -76,6 +76,7 @@ class _Connection:
         "tls": "FROM domain_cert c",
         "technology-labels": "FROM domain_tech t",
         "ports": "FROM domain_ports p",
+        "subdomain-takeover": "FROM classified",
         "findings": "FROM domain_findings f",
         "risk": "FROM domain_risk r",
         "dns-security": "FROM dns_security_checks x",
@@ -138,6 +139,8 @@ class ScanReportTests(unittest.TestCase):
                         archive.read("assets.csv").decode("utf-8")
                     )))[0]
                     self.assertIn("brand-redirects.csv", archive.namelist())
+                    self.assertIn("subdomain-takeover.csv", archive.namelist())
+                    self.assertEqual(len(archive.namelist()), 16)
                     self.assertEqual(
                         next(csv.reader(io.StringIO(archive.read("http.csv").decode("utf-8"))))[:12],
                         ["domain_id", "domain", "ip", "has_ip", "http_observation_status",
@@ -379,6 +382,50 @@ class ScanReportTests(unittest.TestCase):
             self.assertTrue(row["associated_seed_brand_json"].startswith("["))
         finally:
             report.close()
+
+    def test_takeover_zip_export_keeps_unverified_historical_evidence_scan_scoped(self):
+        observation = {
+            "source": "dns_security_checks",
+            "evidence_category": "UNVERIFIED_PROVIDER_ASSOCIATION",
+            "verification_status": "NOT_CHECKED_AUTHORIZATION",
+            "evidence": {"chain": [{"provider": "Example Cloud"}]},
+        }
+        row = (7, "=legacy.example", "alias.vendor.test", "Example Cloud",
+               "UNVERIFIED_PROVIDER_ASSOCIATION", "LOW",
+               "NOT_CHECKED_AUTHORIZATION", "2026-01-02T03:04:05Z",
+               [observation], ["UNVERIFIED_PROVIDER_ASSOCIATION"],
+               "2026-11-24T12:00:00Z")
+        conn = _Connection(
+            scans={15: _scan(15), 16: _scan(16)},
+            datasets={(15, "subdomain-takeover"): [row],
+                      (16, "subdomain-takeover"): []},
+            optional_tables=("public.dns_security_checks", None, None),
+        )
+        reports = [build_scan_report(conn, scan_id) for scan_id in (15, 16)]
+        try:
+            csv_rows = []
+            for report in reports:
+                with zipfile.ZipFile(report) as archive:
+                    csv_rows.append(list(csv.DictReader(io.StringIO(
+                        archive.read("subdomain-takeover.csv").decode("utf-8")
+                    ))))
+            self.assertEqual(len(csv_rows[0]), 1)
+            self.assertEqual(csv_rows[0][0]["scan_id"], "15")
+            self.assertEqual(csv_rows[0][0]["hostname"], "'=legacy.example")
+            self.assertEqual(csv_rows[0][0]["finding_category"],
+                             "UNVERIFIED_PROVIDER_ASSOCIATION")
+            self.assertEqual(csv_rows[0][0]["verification_status"],
+                             "NOT_CHECKED_AUTHORIZATION")
+            self.assertEqual(csv_rows[0][0]["observation_timestamp"],
+                             "2026-01-02T03:04:05Z")
+            self.assertEqual(csv_rows[0][0]["classification_as_of"],
+                             "2026-11-24T12:00:00Z")
+            self.assertIn("UNVERIFIED_PROVIDER_ASSOCIATION",
+                          csv_rows[0][0]["evidence_categories_json"])
+            self.assertEqual(csv_rows[1], [])
+        finally:
+            for report in reports:
+                report.close()
 
     def test_optional_evidence_table_absence_is_explicit(self):
         conn = _Connection(scans={15: _scan(15)}, optional_tables=(None, None))

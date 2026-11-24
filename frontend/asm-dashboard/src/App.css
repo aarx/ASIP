@@ -297,6 +297,10 @@
 .dns-host-table th, .dns-host-table td { vertical-align: top; }
 .dns-domain-button { padding: 0; border: 0; background: none; color: var(--asip-accent-bright); cursor: pointer; font: inherit; font-family: var(--asip-font-mono); text-align: left; }
 .dns-domain-button:hover { text-decoration: underline; }
+.takeover-toolbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; margin: -6px 0 12px; }
+.takeover-toolbar [role="status"] { min-height: 1em; color: var(--asip-text-muted); font-size: 10px; }
+.takeover-host-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.takeover-hostname { user-select: text; -webkit-user-select: text; }
 .dns-outcome-summary { display: flex; flex-wrap: wrap; gap: 5px 8px; align-items: center; min-width: 180px; }
 .dns-outcome-count { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
 .dns-outcome-count strong { color: var(--asip-text-primary); font-family: var(--asip-font-mono); font-size: 11px; }

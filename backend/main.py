@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 import logging
 import os
+import tempfile
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 import csv
@@ -58,8 +59,14 @@ from adhoc_campaigns import (
 from scan_report import (
     ScanReportNotFound,
     ScanReportNotReady,
+    _csv_value,
     build_scan_report,
     write_adhoc_campaign_csv,
+)
+from subdomain_takeover_reporting import (
+    csv_export_values as _takeover_csv_export_values,
+    evidence_cte as _takeover_evidence_cte,
+    filtered_hosts_sql as _takeover_filtered_hosts_sql,
 )
 from security_findings import (
     base_query_params as _security_findings_base_params,
@@ -4999,11 +5006,13 @@ def dns_security_findings(
 def subdomain_takeover_evidence(
     scan_id: int = None, search: str = None, provider: str = None,
     category: str = None, verification_status: str = None,
-    page: int = 1, limit: int = 50,
+    page: int = 1, limit: int = 50, output: str = "json",
 ):
     """Deduplicated, read-only takeover-related evidence for Security Review."""
     if page < 1 or limit < 1:
         raise HTTPException(status_code=400, detail="page and limit must be positive")
+    if output not in {"json", "csv", "hostnames"}:
+        raise HTTPException(status_code=400, detail="invalid output format")
     limit = min(limit, 200)
     search = (search or "").strip()[:253] or None
     provider = (provider or "").strip()[:100] or None
@@ -5018,125 +5027,15 @@ def subdomain_takeover_evidence(
         cur = conn.cursor()
         scan_id, _diagnostics = _dns_security_scan(cur, scan_id)
         classification = reporting_asset_class_sql("d.domain", "d.ownership_status")
-        cte = f"""
-            WITH evidence AS (
-                SELECT d.id AS domain_id, d.domain AS hostname,
-                       CASE
-                         WHEN (EXISTS (SELECT 1 FROM jsonb_array_elements(
-                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
-                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
-                              WHERE x->>'state'='not_checked_authorization')
-                           OR c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION')
-                           AND EXISTS (SELECT 1 FROM jsonb_array_elements(
-                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
-                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
-                              WHERE NULLIF(x->>'provider','') IS NOT NULL)
-                           THEN 'UNVERIFIED_PROVIDER_ASSOCIATION'
-                         WHEN c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION'
-                           OR EXISTS (SELECT 1 FROM jsonb_array_elements(
-                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
-                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
-                              WHERE x->>'state'='not_checked_authorization')
-                           THEN 'UNKNOWN'
-                         WHEN c.evidence->>'verification_status'='VERIFIED_DNS_NEGATIVE'
-                           OR EXISTS (SELECT 1 FROM jsonb_array_elements(
-                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
-                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
-                              WHERE x->>'state'='potential_exposure')
-                           THEN 'DNS_NEGATIVE_SIGNAL'
-                         WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(
-                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
-                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
-                              WHERE NULLIF(x->>'provider','') IS NOT NULL)
-                           THEN 'UNVERIFIED_PROVIDER_ASSOCIATION'
-                         ELSE 'UNKNOWN' END AS evidence_category,
-                       CASE
-                         WHEN c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION'
-                           OR EXISTS (SELECT 1 FROM jsonb_array_elements(
-                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
-                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
-                              WHERE x->>'state'='not_checked_authorization')
-                           THEN 'NOT_CHECKED_AUTHORIZATION'
-                         WHEN c.evidence->>'verification_status'='VERIFIED_DNS_NEGATIVE'
-                           THEN 'VERIFIED_DNS_NEGATIVE'
-                         WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(
-                              CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
-                                   THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
-                              WHERE x->>'state'='potential_exposure')
-                           THEN 'UNVERIFIED_LEGACY_EVIDENCE'
-                         ELSE 'UNVERIFIED' END AS verification_status,
-                       c.confidence,
-                       COALESCE(c.evidence->>'cname_destination', (
-                           SELECT x->>'target' FROM jsonb_array_elements(
-                             CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
-                                  THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
-                            WHERE x ? 'target' LIMIT 1)) AS cname_destination,
-                       COALESCE((SELECT string_agg(DISTINCT x->>'provider', ', ' ORDER BY x->>'provider')
-                           FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array'
-                                THEN c.evidence->'chain' ELSE '[]'::jsonb END) x
-                          WHERE NULLIF(x->>'provider','') IS NOT NULL), NULL) AS provider,
-                       c.checked_at AS observed_at,
-                       jsonb_build_object('source','dns_security_checks','source_outcome',c.outcome,
-                         'evidence_category',CASE
-                           WHEN (EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='not_checked_authorization') OR c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION') AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE NULLIF(x->>'provider','') IS NOT NULL) THEN 'UNVERIFIED_PROVIDER_ASSOCIATION'
-                           WHEN c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION' OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='not_checked_authorization') THEN 'UNKNOWN'
-                           WHEN c.evidence->>'verification_status'='VERIFIED_DNS_NEGATIVE' OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='potential_exposure') THEN 'DNS_NEGATIVE_SIGNAL'
-                           WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE NULLIF(x->>'provider','') IS NOT NULL) THEN 'UNVERIFIED_PROVIDER_ASSOCIATION' ELSE 'UNKNOWN' END,
-                         'verification_status',CASE
-                           WHEN c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION' OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='not_checked_authorization') THEN 'NOT_CHECKED_AUTHORIZATION'
-                           WHEN c.evidence->>'verification_status'='VERIFIED_DNS_NEGATIVE' THEN 'VERIFIED_DNS_NEGATIVE'
-                           WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='potential_exposure') THEN 'UNVERIFIED_LEGACY_EVIDENCE'
-                           ELSE 'UNVERIFIED' END,
-                         'confidence',c.confidence,'target',c.target_identity,'evidence',c.evidence,
-                         'rationale',CASE
-                           WHEN (c.evidence->>'verification_status'='NOT_CHECKED_AUTHORIZATION' OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='not_checked_authorization')) AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE NULLIF(x->>'provider','') IS NOT NULL) THEN 'Provider association was observed, but destination verification was blocked by authorization.'
-                           WHEN c.evidence->>'verification_status'='VERIFIED_DNS_NEGATIVE' THEN 'Recorded terminal DNS responses support a DNS-negative signal; this does not confirm takeover.'
-                           WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.evidence->'chain')='array' THEN c.evidence->'chain' ELSE '[]'::jsonb END) x WHERE x->>'state'='potential_exposure') THEN 'Legacy potential-exposure evidence lacks raw terminal response categories.'
-                           ELSE 'Available evidence does not establish a dangling DNS condition.' END,
-                         'observed_at',c.checked_at) AS observation
-                  FROM dns_security_checks c JOIN domains d ON d.id=c.domain_id
-                 WHERE c.scan_id=%s AND c.check_key='cname_health'
-                   AND c.outcome IN ('POTENTIAL_EXPOSURE','NOT_CHECKED','CONFIRMED_ISSUE')
-                   AND EXISTS (SELECT 1 FROM scan_results sr WHERE sr.scan_id=c.scan_id AND sr.domain_id=c.domain_id)
-                   AND d.scannable IS TRUE AND ({classification}) IN ('KNOWN','SHADOW')
-                UNION ALL
-                SELECT d.id,d.domain,
-                       CASE WHEN lower(f.finding)='dangling_dns' THEN 'PROVIDER_SPECIFIC_CANDIDATE' ELSE 'UNKNOWN' END,
-                       CASE WHEN lower(f.finding)='dangling_dns' THEN 'FINGERPRINT_CANDIDATE' ELSE 'UNVERIFIED_PROVIDER_RESPONSE' END,
-                       NULL::text,NULL::text,NULL::text,NULL::timestamptz,
-                       jsonb_build_object('source','domain_findings','finding',f.finding,'severity',f.severity,
-                         'evidence_category',CASE WHEN lower(f.finding)='dangling_dns' THEN 'PROVIDER_SPECIFIC_CANDIDATE' ELSE 'UNKNOWN' END,
-                         'verification_status',CASE WHEN lower(f.finding)='dangling_dns' THEN 'FINGERPRINT_CANDIDATE' ELSE 'UNVERIFIED_PROVIDER_RESPONSE' END,
-                         'rationale',CASE WHEN lower(f.finding)='dangling_dns' THEN 'Existing provider-specific fingerprint finding; takeover confirmation is not implied.' ELSE 'Existing suspicious DNS response signal; it is not a provider fingerprint confirmation.' END,
-                         'evidence',jsonb_build_object('raw_evidence',f.evidence))
-                  FROM domain_findings f JOIN domains d ON d.id=f.domain_id
-                 WHERE f.scan_id=%s AND lower(f.finding) IN ('dangling_dns','suspicious_dns')
-                   AND EXISTS (SELECT 1 FROM scan_results sr WHERE sr.scan_id=f.scan_id AND sr.domain_id=f.domain_id)
-                   AND d.scannable IS TRUE AND ({classification}) IN ('KNOWN','SHADOW')
-            ), grouped AS (
-                SELECT domain_id,hostname,array_agg(DISTINCT evidence_category) AS categories,
-                       string_agg(DISTINCT provider, ', ' ORDER BY provider) FILTER (WHERE provider IS NOT NULL) AS provider,
-                       (array_agg(confidence ORDER BY observed_at DESC NULLS LAST))[1] AS confidence,
-                       (array_agg(cname_destination ORDER BY observed_at DESC NULLS LAST))[1] AS cname_destination,
-                       string_agg(DISTINCT verification_status, ', ' ORDER BY verification_status) AS verification_status,
-                       max(observed_at) AS observed_at,
-                       jsonb_agg(observation ORDER BY observed_at DESC NULLS LAST) AS observations
-                  FROM evidence GROUP BY domain_id,hostname
-            ), classified AS (
-                SELECT *, CASE WHEN 'PROVIDER_SPECIFIC_CANDIDATE'=ANY(categories) THEN 'PROVIDER_SPECIFIC_CANDIDATE'
-                               WHEN 'DNS_NEGATIVE_SIGNAL'=ANY(categories) THEN 'DNS_NEGATIVE_SIGNAL'
-                               WHEN 'UNVERIFIED_PROVIDER_ASSOCIATION'=ANY(categories) THEN 'UNVERIFIED_PROVIDER_ASSOCIATION'
-                               ELSE 'UNKNOWN' END AS finding_category
+        cte = _takeover_evidence_cte(classification)
+        if output == "json":
+            cur.execute(cte + """
+                SELECT COUNT(*) FILTER (WHERE 'DNS_NEGATIVE_SIGNAL'=ANY(categories)),
+                       COUNT(*) FILTER (WHERE 'UNVERIFIED_PROVIDER_ASSOCIATION'=ANY(categories)),
+                       COUNT(*) FILTER (WHERE 'PROVIDER_SPECIFIC_CANDIDATE'=ANY(categories))
                   FROM grouped
-            )
-        """
-        cur.execute(cte + """
-            SELECT COUNT(*) FILTER (WHERE 'DNS_NEGATIVE_SIGNAL'=ANY(categories)),
-                   COUNT(*) FILTER (WHERE 'UNVERIFIED_PROVIDER_ASSOCIATION'=ANY(categories)),
-                   COUNT(*) FILTER (WHERE 'PROVIDER_SPECIFIC_CANDIDATE'=ANY(categories))
-              FROM grouped
-        """, (scan_id, scan_id))
-        negative_count, unverified_count, candidate_count = cur.fetchone()
+            """, (scan_id, scan_id))
+            negative_count, unverified_count, candidate_count = cur.fetchone()
         filters = []
         params = []
         if category_value:
@@ -5154,15 +5053,68 @@ def subdomain_takeover_evidence(
             filters.append("verification_status ILIKE %s")
             params.append(f"%{verification_status}%")
         where = " AND ".join(filters)
+        if output in {"csv", "hostnames"}:
+            selected_sql = (
+                cte + f"""
+                    SELECT hostname FROM (
+                        SELECT DISTINCT hostname FROM classified WHERE {where}
+                    ) matching_hosts
+                     ORDER BY hostname COLLATE "C" ASC
+                """ if output == "hostnames" else
+                _takeover_filtered_hosts_sql(
+                    cte, where, include_classification_time=True
+                )
+            )
+            stream_cursor = conn.cursor(name=f"takeover_{output}_{scan_id}")
+            stream_cursor.itersize = 500
+            spool = tempfile.SpooledTemporaryFile(max_size=4 * 1024 * 1024, mode="w+b")
+            try:
+                stream_cursor.execute(selected_sql, (scan_id, scan_id, *params))
+                if output == "hostnames":
+                    while True:
+                        batch = stream_cursor.fetchmany(500)
+                        if not batch:
+                            break
+                        for (hostname,) in batch:
+                            spool.write((str(hostname) + "\n").encode("utf-8"))
+                else:
+                    text = io.TextIOWrapper(spool, encoding="utf-8", newline="")
+                    writer = csv.writer(text, lineterminator="\r\n")
+                    writer.writerow((
+                        "scan_id", "hostname", "cname_destination", "provider",
+                        "finding_category", "evidence_categories_json", "confidence",
+                        "verification_status",
+                        "dns_evidence_json", "provider_evidence_json",
+                        "observation_timestamp", "classification_as_of", "evidence_basis",
+                    ))
+                    while True:
+                        batch = stream_cursor.fetchmany(500)
+                        if not batch:
+                            break
+                        for row in batch:
+                            values = _takeover_csv_export_values(row, scan_id)
+                            writer.writerow([_csv_value(value) for value in values])
+                    text.flush()
+                    text.detach()
+                stream_cursor.close()
+                spool.seek(0)
+            except Exception:
+                spool.close()
+                raise
+            finally:
+                if not getattr(stream_cursor, "closed", False):
+                    stream_cursor.close()
+            media_type = "text/plain; charset=utf-8" if output == "hostnames" else "text/csv; charset=utf-8"
+            filename = (f"subdomain-takeover-scan-{scan_id}.csv" if output == "csv"
+                        else f"subdomain-takeover-scan-{scan_id}-hostnames.txt")
+            return StreamingResponse(
+                _spooled_file_chunks(spool), media_type=media_type,
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
         cur.execute(cte + f"SELECT COUNT(*) FROM classified WHERE {where}", (scan_id, scan_id, *params))
         total = cur.fetchone()[0]
-        cur.execute(cte + f"""
-            SELECT domain_id,hostname,cname_destination,provider,finding_category,confidence,
-                   verification_status,observed_at,observations,categories
-              FROM classified WHERE {where}
-             ORDER BY hostname COLLATE "C" ASC,domain_id ASC
-             LIMIT %s OFFSET %s
-        """, (scan_id, scan_id, *params, limit, (page - 1) * limit))
+        cur.execute(_takeover_filtered_hosts_sql(cte, where, limit_offset=True),
+                    (scan_id, scan_id, *params, limit, (page - 1) * limit))
         hosts = [{"domain_id": row[0], "hostname": row[1], "cname_destination": row[2],
                   "provider": row[3], "finding_category": row[4], "confidence": row[5],
                   "verification_status": row[6] or "UNVERIFIED", "observed_at": row[7],

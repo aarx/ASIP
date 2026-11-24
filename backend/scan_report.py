@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from ownership import reporting_asset_class_sql
 from scan_diagnostics import api_diagnostics
+from subdomain_takeover_reporting import all_hosts_sql, csv_export_values, evidence_cte
 
 
 class ScanReportNotFound(LookupError):
@@ -204,6 +205,13 @@ SCAN_REPORT_DATASETS = (
       "terminal_verification_status", "first_hop_destination", "terminal_destination",
       "classification", "failure_or_stop_reason", "evidence_json"),
      "public.brand_redirect_observations"),
+    ("subdomain-takeover.csv", "Subdomain Takeover evidence",
+     all_hosts_sql(evidence_cte(reporting_asset_class_sql("d.domain", "d.ownership_status"))),
+     ("scan_id", "hostname", "cname_destination", "provider", "finding_category",
+      "evidence_categories_json", "confidence", "verification_status", "dns_evidence_json",
+      "provider_evidence_json", "observation_timestamp", "classification_as_of",
+      "evidence_basis"),
+     "public.dns_security_checks"),
 )
 
 
@@ -253,6 +261,12 @@ def _query_rows(conn, query, params, cursor_name):
             yield from batch
     finally:
         cur.close()
+
+
+def _subdomain_takeover_export_rows(rows, scan_id):
+    """Flatten the shared grouped read model while retaining each observation."""
+    for row in rows:
+        yield csv_export_values(row, scan_id)
 
 
 def _brand_redirect_attempts(diagnostics):
@@ -447,16 +461,16 @@ def build_scan_report(conn, scan_id):
                         coverage.append((label, "", "SCHEMA_UNAVAILABLE",
                                          "The optional evidence table is not installed."))
                     continue
-                count = _write_csv_member(
-                    archive, filename, headers,
-                    _query_rows(
-                        conn, query,
-                        ((scan_id, scan_id) if filename in {
-                            "infrastructure.csv", "brand-redirects.csv"
-                        } else (scan_id,)),
-                        f"scan_report_{scan_id}_{index}",
-                    ),
+                query_params = ((scan_id, scan_id) if filename in {
+                    "infrastructure.csv", "brand-redirects.csv",
+                    "subdomain-takeover.csv",
+                } else (scan_id,))
+                rows = _query_rows(
+                    conn, query, query_params, f"scan_report_{scan_id}_{index}"
                 )
+                if filename == "subdomain-takeover.csv":
+                    rows = _subdomain_takeover_export_rows(rows, scan_id)
+                count = _write_csv_member(archive, filename, headers, rows)
                 if filename == "brand-redirects.csv":
                     brand_redirect_count = count
                     continue
